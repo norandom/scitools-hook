@@ -114,7 +114,7 @@
   - _Requirements: 7.4, 7.5, 7.7_
   - _Boundary: report/json_out, report/sarif_
 
-- [ ] 5.3 (P) Implement change-summary renderers
+- [x] 5.3 (P) Implement change-summary renderers
   - Text, Markdown (merge-request friendly tables) and JSON views of `ChangeSummary`, graph file references, final open-in-GUI command line
   - Done when snapshot tests match for all three formats over the fixture summary
   - _Requirements: 9.4, 9.6, 9.8_
@@ -308,3 +308,5 @@
 - 5.2: `tests/fixtures/sarif-schema-2.1.0.json` is the official OASIS schema, byte-identical to the published file (sha256 ad6db498…, 115632 bytes, CRLF preserved) — validation is real `jsonschema` and was proven live by rejecting 12 deliberately broken documents. `render_json` is `model_dump_json(indent=2)` verbatim: no re-sorting, no recomputed counts, because round-trip equality is the done criterion — filling `warning_count`/`preexisting_count` consistently is 8.3's job. SARIF: arch findings get a `logicalLocations` entry and NO `physicalLocation`; out-of-repo paths get an absolute `file://` URI with no `uriBaseId`; a line below 1 omits the region.
 - 5.2 for 10.3: `jsonschema` ships no stubs, so `tests/report/test_sarif.py` carries a `# type: ignore[import-untyped]`. Adding `types-jsonschema` to the dev group removes it — but `warn_unused_ignores` will then flag that ignore.
 - 5.2 for feature validation: a non-finite `Finding.value`/`limit`/`seconds` would serialize to `null` in JSON (breaking round-trip) and the invalid token `Infinity` in SARIF. Unreachable today — `analysis/baseline.py` guards `isfinite` at the one operator-editable boundary — but re-check if metric provenance widens.
+- 5.3: `render_summary(summary, fmt)` for text/markdown/json. Paths print VERBATIM here (deliberately unlike 4.7/5.2, which build machine-consumed URIs) — a reviewer opens these on this machine. Order is the producer's everywhere except `impact`, ordered by `EntityKey.token`. The open-in-GUI line is read from `summary.open_command`, never rebuilt. A metric row falls back to the union of BOTH sides, so a removed entity whose metrics never moved still shows its numbers.
+- 5.3 DECISION for 9.2 (CLI `explain --impact`) and feature validation: req 9.5's "list ... with counts" is satisfied in the JSON view only — the text and markdown views count and never name, because the blast radius is unbounded. Reviewed and accepted (design assigns 9.5 to understand/impact + change_summary, and 9.6 makes JSON a first-class view); record the decision rather than rediscovering it.
