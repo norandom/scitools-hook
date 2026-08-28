@@ -71,7 +71,7 @@
   - _Requirements: 6.1, 6.2_
   - _Boundary: analysis/structure/graph, analysis/structure/cycles_
 
-- [ ] 4.4 (P) Implement layer, fan and coupling rules
+- [x] 4.4 (P) Implement layer, fan and coupling rules
   - Layer rules over new edges between architecture nodes; fan-in/out thresholds for files and classes plus fan-out ratchet for affected entities; new-dependencies-per-file limit; node-pair reference limits
   - Done when tests show a forbidden new edge reported with rule name and nodes, an allowed edge silent, fan-out growth reported as ratchet, a file gaining 6 new deps flagged at limit 5, and a node pair over its reference limit flagged
   - _Requirements: 6.3, 6.4, 6.5, 6.6_
@@ -285,3 +285,6 @@
 - 4.2 open design question for operators: a limit carrying BOTH max and min freezes the metric (any movement is "worse") and the message wording reads oddly for a move toward the band. No default threshold is two-sided; revisit if operators start setting both.
 - 4.3: Tarjan is ITERATIVE on purpose (verified at recursionlimit 60 against 5000-node chain and ring); SCC correctness cross-checked against a reachability partition over 120 random graphs. "New" is per-component (`not any(cycle <= before ...)`), NOT against the union of before-cycles — merging two known cycles is a new, larger cycle, and the union rule is a silent false negative now pinned by test. Findings are deterministic byte-for-byte (members and closing_refs sorted).
 - 4.3 renderer obligation for 5.1/5.2/5.3: `Finding.path` on an arch-level structural finding is an architecture node path, not a repo-relative file.
+- 4.4: `evaluate_fan` keeps the design's 5-param signature so it carries no severity — findings default to `structure.fan_severity` ("warning") and an override must reach them through the SeverityMap `classify` applies. **8.3 MUST project `settings.structure.fan_severity` onto BOTH `structure.fan_in` and `structure.fan_out`**, or an operator's override never lands. Self-references are excluded from fan and new-dependency counts; edges inside one node or touching no node are silent.
+- 4.4 for the config task: a fan limit written as `{ min = N }` validates but silently switches that direction off (max AND ratchet). `config/validate.py` should reject a fan limit with no `max`.
+- METHOD (all future mutation testing): clear `__pycache__` or set `PYTHONDONTWRITEBYTECODE=1` before a mutated run — two same-size mutations of one file can be masked by a stale `.pyc`, which produced a false "survivor" in 4.4.
