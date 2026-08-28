@@ -693,11 +693,19 @@ class AffectedSet(BaseModel): files: set[str]; deleted_files: set[str]; keys: se
 
 #### ThresholdEvaluator and population
 ```python
-def evaluate_thresholds(snapshot: ProjectSnapshot, keys: set[EntityKey], specs: list[EffectiveThreshold], catalogue_unavailable: dict[str, list[str]]) -> list[Finding]
+@dataclass(frozen=True, slots=True)
+class ThresholdOutcome:                # RunResult needs all of this, not just findings
+    findings: list[Finding]; highest: list[HighestValue]
+    ignored_counts: dict[Scope, int]; unavailable: dict[str, list[str]]
+    reducer_failures: dict[str, str]   # rule name -> why the population could not be reduced (one entry per rule;
+                                       # keyed by rule, not metric, because project.AVG:X and routine.AVG:X differ)
+def evaluate_thresholds(snapshot: ProjectSnapshot, keys: set[EntityKey], specs: list[EffectiveThreshold], catalogue_unavailable: dict[str, list[str]], ignore: IgnoreRules | None = None) -> ThresholdOutcome
 def reduce(prefix: str, values: Sequence[float]) -> float | None   # None on StatisticsError → reported once
 ```
 - Element-scope specs: every key in scope; `value > max` or `value < min` → threshold finding. Stats-prefixed specs: `reduce(prefix, populations[scope][metric])` against the limit; `entity=None`, `path=""` (project-level). Project scope: `Db.metric()` values captured in populations as single-element vectors.
-- Metric missing for an entity's language → skipped and recorded in `unavailable` (5.5). `highest` tracks max per metric among `keys` (5.6).
+- Metric missing for an entity's language → skipped and recorded in `unavailable` (5.5). `highest` tracks max per metric among `keys` (5.6). Reducer failures and unavailable metrics are deduped: reported once per metric, never once per entity.
+- Population vectors in the snapshot are already ignore-filtered by the extractor (`ExtractRequest.ignore`); `evaluate_thresholds` applies ignore rules to entity keys only. Plain (non-prefixed) `project`-scope metrics are read from their single-element population vector, so the extractor MUST populate those vectors or those thresholds never fire.
+- `CheckPipeline` surfaces `reducer_failures` as a stderr diagnostic; they are not part of the JSON `RunResult`.
 
 #### RatchetEvaluator and classify
 ```python
