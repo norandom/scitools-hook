@@ -15,7 +15,7 @@
   - _Requirements: 1.3, 1.4, 1.6, 12.5, 12.7_
 
 - [ ] 2. Configuration: metric grammar, models, defaults, loading
-- [ ] 2.1 Implement metric-name grammar, reducer registry, synthetic-metric registry and scope kinds
+- [x] 2.1 Implement metric-name grammar, reducer registry, synthetic-metric registry and scope kinds
   - `Scope` type; parse `PREFIX:Metric` (exactly one colon; unknown prefix is a configuration error); name → callable registry for AVG/MEDIAN/MEDIANHIGH/MEDIANLOW/MEDIANGROUPED/MODE/STDEV/VARIANCE; synthetic metric registry (`CountParams`, `CountDeclMethodNonStub`) with scope binding; scope → Understand kind strings
   - Done when unit tests cover valid and invalid names and every registry entry resolves to the intended `statistics` function
   - _Requirements: 3.4, 3.5_
@@ -272,3 +272,4 @@
 ## Implementation Notes
 - 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
 - 1.2: Requirements 1.6/12.7 reconciled to the design: unexpected errors exit 70 (distinct from analysis failure 5). Keep every `GateError` subclass inside `errors.py` (the distinct-code test only sees imported subclasses). `ConfigError` family takes context via `**context: Unpack[TypedDict]` to respect the 5-parameter limit; unknown kwargs are dropped at runtime — add `tests` to mypy `files` in 10.3. Add a `py.typed` marker in 10.3.
+- 2.1: `config/metric_names.py` exports `Scope`, `SCOPES`, `ELEMENT_SCOPES`, `is_valid_scope`, `STATS_REDUCERS`, `MetricRef`, `parse_metric_name`/`format_metric_name`, `SyntheticMetric`/`SYNTHETIC_METRICS`, `SCOPE_KINDS`. `SCOPE_KINDS` deliberately omits `project`/`arch` — build `ExtractRequest.kinds_by_scope` from `SCOPE_KINDS.items()`, never iterate `SCOPES` (the worker must never call `db.ents("")`). Metric ids must be identifiers.
