@@ -108,7 +108,7 @@
   - _Requirements: 7.2, 7.3, 7.6, 7.8, 10.4_
   - _Boundary: report/hints, report/human_
 
-- [ ] 5.2 (P) Implement JSON and SARIF renderers
+- [x] 5.2 (P) Implement JSON and SARIF renderers
   - JSON: single document from `RunResult` (`schema_version` 1) and nothing else; SARIF 2.1.0 with one rule per distinct `Finding.rule`, levels error/warning/note (pre-existing), repo-relative URIs with `%SRCROOT%`, `startLine ≥ 1`
   - Done when JSON round-trips to `RunResult` and the SARIF output validates with `jsonschema` against the 2.1.0 schema stored in `tests/fixtures/`
   - _Requirements: 7.4, 7.5, 7.7_
@@ -305,3 +305,6 @@
 - 5.1: quiet mode deliberately suppresses the 10.4 agent block (7.8's "only the summary line and blocking findings" is exhaustive and its condition is narrower); a caller wanting the block must not request quiet.
 - Self-gate debt for 10.4 (with the 4.1 nesting item): several modules exceed the tool's own `file.CountDeclClass: 3` default — `config/models.py` (15), `errors.py` (8), `models/snapshot.py` (8), `report/human.py` (5).
 - 5.1: two review rounds. `overshoot_ratio` (display) and `_limit_distance` (ordering) are deliberately DIFFERENT: a min-bound breach is measured `limit/value` so 0.002 against a 0.1 minimum ranks 50x out, and a ratchet finding has NO limit distance at all — it is reported for getting worse, not for leaving a limit, so measuring it ranked a healthy metric above a real breach (the defect this task shipped and the review caught). Ratchet findings are tagged `worse than before`, never `Nx limit`. A file with no comments scores 0 against the `min: 0.1` default, so the `value <= 0` guard is on the shipped path and is pinned against a ZeroDivisionError.
+- 5.2: `tests/fixtures/sarif-schema-2.1.0.json` is the official OASIS schema, byte-identical to the published file (sha256 ad6db498…, 115632 bytes, CRLF preserved) — validation is real `jsonschema` and was proven live by rejecting 12 deliberately broken documents. `render_json` is `model_dump_json(indent=2)` verbatim: no re-sorting, no recomputed counts, because round-trip equality is the done criterion — filling `warning_count`/`preexisting_count` consistently is 8.3's job. SARIF: arch findings get a `logicalLocations` entry and NO `physicalLocation`; out-of-repo paths get an absolute `file://` URI with no `uriBaseId`; a line below 1 omits the region.
+- 5.2 for 10.3: `jsonschema` ships no stubs, so `tests/report/test_sarif.py` carries a `# type: ignore[import-untyped]`. Adding `types-jsonschema` to the dev group removes it — but `warn_unused_ignores` will then flag that ignore.
+- 5.2 for feature validation: a non-finite `Finding.value`/`limit`/`seconds` would serialize to `null` in JSON (breaking round-trip) and the invalid token `Infinity` in SARIF. Unreachable today — `analysis/baseline.py` guards `isfinite` at the one operator-editable boundary — but re-check if metric provenance widens.
