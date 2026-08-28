@@ -704,7 +704,7 @@ def reduce(prefix: str, values: Sequence[float]) -> float | None   # None on Sta
 def evaluate_ratchet(after: ProjectSnapshot, before: ProjectSnapshot, keys: set[EntityKey], specs: list[EffectiveThreshold]) -> list[Finding]
 def classify(findings: list[Finding], strict: bool, severities: SeverityMap) -> list[Finding]   # strict = settings.ratchet.strict
 ```
-- Worse = higher for `max` limits, lower for `min` limits. New entities (`key ∉ before`) get no ratchet finding (4.5). `evaluate_thresholds` sees only the after snapshot and leaves `Finding.before = None`; `evaluate_ratchet` additionally **populates `before`** on every threshold finding whose key exists on both sides, so that `classify` can decide pre-existing status: a threshold finding whose before value already exceeded the limit and did not worsen is `preexisting=True, blocking=False` unless `strict` (4.6/4.7). `blocking = severity == "error" and not preexisting`.
+- Worse = higher for `max` limits, lower for `min` limits. New entities (`key ∉ before`) get no ratchet finding (4.5). `evaluate_thresholds` sees only the after snapshot and leaves `Finding.before = None`; `evaluate_ratchet` additionally **populates `before`** on every threshold finding whose key exists on both sides, so that `classify` can decide pre-existing status: a threshold finding whose before value already exceeded the limit and did not worsen is `preexisting=True, blocking=False` unless `strict` (4.6/4.7). `blocking = severity == "error" and (strict or not preexisting)` — strict mode (4.7) is precisely what lets a pre-existing error block.
 
 #### Structure evaluators
 ```python
@@ -792,7 +792,7 @@ class DoctorReport(BaseModel): understand: UnderstandEnv | None; und_version: st
 - **Aggregate: Run** — `Settings` (+ `Provenance`) → `Selection` → snapshots (`before?`, `after`) → `Finding[]` → `RunResult`. Immutable once built.
 - **Aggregate: Cache** — `CachePaths`, `SyncState`, shadows, `.und` databases; owned by `DatabaseManager`; invalidated by `rebuild`, Understand version change, target-kind change.
 - **Baseline** — key `scope.metric` → value; monotonically non-increasing for max-limits.
-- Invariants: `EntityKey` equality across sides is the only join; `Finding.blocking ⇒ severity == error ∧ ¬preexisting`; `RunResult.blocking_count == |{f : f.blocking}|`.
+- Invariants: `EntityKey` equality across sides is the only join; `Finding.blocking ⇒ severity == error` (the model enforces this; whether a pre-existing finding blocks is decided by `analysis/classify` from strict mode, so `¬preexisting` is NOT a model-level invariant — see 4.7); `RunResult.blocking_count == |{f : f.blocking}|`.
 
 ### Data Contracts & Integration
 - **JSON (`--format json`)**: `RunResult` serialized with `model_dump(mode="json")`; `schema_version` bumps on breaking change; documented in README.

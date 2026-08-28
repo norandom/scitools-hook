@@ -1,0 +1,641 @@
+{
+  "side": "after",
+  "languages": [
+    "Python"
+  ],
+  "entities": [
+    {
+      "ref": {
+        "key": {
+          "scope": "class",
+          "path": "src/analysis/engine.py",
+          "longname": "engine.Engine",
+          "parameters": null
+        },
+        "kind": "Python Class",
+        "name": "Engine",
+        "line": 20
+      },
+      "language": "Python",
+      "metrics": {
+        "CountDeclMethod": 6,
+        "CountDeclMethodNonStub": 5,
+        "CountDeclInstanceVariable": 4,
+        "MaxInheritanceTree": 1,
+        "CountClassDerived": 0,
+        "CountClassCoupled": 6
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "class",
+          "path": "src/understand/adapter.py",
+          "longname": "adapter.Adapter",
+          "parameters": null
+        },
+        "kind": "Python Class",
+        "name": "Adapter",
+        "line": 22
+      },
+      "language": "Python",
+      "metrics": {
+        "CountDeclMethod": 3,
+        "CountDeclMethodNonStub": 3,
+        "CountDeclInstanceVariable": 2,
+        "MaxInheritanceTree": 1,
+        "CountClassDerived": 0,
+        "CountClassCoupled": 2
+      },
+      "archs": [
+        "Directory Structure/src/understand"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "file",
+          "path": "src/analysis/engine.py",
+          "longname": "src/analysis/engine.py",
+          "parameters": null
+        },
+        "kind": "Python File",
+        "name": "engine.py",
+        "line": null
+      },
+      "language": "Python",
+      "metrics": {
+        "CountLineCode": 210,
+        "CountDeclFunction": 2,
+        "CountDeclClass": 1,
+        "MaxCyclomaticStrict": 7,
+        "RatioCommentToCode": 0.15
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "file",
+          "path": "src/analysis/rules.py",
+          "longname": "src/analysis/rules.py",
+          "parameters": null
+        },
+        "kind": "Python File",
+        "name": "rules.py",
+        "line": null
+      },
+      "language": "Python",
+      "metrics": {
+        "CountLineCode": 96,
+        "CountDeclFunction": 1,
+        "CountDeclClass": 0,
+        "MaxCyclomaticStrict": 8,
+        "RatioCommentToCode": 0.19
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "file",
+          "path": "src/cli/app.py",
+          "longname": "src/cli/app.py",
+          "parameters": null
+        },
+        "kind": "Python File",
+        "name": "app.py",
+        "line": null
+      },
+      "language": "Python",
+      "metrics": {
+        "CountLineCode": 160,
+        "CountDeclFunction": 3,
+        "CountDeclClass": 0,
+        "MaxCyclomaticStrict": 12,
+        "RatioCommentToCode": 0.12
+      },
+      "archs": [
+        "Directory Structure/src/cli"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "file",
+          "path": "src/understand/adapter.py",
+          "longname": "src/understand/adapter.py",
+          "parameters": null
+        },
+        "kind": "Python File",
+        "name": "adapter.py",
+        "line": null
+      },
+      "language": "Python",
+      "metrics": {
+        "CountLineCode": 140,
+        "CountDeclFunction": 1,
+        "CountDeclClass": 1,
+        "MaxCyclomaticStrict": 6,
+        "RatioCommentToCode": 0.16
+      },
+      "archs": [
+        "Directory Structure/src/understand"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "file",
+          "path": "src/util/text.py",
+          "longname": "src/util/text.py",
+          "parameters": null
+        },
+        "kind": "Python File",
+        "name": "text.py",
+        "line": null
+      },
+      "language": "Python",
+      "metrics": {
+        "CountLineCode": 60,
+        "CountDeclFunction": 1,
+        "CountDeclClass": 0,
+        "MaxCyclomaticStrict": 4,
+        "RatioCommentToCode": 0.22
+      },
+      "archs": [
+        "Directory Structure/src/util"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/analysis/engine.py",
+          "longname": "engine.Engine.evaluate",
+          "parameters": "self,snapshot"
+        },
+        "kind": "Python Function",
+        "name": "evaluate",
+        "line": 78
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 5,
+        "CyclomaticModified": 5,
+        "Essential": 2,
+        "MaxNesting": 2,
+        "CountLineCode": 28,
+        "CountStmt": 20,
+        "CountParams": 2,
+        "CountPath": 10
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/analysis/engine.py",
+          "longname": "engine.Engine.run",
+          "parameters": "self,selection"
+        },
+        "kind": "Python Function",
+        "name": "run",
+        "line": 31
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 7,
+        "CyclomaticModified": 7,
+        "Essential": 2,
+        "MaxNesting": 3,
+        "CountLineCode": 45,
+        "CountStmt": 33,
+        "CountParams": 2,
+        "CountPath": 24
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/analysis/rules.py",
+          "longname": "rules.apply_rules",
+          "parameters": "specs,snapshot"
+        },
+        "kind": "Python Function",
+        "name": "apply_rules",
+        "line": 18
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 8,
+        "CyclomaticModified": 8,
+        "Essential": 3,
+        "MaxNesting": 3,
+        "CountLineCode": 52,
+        "CountStmt": 38,
+        "CountParams": 2,
+        "CountPath": 30
+      },
+      "archs": [
+        "Directory Structure/src/analysis"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/cli/app.py",
+          "longname": "app.build_parser",
+          "parameters": ""
+        },
+        "kind": "Python Function",
+        "name": "build_parser",
+        "line": 34
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 12,
+        "CyclomaticModified": 11,
+        "Essential": 4,
+        "MaxNesting": 4,
+        "CountLineCode": 75,
+        "CountStmt": 58,
+        "CountParams": 0,
+        "CountPath": 40
+      },
+      "archs": [
+        "Directory Structure/src/cli"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/cli/app.py",
+          "longname": "app.check_command",
+          "parameters": "args"
+        },
+        "kind": "Python Function",
+        "name": "check_command",
+        "line": 96
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 4,
+        "CyclomaticModified": 4,
+        "Essential": 1,
+        "MaxNesting": 2,
+        "CountLineCode": 26,
+        "CountStmt": 18,
+        "CountParams": 1,
+        "CountPath": 6
+      },
+      "archs": [
+        "Directory Structure/src/cli"
+      ],
+      "is_new": true
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/cli/app.py",
+          "longname": "app.main",
+          "parameters": "argv"
+        },
+        "kind": "Python Function",
+        "name": "main",
+        "line": 12
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 3,
+        "CyclomaticModified": 3,
+        "Essential": 1,
+        "MaxNesting": 1,
+        "CountLineCode": 18,
+        "CountStmt": 12,
+        "CountParams": 1,
+        "CountPath": 4
+      },
+      "archs": [
+        "Directory Structure/src/cli"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/understand/adapter.py",
+          "longname": "adapter.extract",
+          "parameters": "db_path,request"
+        },
+        "kind": "Python Function",
+        "name": "extract",
+        "line": 44
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 6,
+        "CyclomaticModified": 6,
+        "Essential": 2,
+        "MaxNesting": 2,
+        "CountLineCode": 34,
+        "CountStmt": 24,
+        "CountParams": 2,
+        "CountPath": 14
+      },
+      "archs": [
+        "Directory Structure/src/understand"
+      ],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "src/util/text.py",
+          "longname": "text.wrap_lines",
+          "parameters": "text,width"
+        },
+        "kind": "Python Function",
+        "name": "wrap_lines",
+        "line": 9
+      },
+      "language": "Python",
+      "metrics": {
+        "CyclomaticStrict": 4,
+        "CyclomaticModified": 4,
+        "Essential": 1,
+        "MaxNesting": 2,
+        "CountLineCode": 20,
+        "CountStmt": 14,
+        "CountParams": 2,
+        "CountPath": 8
+      },
+      "archs": [
+        "Directory Structure/src/util"
+      ],
+      "is_new": false
+    }
+  ],
+  "file_edges": [
+    {
+      "src": "src/analysis/engine.py",
+      "dst": "src/analysis/rules.py",
+      "refs": 4,
+      "crosses_arch": false
+    },
+    {
+      "src": "src/analysis/engine.py",
+      "dst": "src/understand/adapter.py",
+      "refs": 2,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/analysis/engine.py",
+      "dst": "src/util/text.py",
+      "refs": 1,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/analysis/rules.py",
+      "dst": "src/analysis/engine.py",
+      "refs": 2,
+      "crosses_arch": false
+    },
+    {
+      "src": "src/cli/app.py",
+      "dst": "src/analysis/engine.py",
+      "refs": 3,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/cli/app.py",
+      "dst": "src/analysis/rules.py",
+      "refs": 1,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/cli/app.py",
+      "dst": "src/understand/adapter.py",
+      "refs": 1,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/cli/app.py",
+      "dst": "src/util/text.py",
+      "refs": 2,
+      "crosses_arch": true
+    },
+    {
+      "src": "src/understand/adapter.py",
+      "dst": "src/util/text.py",
+      "refs": 1,
+      "crosses_arch": true
+    }
+  ],
+  "class_edges": [
+    {
+      "src": "[\"class\",\"src/analysis/engine.py\",\"engine.Engine\",null]",
+      "dst": "[\"class\",\"src/understand/adapter.py\",\"adapter.Adapter\",null]",
+      "refs": 3,
+      "crosses_arch": true
+    }
+  ],
+  "arch_nodes": [
+    {
+      "path": "Directory Structure/src/analysis",
+      "members": [
+        "src/analysis/engine.py",
+        "src/analysis/rules.py"
+      ]
+    },
+    {
+      "path": "Directory Structure/src/cli",
+      "members": [
+        "src/cli/app.py"
+      ]
+    },
+    {
+      "path": "Directory Structure/src/understand",
+      "members": [
+        "src/understand/adapter.py"
+      ]
+    },
+    {
+      "path": "Directory Structure/src/util",
+      "members": [
+        "src/util/text.py"
+      ]
+    }
+  ],
+  "arch_edges": [
+    {
+      "src": "Directory Structure/src/analysis",
+      "dst": "Directory Structure/src/understand",
+      "refs": 2,
+      "crosses_arch": true
+    },
+    {
+      "src": "Directory Structure/src/analysis",
+      "dst": "Directory Structure/src/util",
+      "refs": 1,
+      "crosses_arch": true
+    },
+    {
+      "src": "Directory Structure/src/cli",
+      "dst": "Directory Structure/src/analysis",
+      "refs": 4,
+      "crosses_arch": true
+    },
+    {
+      "src": "Directory Structure/src/cli",
+      "dst": "Directory Structure/src/understand",
+      "refs": 1,
+      "crosses_arch": true
+    },
+    {
+      "src": "Directory Structure/src/cli",
+      "dst": "Directory Structure/src/util",
+      "refs": 2,
+      "crosses_arch": true
+    },
+    {
+      "src": "Directory Structure/src/understand",
+      "dst": "Directory Structure/src/util",
+      "refs": 1,
+      "crosses_arch": true
+    }
+  ],
+  "populations": {
+    "routine": {
+      "CyclomaticStrict": [
+        5,
+        7,
+        8,
+        12,
+        4,
+        3,
+        6,
+        4
+      ],
+      "CountLineCode": [
+        28,
+        45,
+        52,
+        75,
+        26,
+        18,
+        34,
+        20
+      ],
+      "MaxNesting": [
+        2,
+        3,
+        3,
+        4,
+        2,
+        1,
+        2,
+        2
+      ],
+      "CountParams": [
+        2,
+        2,
+        2,
+        0,
+        1,
+        1,
+        2,
+        2
+      ]
+    },
+    "class": {
+      "CountDeclMethod": [
+        6,
+        3
+      ],
+      "CountClassCoupled": [
+        6,
+        2
+      ]
+    },
+    "file": {
+      "CountLineCode": [
+        210,
+        96,
+        160,
+        140,
+        60
+      ]
+    },
+    "project": {
+      "CyclomaticStrict": [
+        5,
+        7,
+        8,
+        12,
+        4,
+        3,
+        6,
+        4
+      ],
+      "CountLineCode": [
+        28,
+        45,
+        52,
+        75,
+        26,
+        18,
+        34,
+        20
+      ],
+      "MaxCyclomaticStrict": [
+        12
+      ],
+      "MaxNesting": [
+        4
+      ]
+    }
+  },
+  "unavailable": {
+    "Python": [
+      "PercentLackOfCohesion"
+    ]
+  },
+  "parse_errors": [
+    {
+      "path": "src/analysis/rules.py",
+      "line": 41,
+      "message": "unexpected token 'legacy'"
+    }
+  ]
+}
