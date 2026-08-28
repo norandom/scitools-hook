@@ -120,7 +120,7 @@
   - _Requirements: 9.4, 9.6, 9.8_
   - _Boundary: report/markdown_
 
-- [ ] 5.4 (P) Implement the agent-rules renderer and marker insertion
+- [x] 5.4 (P) Implement the agent-rules renderer and marker insertion
   - Deterministic Markdown snippet from effective thresholds and settings (sorted, no timestamps) covering limits, structural rules, the command to run, JSON reading guidance and the blocked-commit workflow; insert/replace between `<!-- scitools-hook:begin/end -->` markers preserving surrounding content
   - Done when rendering twice yields identical text and inserting twice into a file yields one snippet with the rest of the file byte-identical
   - _Requirements: 10.1, 10.2, 10.3_
@@ -310,3 +310,5 @@
 - 5.2 for feature validation: a non-finite `Finding.value`/`limit`/`seconds` would serialize to `null` in JSON (breaking round-trip) and the invalid token `Infinity` in SARIF. Unreachable today — `analysis/baseline.py` guards `isfinite` at the one operator-editable boundary — but re-check if metric provenance widens.
 - 5.3: `render_summary(summary, fmt)` for text/markdown/json. Paths print VERBATIM here (deliberately unlike 4.7/5.2, which build machine-consumed URIs) — a reviewer opens these on this machine. Order is the producer's everywhere except `impact`, ordered by `EntityKey.token`. The open-in-GUI line is read from `summary.open_command`, never rebuilt. A metric row falls back to the union of BOTH sides, so a removed entity whose metrics never moved still shows its numbers.
 - 5.3 DECISION for 9.2 (CLI `explain --impact`) and feature validation: req 9.5's "list ... with counts" is satisfied in the JSON view only — the text and markdown views count and never name, because the blast radius is unbounded. Reviewed and accepted (design assigns 9.5 to understand/impact + change_summary, and 9.6 makes JSON a first-class view); record the decision rather than rediscovering it.
+- 5.4: `render_rules` is deterministic by construction — thresholds sorted by `SCOPES` order then metric name, fan by `FAN_KEYS`, layer/coupling by name; no clock, path, version or environment string is ever printed, so the block can be committed to CLAUDE.md/AGENTS.md and regenerated without churn. It prints the EFFECTIVE limit (a baseline only ever narrows) and attributes it when the baseline won.
+- 5.4 for 9.3: `insert_between_markers` RAISES `ConfigError` on unbalanced, duplicated, nested or out-of-order markers, and on a snippet containing a marker — repairing would either leave a stale block an agent reads as authoritative or delete operator content. The function takes a string, so it cannot set `ConfigError.file`: the CLI must attach the target path (precedent: `config/loader.attach_source`). Marker-like text inside a fenced code block IS treated as a real block; a mixed file raises rather than corrupting.
