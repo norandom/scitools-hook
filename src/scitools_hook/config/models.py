@@ -108,7 +108,14 @@ class ThresholdSpec(StrictModel):
 def thresholds_from_tables[KeyT: str](
     tables: Mapping[KeyT, Mapping[str, object]],
 ) -> list[ThresholdSpec]:
-    """Validate the TOML threshold tables into specs; raises ``ValueError`` naming the key."""
+    """Validate the TOML threshold tables into specs.
+
+    A malformed entry raises ``ValueError`` naming ``thresholds.<scope>.<metric>``; an entry
+    that is well-formed but invalid (unknown metric name, ``max`` below ``min``, unknown
+    severity) raises a pydantic ``ValidationError`` located by list index, not by key.
+    ``config.loader`` flattens the tables itself and maps both onto a ``ConfigError`` naming
+    the file and the dotted key (req 3.8).
+    """
     return [ThresholdSpec.model_validate(entry) for entry in threshold_entries(tables)]
 
 
