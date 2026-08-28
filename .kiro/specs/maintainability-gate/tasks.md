@@ -65,7 +65,7 @@
   - _Requirements: 4.4, 4.5, 4.6, 4.7, 7.9_
   - _Boundary: analysis/ratchet, analysis/classify_
 
-- [ ] 4.3 (P) Implement dependency-graph utilities and new-cycle detection
+- [x] 4.3 (P) Implement dependency-graph utilities and new-cycle detection
   - Directed graph with reference counts, Tarjan SCC, cycle identification for file and architecture levels, "new" = SCC not contained in any before-SCC; findings list members and closing references
   - Done when tests show a new 3-file cycle reported once, a pre-existing cycle not reported, and an architecture-level cycle reported with node names
   - _Requirements: 6.1, 6.2_
@@ -283,3 +283,5 @@
 - 4.1 self-gate debt for 10.4: `_seed_unavailable` in analysis/thresholds.py nests to depth 4, over the tool's own default `MaxNesting: 3`.
 - 4.2: pipeline order is `evaluate_thresholds` -> `attach_before` -> `evaluate_ratchet` -> `classify`; without `attach_before` no threshold finding can ever be pre-existing (8.3 must honour this). `classify` infers the broken bound from the finding, valid only for `kind="threshold"`, so ratchet findings are never pre-existing; `preexisting` is additive, so a structural evaluator may declare its own. `evaluate_ratchet(keys: Collection[...])` — narrowed from `Iterable` because it re-iterates per spec and a generator silently truncated the results.
 - 4.2 open design question for operators: a limit carrying BOTH max and min freezes the metric (any movement is "worse") and the message wording reads oddly for a move toward the band. No default threshold is two-sided; revisit if operators start setting both.
+- 4.3: Tarjan is ITERATIVE on purpose (verified at recursionlimit 60 against 5000-node chain and ring); SCC correctness cross-checked against a reachability partition over 120 random graphs. "New" is per-component (`not any(cycle <= before ...)`), NOT against the union of before-cycles — merging two known cycles is a new, larger cycle, and the union rule is a silent false negative now pinned by test. Findings are deterministic byte-for-byte (members and closing_refs sorted).
+- 4.3 renderer obligation for 5.1/5.2/5.3: `Finding.path` on an arch-level structural finding is an architecture node path, not a repo-relative file.

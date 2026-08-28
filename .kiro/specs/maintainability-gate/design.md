@@ -720,13 +720,14 @@ def classify(findings: list[Finding], strict: bool, severities: SeverityMap) -> 
 
 #### Structure evaluators
 ```python
-def find_new_cycles(before_edges: list[DepEdge] | None, after_edges: list[DepEdge], severity: Severity, level: Literal["file","arch"]) -> list[Finding]
+def find_new_cycles(before_edges: Sequence[DepEdge] | None, after_edges: Sequence[DepEdge], severity: Severity, level: Literal["file","arch"]) -> list[Finding]
 def evaluate_layers(after_edges: list[DepEdge], before_edges: list[DepEdge] | None, node_of: Callable[[str], str | None], rules: list[LayerRule]) -> list[Finding]
 def evaluate_fan(after: ProjectSnapshot, before: ProjectSnapshot | None, keys_files: set[str], keys_classes: set[EntityKey], fan: dict[str, Limit]) -> list[Finding]
 def new_dependencies(before_edges, after_edges, files: set[str], max_new: int) -> list[Finding]
 def evaluate_coupling(after_arch_edges: list[DepEdge], rules: list[CouplingRule]) -> list[Finding]
 ```
-- Cycles: Tarjan SCC over edges; a cycle is *new* if its SCC (as a frozenset of nodes) is not a subset of any before-SCC; finding `details = {"members": [...], "closing_refs": [...]}` (6.1/6.2).
+- Cycles: Tarjan SCC over edges (iterative — file graphs can be deep enough to exceed the recursion limit); a cycle is an SCC of size >= 2 (a self-dependency is a parse artefact, not a cycle); it is *new* if its SCC (as a frozenset of nodes) is not a subset of any before-SCC, so a cycle that GREW is new while one that shrank is not; finding `details = {"members": [...], "closing_refs": ["a.py -> b.py (2 refs)", ...]}` (6.1/6.2). `before_edges=None` (whole-project mode, 4.8) reports every cycle as an inventory with `preexisting=False`.
+- **`Finding.path` is not always a file path.** For arch-level structural findings it is an architecture node path; renderers (5.1, 5.2, 5.3) must not assume a repo-relative file. For file-level cycles it is the first member in sorted order.
 - Layers: a finding per new edge `(src,dst)` where `node_of(src)` has a rule and `node_of(dst)` is not in `may_depend_on` and the edge was absent before (6.3).
 - Fan: thresholds on `len(dependsby)`/`len(depends)`; fan-out growth on affected entities → ratchet finding (6.4). New-deps: `|after.deps(f) − before.deps(f)| > max_new` (6.5). Coupling: sum of refs on arch edges per rule pair (6.6).
 
