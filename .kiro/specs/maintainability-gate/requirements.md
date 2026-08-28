@@ -34,7 +34,7 @@ Terminology used throughout:
 3. If no usable installation is found, the Gate shall stop with a distinct exit code and a message that lists every location that was tried and the option or variable to set.
 4. If Understand reports that no valid license is available, the Gate shall stop with a distinct exit code and a message naming the license problem, without reporting any metric violations.
 5. When the operator runs the diagnosis command, the Gate shall report the resolved installation directory, the Understand version, the Python API status, the license status, the git repository status, the location and state of the repository's analysis database, and the effective configuration with the file each setting came from.
-6. The Gate shall exit with a distinct, documented exit code for each of: no violations, violations found, Understand not found, license unavailable, analysis failure, configuration error, and not inside a git repository.
+6. The Gate shall exit with a distinct, documented exit code for each of: no violations, violations found, Understand not found, license unavailable, analysis failure, configuration error, not inside a git repository, and unexpected error.
 
 ### Requirement 2: Analysis Database Lifecycle
 **Objective:** As an operator, I want the Gate to manage the Understand database for my repository automatically and keep it out of my working tree, so that nothing about the tool ends up committed and repeated runs stay fast.
@@ -177,5 +177,5 @@ Terminology used throughout:
 4. The Gate shall accept `--format human|json|sarif|markdown` where applicable and `--output <path>` to write to a file instead of standard output.
 5. When run outside a git repository, the Gate shall stop with the not-a-git-repository exit code for subcommands that need git, and shall still allow `doctor` and `config` to run.
 6. The Gate shall never prompt for input; every choice shall be expressible as an option or environment variable.
-7. When any subcommand fails because of an unexpected error, the Gate shall print a one-line error with the exception type and, where verbose mode is on, the full traceback, and shall exit with the analysis-failure exit code.
+7. When any subcommand fails because of an unexpected error, the Gate shall print a one-line error with the exception type and, where verbose mode is on, the full traceback, and shall exit with the unexpected-error exit code, which is distinct from the analysis-failure exit code.
 8. The Gate shall provide `--verbose` to print each external command it runs, with timing, to standard error.

@@ -8,7 +8,7 @@
   - Done when `uv sync` succeeds and `uv run scitools-hook --help` prints usage; `uvx --from . scitools-hook --help` also works
   - _Requirements: 12.1, 12.2_
 
-- [ ] 1.2 Define exit codes and the typed error hierarchy
+- [x] 1.2 Define exit codes and the typed error hierarchy
   - `ExitCode` enum (0 ok, 1 violations, 2 config, 3 understand-not-found, 4 license, 5 analysis, 6 not-a-git-repo, 70 unexpected) and `GateError` subclasses carrying exit code, hint and context fields (tried locations, file/key, command/stderr, available architectures)
   - Unit test asserting every subclass maps to a distinct documented code
   - Done when `tests/test_exit_codes.py` passes and the enum is the single source imported by later tasks
@@ -271,3 +271,4 @@
 
 ## Implementation Notes
 - 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
+- 1.2: Requirements 1.6/12.7 reconciled to the design: unexpected errors exit 70 (distinct from analysis failure 5). Keep every `GateError` subclass inside `errors.py` (the distinct-code test only sees imported subclasses). `ConfigError` family takes context via `**context: Unpack[TypedDict]` to respect the 5-parameter limit; unknown kwargs are dropped at runtime — add `tests` to mypy `files` in 10.3. Add a `py.typed` marker in 10.3.
