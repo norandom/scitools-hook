@@ -734,10 +734,20 @@ def evaluate_coupling(after_arch_edges: list[DepEdge], rules: list[CouplingRule]
 #### BaselineManager
 ```python
 class Baseline(BaseModel): version: Literal[1]; captured_at: str; values: dict[str, float]   # models/baseline.py; key "scope.metric" (prefix kept)
-def parse_baseline(raw: dict[str, object], specs: list[ThresholdSpec]) -> tuple[Baseline | None, list[BaselineIssue]]   # tolerant: bad entries → issues (8.6); no file I/O
+def parse_baseline(raw: object, specs: list[ThresholdSpec]) -> tuple[Baseline | None, list[BaselineIssue]]   # tolerant: bad entries → issues (8.6); no file I/O.
+    # Takes `object` so BaselineStore can hand it json.loads output directly and a non-object document
+    # becomes an issue rather than a TypeError. Returns (None, issues) only when no usable `values` map exists.
 def apply(specs: list[ThresholdSpec], baseline: Baseline | None) -> tuple[list[EffectiveThreshold], list[BaselineIssue]]   # effective limit = min(config, baseline) for max-limits (max for min-limits); source recorded (8.2, 8.5, 8.6)
 def tighten(baseline: Baseline, observed: dict[str, float]) -> tuple[Baseline, list[TightenedLimit]]   # never raises a value (8.3, 8.4)
-def capture(snapshot: ProjectSnapshot, specs) -> Baseline                                                # 8.1
+    # `tighten` receives no specs, so it cannot know a limit's bound direction: it only ever LOWERS.
+    # A `min`-only entry therefore re-tightens solely through an operator `capture`, never automatically.
+    # `observed` MUST come from a full-snapshot `capture`, never from `ThresholdOutcome.highest`, which is a
+    # maximum over the affected element subset only and would tighten a project-wide baseline from a partial view.
+def capture(snapshot: ProjectSnapshot, specs, captured_at: str | None = None) -> Baseline                 # 8.1
+    # Records the WORST value with respect to the bound direction: the maximum for a limit with a
+    # `max`, the MINIMUM for a `min`-only limit. Recording the maximum of a `min` metric would set the
+    # floor to the best file and fail every other one on the next run, and would break the round-trip
+    # property that capturing a snapshot and applying it flags nothing on that same snapshot.
 class BaselineStore:   # runner/baseline_store.py — the only place that reads/writes the baseline file
     def __init__(self, path: Path): ...
     def load(self, specs) -> tuple[Baseline | None, list[BaselineIssue]]    # missing file → (None, []); unreadable → issue

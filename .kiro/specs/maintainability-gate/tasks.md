@@ -77,7 +77,7 @@
   - _Requirements: 6.3, 6.4, 6.5, 6.6_
   - _Boundary: analysis/structure/layers, analysis/structure/fan, analysis/structure/coupling_
 
-- [ ] 4.5 (P) Implement baseline parsing, application, tightening and capture (no file I/O)
+- [x] 4.5 (P) Implement baseline parsing, application, tightening and capture (no file I/O)
   - Tolerant parse from a raw dict reporting per-entry issues; effective limit = min(config, baseline) for max limits and max for min limits with `limit_source` recorded; tightening that never raises a value; capture of current maxima from a snapshot
   - Done when tests show a baseline lowering an effective limit, a run tightening one value and leaving another, a corrupt entry yielding an issue while other limits still apply, and capture producing one entry per configured threshold
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
@@ -288,3 +288,6 @@
 - 4.4: `evaluate_fan` keeps the design's 5-param signature so it carries no severity — findings default to `structure.fan_severity` ("warning") and an override must reach them through the SeverityMap `classify` applies. **8.3 MUST project `settings.structure.fan_severity` onto BOTH `structure.fan_in` and `structure.fan_out`**, or an operator's override never lands. Self-references are excluded from fan and new-dependency counts; edges inside one node or touching no node are silent.
 - 4.4 for the config task: a fan limit written as `{ min = N }` validates but silently switches that direction off (max AND ratchet). `config/validate.py` should reject a fan limit with no `max`.
 - METHOD (all future mutation testing): clear `__pycache__` or set `PYTHONDONTWRITEBYTECODE=1` before a mutated run — two same-size mutations of one file can be masked by a stale `.pyc`, which produced a false "survivor" in 4.4.
+- 4.5: `capture` records the WORST value for the bound direction (max for a `max` limit, MIN for a `min`-only one) — the max would set the floor to the best file and fail all the others. `apply` narrows a two-sided limit on its upper bound only and records `source="baseline"` only when the baseline actually won. `tighten` only ever lowers, so a `min` entry re-tightens only via an operator `capture`.
+- 4.5 HAZARD for 8.3: do NOT feed `ThresholdOutcome.highest` to `tighten` — it is a max over the AFFECTED element subset only, so a run touching one simple file would tighten a project-wide baseline to that file's value and fail everything next run. Use a full-snapshot `capture`. Also pass the run's `started_at` as `captured_at` so no production path reads the clock inside analysis.
+- 4.5 for 10.3: add `addopts = "--import-mode=importlib"` to `[tool.pytest.ini_options]` — pytest's default prepend mode rejects duplicate test basenames across directories (that is why `tests/analysis/test_baseline_rules.py` is not `test_baseline.py`), and the collision will recur.
