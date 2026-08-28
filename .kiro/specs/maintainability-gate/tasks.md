@@ -89,7 +89,7 @@
   - _Requirements: 4.2, 4.10_
   - _Boundary: analysis/affected_
 
-- [ ] 4.7 (P) Implement the CodeCheck violation mapper
+- [x] 4.7 (P) Implement the CodeCheck violation mapper
   - `RawViolation` rows → `Finding(kind="codecheck", rule="codecheck.<id>")` with configured severity, repo-relative path/line and message; `hint` left empty
   - Done when a fixture of raw violations maps to findings with the configured severity and repo-relative paths
   - _Requirements: 6.9_
@@ -293,3 +293,7 @@
 - 4.5 for 10.3: add `addopts = "--import-mode=importlib"` to `[tool.pytest.ini_options]` — pytest's default prepend mode rejects duplicate test basenames across directories (that is why `tests/analysis/test_baseline_rules.py` is not `test_baseline.py`), and the collision will recur.
 - 4.6: dependency comparison ignores targets in `deleted_files` on BOTH sides, reconciling 4.2 with 4.10 — losing an edge because the target was deleted is not a dependency change, but an edge gained or lost against a SURVIVING file still is (an equal-cardinality swap counts: that is the shape that closes a new cycle). Sets are compared by identity, never by size. Empty `staged` short-circuits to an empty AffectedSet (4.9).
 - 4.6 HAZARD for 8.3: req 4.10 says structural rules run on the "remaining affected files", and under this reading those land in `neighbourhood`, not `files`. The pipeline MUST pass `files | neighbourhood` as `keys_files` to `evaluate_fan`, or a deletions-only change evaluates nothing. `find_new_cycles`/`evaluate_layers` take whole edge lists and are unaffected.
+- 4.7: `map_violations(violations, severity, repo_root=None)` maps rows only — running `und` is 6.7's job. Paths are normalised treating BOTH `/` and `\` as separators (without it every path on Windows stays absolute and breaks req 7.1 and the SARIF contract); the accepted cost is that a POSIX name containing a backslash is split, now a decision on record with its own test. A path outside `repo_root` stays ABSOLUTE. CodeCheck's line 0 maps to `line=None` (SARIF needs `startLine >= 1`).
+- 4.7 HAZARD for 5.1/5.2: `Finding.entity` is always `None` for codecheck findings — the qualified name req 7.1 asks for lives in `details["entity"]`, so the renderers must read it there. For a path outside the repo root, SARIF cannot use `uriBaseId: "%SRCROOT%"`; omit it or emit a `file://` URI. `line=None` (also produced by `structure/fan.py`) means OMIT `region`, never emit `startLine: 0`.
+- 4.7 HAZARD for 8.3: `repo_root` defaults to `None`, so a pipeline that forgets to pass it silently emits absolute paths with no type error. Also decide dedup: identical CodeCheck rows are NOT deduplicated by the mapper, and `RunResult.blocking_count` is a validated invariant.
+- 4.7 for 6.7: the CSV parser must strip whitespace/newlines from check ids — `codecheck_rule` only rejects a blank id, and a newline inside a rule name corrupts human output and severity-map keys. Name its test file distinctly (`tests/understand/test_codecheck.py` would collide until 10.3 adds `--import-mode=importlib`).
