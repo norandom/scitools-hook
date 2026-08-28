@@ -689,7 +689,9 @@ class RunResult(BaseModel):
 def resolve(staged: list[StagedChange], after: ProjectSnapshot, before: ProjectSnapshot | None) -> AffectedSet   # StagedChange from models/git.py, AffectedSet from models/change.py
 class AffectedSet(BaseModel): files: set[str]; deleted_files: set[str]; keys: set[EntityKey]; neighbourhood: set[str]   # models/change.py
 ```
-- `files` = staged non-deleted paths; plus files whose `depends()` set differs between before and after (4.2). Deleted-only changes yield `files = ∅`, `neighbourhood` = former dependents (4.10). Neighbourhood = direct dependents/dependencies of `files` (needed for cycles/fan).
+- `files` = staged non-deleted paths; plus files whose `depends()` set differs between before and after (4.2). Deleted-only changes yield `files = ∅`, `neighbourhood` = former dependents (4.10). Neighbourhood = direct dependents/dependencies of `files` (needed for cycles/fan), excluding the affected and deleted files themselves.
+- **Reconciling 4.2 with 4.10**: the dependency comparison ignores targets in `deleted_files` on both sides. Losing an edge *because the change deleted the target* is not a dependency change of the dependent — otherwise every deletion would drag all its dependents into `files` and 4.10's "deletions-only yields an empty file set" could never hold. Such a dependent becomes a neighbour instead. A genuine dependency change (an edge gained or lost against a SURVIVING file) is still detected.
+- An empty `staged` list short-circuits to an empty `AffectedSet` regardless of snapshot differences (4.9).
 
 #### ThresholdEvaluator and population
 ```python

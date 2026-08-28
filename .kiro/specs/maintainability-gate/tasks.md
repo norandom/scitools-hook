@@ -83,7 +83,7 @@
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
   - _Boundary: analysis/baseline_
 
-- [ ] 4.6 (P) Implement the affected-set resolver
+- [x] 4.6 (P) Implement the affected-set resolver
   - Affected files = staged non-deleted paths plus files whose dependency set differs between before and after; affected keys = entities defined in those files; neighbourhood = direct dependents and dependencies; deletions-only handling
   - Done when tests show a dependent file pulled in because its dependency set changed and a deletions-only change yielding an empty file set with a non-empty neighbourhood
   - _Requirements: 4.2, 4.10_
@@ -291,3 +291,5 @@
 - 4.5: `capture` records the WORST value for the bound direction (max for a `max` limit, MIN for a `min`-only one) — the max would set the floor to the best file and fail all the others. `apply` narrows a two-sided limit on its upper bound only and records `source="baseline"` only when the baseline actually won. `tighten` only ever lowers, so a `min` entry re-tightens only via an operator `capture`.
 - 4.5 HAZARD for 8.3: do NOT feed `ThresholdOutcome.highest` to `tighten` — it is a max over the AFFECTED element subset only, so a run touching one simple file would tighten a project-wide baseline to that file's value and fail everything next run. Use a full-snapshot `capture`. Also pass the run's `started_at` as `captured_at` so no production path reads the clock inside analysis.
 - 4.5 for 10.3: add `addopts = "--import-mode=importlib"` to `[tool.pytest.ini_options]` — pytest's default prepend mode rejects duplicate test basenames across directories (that is why `tests/analysis/test_baseline_rules.py` is not `test_baseline.py`), and the collision will recur.
+- 4.6: dependency comparison ignores targets in `deleted_files` on BOTH sides, reconciling 4.2 with 4.10 — losing an edge because the target was deleted is not a dependency change, but an edge gained or lost against a SURVIVING file still is (an equal-cardinality swap counts: that is the shape that closes a new cycle). Sets are compared by identity, never by size. Empty `staged` short-circuits to an empty AffectedSet (4.9).
+- 4.6 HAZARD for 8.3: req 4.10 says structural rules run on the "remaining affected files", and under this reading those land in `neighbourhood`, not `files`. The pipeline MUST pass `files | neighbourhood` as `keys_files` to `evaluate_fan`, or a deletions-only change evaluates nothing. `find_new_cycles`/`evaluate_layers` take whole edge lists and are unaffected.
