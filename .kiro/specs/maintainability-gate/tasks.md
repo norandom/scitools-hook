@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: project scaffold and error contract
-- [ ] 1.1 Create the uv project and package skeleton
+- [x] 1.1 Create the uv project and package skeleton
   - `pyproject.toml` with package name `scitools-hook`, `requires-python = ">=3.12"` (no upper bound), hatchling backend, console script `scitools-hook`, runtime deps (`typer`, `rich`, `pydantic`, `platformdirs`) and dev deps (`pytest`, `pytest-cov`, `ruff`, `mypy`, `jsonschema`); tool sections for ruff (line length 100), mypy strict on `src/`, pytest
   - `src/scitools_hook/` with empty layer packages (`config`, `models`, `understand`, `git`, `analysis`, `analysis/structure`, `report`, `runner`, `cli`), `__version__`, and a placeholder typer app that prints help
   - `README.md` stub with the install line and the note that the PyPI `understand` package is unrelated
@@ -268,3 +268,6 @@
   - Done when the tool reports zero blocking findings on itself (or documented exceptions) and the recorded warm staged run is under 30 seconds
   - _Requirements: 4.11_
   - _Depends: 10.1, 10.3_
+
+## Implementation Notes
+- 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
