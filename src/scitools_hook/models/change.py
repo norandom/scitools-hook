@@ -52,6 +52,8 @@ class EntityDelta(DataModel):
     before: dict[str, float] = Field(default_factory=dict)
     after: dict[str, float] = Field(default_factory=dict)
     delta: dict[str, float] = Field(default_factory=dict)
+    arch_path: str | None = None
+    """Architecture path of the entity's container file, so a reviewer can find it (req 9.7)."""
 
 
 class DependencyDelta(DataModel):

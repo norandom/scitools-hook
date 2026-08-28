@@ -95,7 +95,7 @@
   - _Requirements: 6.9_
   - _Boundary: analysis/codecheck_
 
-- [ ] 4.8 (P) Implement the change-summary builder
+- [x] 4.8 (P) Implement the change-summary builder
   - Per-file entity deltas (added/removed/modified with before/after/delta metrics), dependency deltas grouped by architecture node with cross-boundary marking, rankings by delta and by value, impact sets attached, architecture paths shown, database path and open-in-GUI command included
   - Done when tests over the fixture snapshots produce the expected deltas, rankings and cross-boundary flags
   - _Requirements: 9.1, 9.2, 9.3, 9.5, 9.7, 9.8_
@@ -297,3 +297,6 @@
 - 4.7 HAZARD for 5.1/5.2: `Finding.entity` is always `None` for codecheck findings — the qualified name req 7.1 asks for lives in `details["entity"]`, so the renderers must read it there. For a path outside the repo root, SARIF cannot use `uriBaseId: "%SRCROOT%"`; omit it or emit a `file://` URI. `line=None` (also produced by `structure/fan.py`) means OMIT `region`, never emit `startLine: 0`.
 - 4.7 HAZARD for 8.3: `repo_root` defaults to `None`, so a pipeline that forgets to pass it silently emits absolute paths with no type error. Also decide dedup: identical CodeCheck rows are NOT deduplicated by the mapper, and `RunResult.blocking_count` is a validated invariant.
 - 4.7 for 6.7: the CSV parser must strip whitespace/newlines from check ids — `codecheck_rule` only rejects a blank id, and a newline inside a rule name corrupts human output and severity-map keys. Name its test file distinctly (`tests/understand/test_codecheck.py` would collide until 10.3 adds `--import-mode=importlib`).
+- 4.8: `build_summary(before, after, affected, paths, aids=None)` — `impact`/`graphs`/`top_n` are grouped into a frozen `ReviewAids` because the design's 7 params exceed the 5-param limit. Rankings are per (entity, metric) pair by MAGNITUDE (a removal of 22 lines outranks an addition of 6) with ties on entity key then metric name; each row is narrowed to the metric it ranks on. Known cost: one entity can take several slots and crowd others out of `DEFAULT_TOP_N` — revisit against configured limits when real change sizes are seen.
+- 4.8: `EntityDelta.arch_path` was added to `models/change.py` (the one authorised field) because `render_summary(summary, fmt)` sees only the `ChangeSummary` — a helper the renderer must call cannot satisfy req 9.7, and `--format json` would have omitted it. `architecture_index(after, before)` stays public for 8.4's graph targets; the after side wins so a deleted file still resolves.
+- 4.8 for 5.3/8.4: `GUI_EXECUTABLE = "understand"` and `open_command` are defined here (shlex-quoted, pointing at the AFTER database). Do not define a second version of that command.
