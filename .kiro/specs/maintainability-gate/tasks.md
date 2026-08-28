@@ -59,7 +59,7 @@
   - _Requirements: 3.4, 3.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
   - _Boundary: analysis/thresholds, analysis/population_
 
-- [ ] 4.2 (P) Implement the ratchet evaluator and finding classification
+- [x] 4.2 (P) Implement the ratchet evaluator and finding classification
   - Before/after comparison per `EntityKey` (worse = higher for max limits, lower for min limits); new entities skip ratchet; the ratchet step also populates `before` on every threshold finding whose key exists on both sides; `classify` then derives pre-existing status, applies strict mode and sets `blocking = error ∧ ¬preexisting`
   - Done when the test matrix (worse / same / better × new / existing × under / over limit × strict on / off) produces the expected `blocking` and `preexisting` flags
   - _Requirements: 4.4, 4.5, 4.6, 4.7, 7.9_
@@ -281,3 +281,5 @@
 - 4.1: `evaluate_thresholds(snapshot, keys, specs, catalogue_unavailable=None, ignore=None) -> ThresholdOutcome` (frozen dataclass: findings, highest, ignored_counts, unavailable, reducer_failures keyed by RULE not metric). Two review rounds were needed: element-scope stats prefixes, entity-level unavailable discovery and the snapshot-seed path each survived deletion untested until pinned by mutation-proven tests. `analysis` never sees `ConfigError` — `reduce` raises `ValueError` on an unknown prefix.
 - 4.1 constraints on the extractor (6.2): population vectors must arrive ALREADY ignore-filtered (`ExtractRequest.ignore`), and plain `project`-scope metrics are read from single-element population vectors — if the extractor omits them, `project.MaxCyclomaticStrict`/`MaxNesting` never fire. `reducer_failures` has no `RunResult` field: 8.3 surfaces it on stderr.
 - 4.1 self-gate debt for 10.4: `_seed_unavailable` in analysis/thresholds.py nests to depth 4, over the tool's own default `MaxNesting: 3`.
+- 4.2: pipeline order is `evaluate_thresholds` -> `attach_before` -> `evaluate_ratchet` -> `classify`; without `attach_before` no threshold finding can ever be pre-existing (8.3 must honour this). `classify` infers the broken bound from the finding, valid only for `kind="threshold"`, so ratchet findings are never pre-existing; `preexisting` is additive, so a structural evaluator may declare its own. `evaluate_ratchet(keys: Collection[...])` — narrowed from `Iterable` because it re-iterates per spec and a generator silently truncated the results.
+- 4.2 open design question for operators: a limit carrying BOTH max and min freezes the metric (any movement is "worse") and the message wording reads oddly for a move toward the band. No default threshold is two-sided; revisit if operators start setting both.

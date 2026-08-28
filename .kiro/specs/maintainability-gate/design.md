@@ -713,6 +713,10 @@ def evaluate_ratchet(after: ProjectSnapshot, before: ProjectSnapshot, keys: set[
 def classify(findings: list[Finding], strict: bool, severities: SeverityMap) -> list[Finding]   # strict = settings.ratchet.strict
 ```
 - Worse = higher for `max` limits, lower for `min` limits. New entities (`key ∉ before`) get no ratchet finding (4.5). `evaluate_thresholds` sees only the after snapshot and leaves `Finding.before = None`; `evaluate_ratchet` additionally **populates `before`** on every threshold finding whose key exists on both sides, so that `classify` can decide pre-existing status: a threshold finding whose before value already exceeded the limit and did not worsen is `preexisting=True, blocking=False` unless `strict` (4.6/4.7). `blocking = severity == "error" and (strict or not preexisting)` — strict mode (4.7) is precisely what lets a pre-existing error block.
+- A limit carrying BOTH `max` and `min` is treated as a max limit *and* a min limit: movement in either direction is "worse", and the finding names the bound it moved toward.
+- `classify` has no access to specs, so it infers the broken bound from the finding (`value < limit` ⇒ a `min` bound). That inference is valid only for `kind="threshold"`; a ratchet finding's value may legitimately sit inside its limit, so ratchet findings are never pre-existing.
+- `preexisting` is additive: `classify` never clears a flag an evaluator already set (a structural evaluator may declare a pre-existing cycle itself), so strict mode applies to those too.
+- `CheckPipeline` MUST call `attach_before(threshold_findings, before)` before `classify`, or no threshold finding can ever be pre-existing.
 
 #### Structure evaluators
 ```python
