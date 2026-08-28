@@ -21,7 +21,7 @@
   - _Requirements: 3.4, 3.5_
   - _Boundary: config/metric_names_
 
-- [ ] 2.2 Implement configuration models, built-in defaults and the `init` template
+- [x] 2.2 Implement configuration models, built-in defaults and the `init` template
   - Pydantic models for settings, thresholds (scalar = max, table = `{max}`/`{min}`), ignore regexes, structure rules (architecture, depth, cycles severities, fan limits, layer rules, coupling rules, max new deps), codecheck, baseline, hints, output, understand (`home`, `db_location`, `api_mode`)
   - Built-in defaults covering the routine, class, file and project metrics named in the requirements, default exclude patterns, default per-rule severities
   - Commented TOML template renderer for `init` and an overwrite guard
@@ -273,3 +273,4 @@
 - 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
 - 1.2: Requirements 1.6/12.7 reconciled to the design: unexpected errors exit 70 (distinct from analysis failure 5). Keep every `GateError` subclass inside `errors.py` (the distinct-code test only sees imported subclasses). `ConfigError` family takes context via `**context: Unpack[TypedDict]` to respect the 5-parameter limit; unknown kwargs are dropped at runtime — add `tests` to mypy `files` in 10.3. Add a `py.typed` marker in 10.3.
 - 2.1: `config/metric_names.py` exports `Scope`, `SCOPES`, `ELEMENT_SCOPES`, `is_valid_scope`, `STATS_REDUCERS`, `MetricRef`, `parse_metric_name`/`format_metric_name`, `SyntheticMetric`/`SYNTHETIC_METRICS`, `SCOPE_KINDS`. `SCOPE_KINDS` deliberately omits `project`/`arch` — build `ExtractRequest.kinds_by_scope` from `SCOPE_KINDS.items()`, never iterate `SCOPES` (the worker must never call `db.ents("")`). Metric ids must be identifiers.
+- 2.2: `Settings.ratchet.strict` (not `ratchet_strict`) — design aligned. Structure severities live on `fan_severity`, `new_dependencies_severity`, `LayerRule.severity`, `CouplingRule.severity`; `structure.fan_in`/`fan_out` share one model field so their `DEFAULT_SEVERITIES` entries must stay equal. Every model is `extra="forbid"`. Carry into 2.3: errors raised inside `ThresholdSpec` surface with pydantic loc `('thresholds', <index>, ...)`, not a dotted `thresholds.<scope>.<metric>` key — the loader must map index→key (order is preserved by `threshold_entries`) to satisfy 3.8, or fix the `thresholds_from_tables` docstring at models.py:111.

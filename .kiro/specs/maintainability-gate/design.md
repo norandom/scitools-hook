@@ -432,9 +432,10 @@ class IgnoreRules(BaseModel): files: list[str]; classes: list[str]; routines: li
 class ProjectSettings(BaseModel): include: list[str]; exclude: list[str]; languages: list[str] | None
 class UnderstandSettings(BaseModel): home: Path | None; db_location: Literal["cache", "gitdir"] = "cache"; api_mode: Literal["auto", "inprocess", "upython"] = "auto"   # auto = upython when present, else in-process (verified: in-process crashes on Linux 6.5 once licensed)
 class OutputSettings(BaseModel): graphs_max: int = 20; impact_depth: int = 3; show_highest: bool = False
+class RatchetSettings(BaseModel): strict: bool = False        # TOML [ratchet] strict = …
 class Settings(BaseModel):
     understand: UnderstandSettings; project: ProjectSettings; thresholds: list[ThresholdSpec]
-    ratchet_strict: bool = False; ignore: IgnoreRules; structure: StructureRules
+    ratchet: RatchetSettings; ignore: IgnoreRules; structure: StructureRules
     codecheck: CodeCheckSettings; baseline: BaselineSettings; hints: dict[str, str]; output: OutputSettings
 
 class Provenance(BaseModel): values: dict[str, str]   # dotted key → "default|user:<path>|repo:<path>|env:<VAR>|cli"
@@ -701,7 +702,7 @@ def reduce(prefix: str, values: Sequence[float]) -> float | None   # None on Sta
 #### RatchetEvaluator and classify
 ```python
 def evaluate_ratchet(after: ProjectSnapshot, before: ProjectSnapshot, keys: set[EntityKey], specs: list[EffectiveThreshold]) -> list[Finding]
-def classify(findings: list[Finding], strict: bool, severities: SeverityMap) -> list[Finding]
+def classify(findings: list[Finding], strict: bool, severities: SeverityMap) -> list[Finding]   # strict = settings.ratchet.strict
 ```
 - Worse = higher for `max` limits, lower for `min` limits. New entities (`key ∉ before`) get no ratchet finding (4.5). `evaluate_thresholds` sees only the after snapshot and leaves `Finding.before = None`; `evaluate_ratchet` additionally **populates `before`** on every threshold finding whose key exists on both sides, so that `classify` can decide pre-existing status: a threshold finding whose before value already exceeded the limit and did not worsen is `preexisting=True, blocking=False` unless `strict` (4.6/4.7). `blocking = severity == "error" and not preexisting`.
 
