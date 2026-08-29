@@ -22,28 +22,34 @@ Two consequences shape the code:
   which requirement 6.8 turns into a configuration error. A non-zero exit or a traceback
   means the worker itself is broken, and the runner reports it as such.
 
-Operations implemented here (the impact and graph operations follow in a later task):
-``ping`` for the probes, ``catalogue`` for metric availability per language and kind
-(requirement 5.5 and the configuration validation of 3.8), ``archs`` for the architecture
-nodes structural rules work on (requirements 6.7 and 6.8), and ``snapshot``, which turns one
-database into the ``ProjectSnapshot`` document every rule is evaluated against (requirements
-3.5, 5.5, 6.7, 9.7).
+Operations implemented here: ``ping`` for the probes, ``catalogue`` for metric availability
+per language and kind (requirement 5.5 and the configuration validation of 3.8), ``archs`` for
+the architecture nodes structural rules work on (requirements 6.7 and 6.8), ``snapshot``,
+which turns one database into the ``ProjectSnapshot`` document every rule is evaluated against
+(requirements 3.5, 5.5, 6.7, 9.7), ``impact``, the transitive reverse-reference walk behind the
+blast radius of a change (requirement 9.5), and ``graphs``, which exports Understand's own
+butterfly and depends-on pictures as SVG (requirement 9.4).
 
 Database discipline: a database is opened only by the operations that need one and always
 closed in a ``finally``, because the API crashes the process when entities outlive their
 database, and only one database may be open per process.
+
+File discipline: ``graphs`` is the only operation that writes anything, and it writes only
+inside the output directory the request names.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, TextIO
+from typing import Any, Final, NoReturn, TextIO
 
-OPS: Final[tuple[str, ...]] = ("ping", "catalogue", "archs", "snapshot")
+OPS: Final[tuple[str, ...]] = ("ping", "catalogue", "archs", "snapshot", "impact", "graphs")
 """The operations this worker answers, in the order the usage message lists them."""
 
 ERROR_TYPES: Final[tuple[str, ...]] = (
@@ -93,7 +99,23 @@ def _error_type(message: str) -> str:
 
 
 def _import_api() -> Any:
-    """Import ``understand`` on demand, refusing the request when the interpreter has none."""
+    """Import ``understand`` on demand, refusing the request when the interpreter has none.
+
+    ``LC_NUMERIC`` is forced to ``C`` first, before the API's own initialization reads the
+    environment. Measured on this machine, whose ``LC_NUMERIC`` is German: without it every
+    SVG ``Ent.draw`` writes carries ``fill-opacity="0,000000"`` and
+    ``stroke-opacity="0,000000"`` — well-formed XML whose attribute values are not valid
+    numbers, so a renderer drops them and paints an intended-transparent stroke opaque.
+    What the graph engine reads is the *environment*, not the process's C locale:
+    ``locale.setlocale(LC_NUMERIC, "C")`` leaves the comma in place (verified), while setting
+    the variable works. Setting it after ``import understand`` was also measured to work — the
+    environment is read when the graph engine initializes, not at import — so this is the
+    earliest safe point rather than the only one that functions, and it is preferred because
+    it is the single choke point every operation passes through, which keeps the rule off the
+    call sites. A caller's ``LC_ALL`` still wins over ``LC_NUMERIC``, which is one reason
+    :func:`_as_float` goes on accepting a comma in a metric value.
+    """
+    os.environ["LC_NUMERIC"] = "C"
     try:
         import understand  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -124,7 +146,12 @@ def _require_str_list(request: Mapping[str, object], key: str) -> list[str]:
 
 
 def _require_depth(request: Mapping[str, object]) -> int:
-    """Read the architecture depth, defaulting to the immediate children of the root."""
+    """Read the depth of a walk, defaulting to one level.
+
+    Two operations count different things with it and both are inclusive: ``archs`` and
+    ``snapshot`` count architecture levels below the root, where 0 is the architecture
+    itself, and ``impact`` counts reference hops out from an entity, where 0 reports nothing.
+    """
     value = request.get("depth", 1)
     if not isinstance(value, int) or value < 0:
         raise _RequestError("BadRequest", f"'depth' must be an integer >= 0, got {value!r}")
@@ -387,7 +414,7 @@ class _Plan:
     architecture: str
     depth: int
     include_edges: bool
-    parse_errors: list[object]
+    parse_errors: list[dict[str, object]]
 
 
 def _require_bool(request: Mapping[str, object], key: str, default: bool) -> bool:
@@ -413,8 +440,8 @@ def _optional_str_list(request: Mapping[str, object], key: str) -> list[str]:
     return [] if key not in request else _require_str_list(request, key)
 
 
-def _require_objects(request: Mapping[str, object], key: str) -> list[object]:
-    """Read an optional list of JSON objects, the shape ``ParseError`` validates from."""
+def _require_objects(request: Mapping[str, object], key: str) -> list[dict[str, object]]:
+    """Read an optional list of JSON objects: parse errors, entity keys, graph targets."""
     if key not in request:
         return []
     value = request.get(key)
@@ -506,6 +533,40 @@ def _plan(request: Mapping[str, object]) -> _Plan:
     )
 
 
+def _container_of(ent: Any, root: str) -> tuple[str, int | None] | None:
+    """The project path of the file an entity is written in, and the line it sits on."""
+    ref = ent.ref(CONTAINER_REFS)
+    if ref is None:
+        return None
+    container = ref.file()
+    if container is None:
+        return None
+    path = _project_path(container, root)
+    return None if path is None else (path, ref.line())
+
+
+def _may_hop(ent: Any, root: str) -> bool:
+    """Whether the walk may pass through this entity to the code on the other side of it.
+
+    Two conditions, both necessary: it is one of :data:`OBJECT_KINDS`, so that a namespace or
+    another grouping entity cannot lend its users to everything inside it, and it is project
+    code, so that a hop cannot run through Understand's own stubs and join two unrelated parts
+    of a repository.
+    """
+    return ent.kind().check(OBJECT_KINDS) and _is_project(ent, root)
+
+
+def _is_project(ent: Any, root: str) -> bool:
+    """Whether an entity of *any* kind is project code: a project file, or written in one.
+
+    The impact walk needs this for entities no scope of the gate keys — a local, a parameter,
+    a member object, a macro — because those are what a C++ type is referenced by. It is the
+    same judgement :func:`_locate` makes, minus the notion of a scope, so a library entity or
+    one outside the analysis root is refused by exactly the same rule.
+    """
+    return _project_path(ent, root) is not None or _container_of(ent, root) is not None
+
+
 def _locate(ent: Any, scope: str, root: str) -> tuple[str, int | None] | None:
     """The container file's path and the entity's line, or ``None`` when it is not project code.
 
@@ -517,20 +578,38 @@ def _locate(ent: Any, scope: str, root: str) -> tuple[str, int | None] | None:
     if scope == "file":
         path = _project_path(ent, root)
         return None if path is None else (path, None)
-    ref = ent.ref(CONTAINER_REFS)
-    if ref is None:
-        return None
-    container = ref.file()
-    if container is None:
-        return None
-    path = _project_path(container, root)
-    return None if path is None else (path, ref.line())
+    return _container_of(ent, root)
 
 
 def _key_of(ent: Any, scope: str, path: str) -> _Key:
     """Build the identity of one entity; a file's long name is its root-relative path."""
     longname = path if scope == "file" else str(ent.longname())
     return _Key(scope=scope, path=path, longname=longname, parameters=ent.parameters())
+
+
+def _check_root(db: Any, kind: str | None, db_path: str, root: str) -> None:
+    """Refuse an analysis root that names no file of this database.
+
+    A root that is not the directory ``und add`` was pointed at resolves nothing: every file
+    falls back to ``relname``, every key carries a path the caller never asked for, the
+    requested files match none of them, and the answer is a valid, empty, entirely green
+    document that gates nothing — the same silent failure a missing root would cause, which is
+    why the root is required in the first place. It is a caller error and it is reported as
+    one, with the long names that were actually found. Every operation that resolves entities
+    checks it: an ``impact`` or ``graphs`` request against the wrong root would otherwise come
+    back as one warning per key, which reads like "nothing depends on this" rather than like
+    the configuration mistake it is.
+    """
+    if kind is None:
+        return
+    found = [ent for ent in db.ents(kind) if not ent.library()]
+    if not found or any(_relative_to(str(ent.longname()), root) for ent in found):
+        return
+    raise _RequestError(
+        "AnalysisRootMismatch",
+        f"no file of {db_path} is under the analysis root {root!r}",
+        found=sorted(str(ent.longname()) for ent in found)[:3],
+    )
 
 
 def _is_ignored(patterns: Sequence[re.Pattern[str]], key: _Key) -> bool:
@@ -585,7 +664,7 @@ class _Extractor:
 
     def build(self) -> dict[str, object]:
         """Extract everything the snapshot holds and answer with its wire form."""
-        self._check_root()
+        _check_root(self.db, self.plan.kinds.get("file"), self.plan.db, self.plan.root)
         self._read_architecture()
         for scope in SNAPSHOT_SCOPES:
             self._read_scope(scope)
@@ -604,28 +683,6 @@ class _Extractor:
         return document
 
     # --- architecture (req 6.7, 6.8, 9.7) -----------------------------------------
-
-    def _check_root(self) -> None:
-        """Refuse an analysis root that names no file of this database.
-
-        A root that is not the directory ``und add`` was pointed at resolves nothing: every
-        file falls back to ``relname``, every key carries a path the caller never asked for,
-        the requested files match none of them, and the answer is a valid, empty, entirely
-        green snapshot that gates nothing — the same silent failure a missing root would
-        cause, which is why the root is required in the first place. It is a caller error and
-        it is reported as one, with the long names that were actually found.
-        """
-        kind = self.plan.kinds.get("file")
-        if kind is None:
-            return
-        found = [ent for ent in self.db.ents(kind) if not ent.library()]
-        if not found or any(_relative_to(str(ent.longname()), self.plan.root) for ent in found):
-            return
-        raise _RequestError(
-            "AnalysisRootMismatch",
-            f"no file of {self.plan.db} is under the analysis root {self.plan.root!r}",
-            found=sorted(str(ent.longname()) for ent in found)[:3],
-        )
 
     def _read_architecture(self) -> None:
         """Take the nodes of the requested architecture at the requested depth and their files."""
@@ -1022,11 +1079,422 @@ def _op_snapshot(api: Any, request: Mapping[str, object]) -> dict[str, object]:
         db.close()
 
 
+# --- the impact and graph operations (req 9.4, 9.5) ---------------------------------
+
+STRUCTURAL_REFS: Final = "definein, declarein"
+"""Reverse reference kinds that lead to an entity's container rather than to a user of it.
+
+The impact walk takes *every* reverse reference Understand records — direction comes from
+``Ref.isforward()``, Understand's own bit, so no reference kind can be forgotten — and then
+leaves out only these two. A container holds an entity; it does not depend on it. Measured:
+a member function carries ``C Declarein`` and ``C Definein`` to its class and a class carries
+them to its namespace, so keeping them would make every method report the class that holds it
+and then drag that class's whole blast radius one level further out.
+
+Three more tokens were carried here for a while on the strength of their names and were
+dropped once measured: ``beginby`` and ``endby`` are only ever self-references (0 non-self
+occurrences across three databases) and an entity is already kept out of its own impact set,
+and ``containin`` was never emitted at all — not by a nested class, a nested function, a
+comprehension, a generator, a lambda or a coroutine.
+
+An earlier version enumerated the reverse kinds to *include* (``callby, useby, setby, …``).
+That was measurably wrong: a C++ exception class carries ``C Throwby Exception`` and
+``C Catchby Exception``, a function pointer ``C Assignby FunctionPtr``, a class named in
+another translation unit ``C Nameby`` — none of which were in the list, so the blast radius
+came back empty for code that plainly had one. ``Kind.list_reference`` cannot close that gap:
+it answers with both directions at once and so proves a token exists, never that a list is
+complete.
+"""
+
+OBJECT_KINDS: Final = "object, parameter, macro, variable, field, property"
+"""Entity kinds the walk may pass *through* on its way to the code that uses an entity.
+
+This is a positive list, and deliberately so. In C++ the thing that refers to a type is
+usually not a routine but an object: measured on real databases, ``class Box`` used as
+``Box box(3); box.area();`` is referenced only by ``box``, a ``C Object Local``; a struct
+passed as a parameter only by the ``C Parameter``; a class held as a member only by the
+``C Private Member Object``. Those hops have to be followed or the answer is empty.
+
+What must *not* be followed is anything that merely groups unrelated entities. A namespace is
+the case that proves it: every class defined inside a ``namespace app { … }`` block carries
+``C Nameby`` to the namespace, and the namespace refers back to everything that mentions it,
+so walking through it gives every class in the namespace the same inflated answer — the
+namespace's user count wearing each class's name. Verified that this filter matches
+``C Object Local``, ``C Object Global``, ``C Parameter``, ``C Private/Public Member Object``
+and ``C Macro`` while refusing ``C Namespace``, ``C Namespace Alias``, ``C Class Type``,
+``C Typedef Type``, ``C Code File`` and every function kind.
+
+Known cost, measured: a type reached only through a ``C Typedef Type`` (``typedef Payload
+Alias;`` then ``Alias a;``) loses that user, because a typedef is not an object. Unlike a
+namespace a typedef aliases exactly one type and so could not inflate an answer, but it is
+outside what this list is justified by; recorded for 6.6 rather than guessed at.
+"""
+
+GRAPH_SUFFIX: Final = ".svg"
+"""Requirement 9.4 asks for SVG, and ``Ent.draw`` picks the format from the extension."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Located:
+    """One project entity of an element scope: the live entity plus what an ``EntityRef`` shows."""
+
+    ent: Any
+    key: _Key
+    line: int | None
+
+    def document(self) -> dict[str, object]:
+        """The ``EntityRef`` wire form: the identity, Understand's kind and name, the line."""
+        return {
+            "key": self.key.document(),
+            "kind": str(self.ent.kind().longname()),
+            "name": str(self.ent.name()),
+            "line": self.line,
+        }
+
+
+class _Entities:
+    """Every project entity of the element scopes, reachable by key token and by entity id.
+
+    Both operations here start from an ``EntityKey`` the caller computed from an earlier
+    snapshot, and the API offers no lookup by that identity, so the scopes are walked once
+    and indexed. The index is built with :func:`_locate` and :func:`_key_of` — the very
+    functions the snapshot keys entities with — so a key that named an entity there names the
+    same entity here, and a database that has no such entity says so instead of guessing.
+
+    The identity index doubles as the project filter: an entity Understand marks as a library,
+    or one whose container file sits outside the analysis root, never enters it, so neither
+    the impact walk nor a graph target can reach the ~800 ``builtins.*`` entities Understand
+    injects into a Python project.
+    """
+
+    def __init__(self, db: Any, kinds: Mapping[str, str], root: str) -> None:
+        self.root = root
+        self.by_token: dict[str, _Located] = {}
+        self.by_id: dict[int, str] = {}
+        for scope in SNAPSHOT_SCOPES:
+            self._read(db, kinds.get(scope), scope, root)
+
+    def _read(self, db: Any, kind: str | None, scope: str, root: str) -> None:
+        """Index one element scope; a scope the request named no kind string for is skipped."""
+        if kind is None:
+            return
+        for ent in db.ents(kind):
+            located = _locate(ent, scope, root)
+            if located is None:
+                continue
+            key = _key_of(ent, scope, located[0])
+            if key.token not in self.by_token:
+                self.by_token[key.token] = _Located(ent, key, located[1])
+            self.by_id[ent.id()] = key.token
+
+    def resolve(self, key: _Key) -> _Located | None:
+        """The entity a key names, or ``None`` when this database has no record of it."""
+        return self.by_token.get(key.token)
+
+    def referencing(self, ents: Iterable[Any], seen: set[int]) -> list[_Located]:
+        """The project entities that reference any of ``ents``, seen through opaque ones.
+
+        Only entities the gate can key are *reported*. Beyond those, exactly one class of
+        entity may be walked *through*: an object — a local, a parameter, a member object, a
+        macro, a variable — that is also project code, which is what :func:`_may_hop` decides
+        from the positive list in :data:`OBJECT_KINDS`. In C++ an object is usually the only
+        thing standing between a type and the code that uses it, so refusing the hop reports
+        nothing for a class used as a local, as a parameter or as a member.
+
+        The rule is a positive list and not "anything that is not keyable", because the
+        entities that are neither keyable nor objects are the ones that *group* unrelated
+        code. A namespace is the measured case: walking through it gives every class it holds
+        the namespace's own user list, so two unrelated classes come back with identical
+        answers. A library entity is refused for the same reason one door further out.
+
+        The hop is free: the entity recovered beyond an object is reported at the depth of the
+        reference that reached the object, so ``depth`` measures the same distance in C++ as
+        in Python, where the same call produces a direct ``Callby``. ``seen`` bounds the walk
+        to one visit per entity, so a cycle of objects terminates.
+
+        Understand's walk order is not the repository's, so the answer is ordered by key
+        token: the same request must produce the same document.
+        """
+        found: dict[str, _Located] = {}
+        frontier = list(ents)
+        while frontier:
+            opaque: list[Any] = []
+            for ent in frontier:
+                self._referrers(ent, seen, found, opaque)
+            frontier = opaque
+        return [found[token] for token in sorted(found)]
+
+    def _referrers(
+        self, ent: Any, seen: set[int], found: dict[str, _Located], opaque: list[Any]
+    ) -> None:
+        """Sort one entity's referencers into those we can report and those we walk through."""
+        for other in _reverse_ents(ent, seen):
+            token = self.by_id.get(other.id())
+            if token is not None:
+                found.setdefault(token, self.by_token[token])
+            elif _may_hop(other, self.root):
+                opaque.append(other)
+
+
+def _reverse_ents(ent: Any, seen: set[int]) -> list[Any]:
+    """The entities whose references reach ``ent``, each returned once for the whole walk.
+
+    Direction is Understand's own: ``Ref.isforward()`` is false for the second half of every
+    pair (``use`` versus ``useby``), whatever the language and whatever the kind, which is why
+    nothing here enumerates reference kinds. :data:`STRUCTURAL_REFS` takes out the reverse
+    kinds that mean containment rather than use.
+    """
+    found: list[Any] = []
+    for ref in ent.refs():
+        if ref.isforward() or ref.kind().check(STRUCTURAL_REFS):
+            continue
+        other = ref.ent()
+        if other.id() not in seen:
+            seen.add(other.id())
+            found.append(other)
+    return found
+
+
+def _expand(entities: _Entities, start: _Located, depth: int) -> dict[str, object]:
+    """The entities that reference ``start`` transitively, level by level (req 9.5).
+
+    ``depth`` is an inclusive cap: ``depth=2`` reports the entities one and two references
+    out, and ``depth=0`` reports none. An entity is reported at the shallowest depth that
+    reaches it and never again, and the entity the walk started from is never part of its own
+    impact set: reference graphs are full of cycles (a routine and its caller call each other
+    back in the sample project), and without that the totals a reviewer reads would count the
+    same entity once per path. Two guards share that work because they answer different
+    questions: ``seen`` bounds the *walk* by entity id, so a cycle terminates and an opaque
+    entity that is never reported is still visited only once, while ``reported`` decides what
+    reaches the answer — including the entity the walk started from, which a recursive routine
+    genuinely does reference. Seeding ``seen`` with the start as well would be redundant:
+    ``reported`` already refuses it, verified by mutation.
+    """
+    seen: set[int] = set()
+    reported = {start.key.token}
+    frontier: list[Any] = [start.ent]
+    by_depth: dict[str, object] = {}
+    total = 0
+    for level in range(1, depth + 1):
+        found = [
+            entity
+            for entity in entities.referencing(frontier, seen)
+            if entity.key.token not in reported
+        ]
+        if not found:
+            break
+        reported.update(entity.key.token for entity in found)
+        by_depth[str(level)] = [entity.document() for entity in found]
+        total += len(found)
+        frontier = [entity.ent for entity in found]
+    return {"by_depth": by_depth, "total": total}
+
+
+def _slug(text: str) -> str:
+    """``text`` reduced to characters every filesystem accepts, never empty, never a path."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+    return cleaned[:60] or "entity"
+
+
+def _graph_filename(key: _Key, graph: str) -> str:
+    """A deterministic, collision-free, filesystem-safe name for one exported graph (req 9.4).
+
+    The scheme is ``<slug of the long name>-<12 hex of the key digest>-<slug of the graph>.svg``.
+    The slug is what makes a directory listing readable, and it is lossy on purpose: a long
+    name carries ``::``, ``<``, ``>`` and ``/`` (``ns::Widget<int>::run``), and it is truncated.
+    Identity is therefore carried by the digest of :attr:`_Key.token`, which covers the scope,
+    the path, the long name and the parameters — so two entities that share a name across two
+    files, and two overloads inside one file, cannot be given the same file, and a rerun of the
+    same request produces the same names. Two graphs of one entity differ by the graph slug.
+
+    Neither part can contain a path separator, which is what confines the export to the output
+    directory the operator chose.
+    """
+    digest = hashlib.sha256(key.token.encode("utf-8")).hexdigest()[:12]
+    return f"{_slug(key.longname)}-{digest}-{_slug(graph)}{GRAPH_SUFFIX}"
+
+
+class _Exporter:
+    """Draws one graph per target into the output directory, warning instead of failing.
+
+    Whether a graph exists depends on the entity and its language — verified live, a routine
+    draws ``Butterfly``, ``Calls`` and ``Called By`` and refuses ``Depends On`` with
+    ``UnderstandError('Unknown Graph')`` while writing no file, and files and classes draw
+    ``Depends On``. One target the installed Understand will not render must not cost the
+    reviewer every other graph, so it is recorded as a warning (design: "a failed ``draw`` for
+    one target is recorded as a warning, not a failure").
+    """
+
+    def __init__(self, api: Any, entities: _Entities, out_dir: str) -> None:
+        self.api = api
+        self.entities = entities
+        self.out_dir = out_dir
+        self.files: list[dict[str, object]] = []
+        self.warnings: list[str] = []
+
+    def draw(self, key: _Key, graph: str) -> None:
+        """Export one graph, recording either the file it wrote or why it wrote none."""
+        located = self.entities.resolve(key)
+        if located is None:
+            self.warnings.append(f"{_names(key)} is not in this database: no {graph} graph")
+            return
+        path = os.path.join(self.out_dir, _graph_filename(key, graph))
+        try:
+            located.ent.draw(graph, path)
+        except self.api.UnderstandError as exc:
+            self.warnings.append(f"the {graph} graph of {_names(key)} could not be drawn: {exc}")
+            return
+        self.files.append({"key": key.document(), "graph": graph, "path": path})
+
+
+def _names(key: _Key) -> str:
+    """One entity named the way a warning has to name it: scope, long name and file."""
+    return f"the {key.scope} {key.longname!r} of {key.path}"
+
+
+def _require_kinds(request: Mapping[str, object]) -> dict[str, str]:
+    """The scope -> kind string map both entity-resolving operations look entities up by.
+
+    The worker may not import this project and must never invent a kind string, so the caller
+    composes them from ``config.metric_names.SCOPE_KINDS`` exactly as the snapshot request
+    does. An empty map would resolve nothing at all and is refused rather than answered with
+    a warning per key.
+    """
+    kinds = _require_str_map(request, "kinds_by_scope")
+    if not kinds:
+        raise _RequestError(
+            "BadRequest", "'kinds_by_scope' must give the kind string of at least one scope"
+        )
+    return kinds
+
+
+def _key_from(document: Mapping[str, object], name: str) -> _Key:
+    """Read one ``EntityKey`` document — the wire shape the snapshot answered with — or refuse."""
+    fields: dict[str, str] = {}
+    for label in ("scope", "path", "longname"):
+        value = document.get(label)
+        if not isinstance(value, str) or not value:
+            raise _RequestError(
+                "BadRequest",
+                f"every entry of {name!r} needs a non-empty {label!r} string, got {document!r}",
+            )
+        fields[label] = value
+    parameters = document.get("parameters")
+    if parameters is not None and not isinstance(parameters, str):
+        raise _RequestError(
+            "BadRequest",
+            f"the 'parameters' of an entry of {name!r} must be a string or null, got {document!r}",
+        )
+    return _Key(fields["scope"], fields["path"], fields["longname"], parameters)
+
+
+def _require_keys(request: Mapping[str, object]) -> tuple[_Key, ...]:
+    """The entities whose blast radius the caller wants (req 9.5)."""
+    return tuple(_key_from(document, "keys") for document in _require_objects(request, "keys"))
+
+
+def _require_targets(request: Mapping[str, object]) -> tuple[tuple[_Key, str], ...]:
+    """The graphs to export: one entity key and one graph name per target (req 9.4)."""
+    targets: list[tuple[_Key, str]] = []
+    for document in _require_objects(request, "targets"):
+        key = document.get("key")
+        graph = document.get("graph")
+        if not isinstance(key, dict):
+            raise _RequestError(
+                "BadRequest", f"every entry of 'targets' needs a 'key' object, got {document!r}"
+            )
+        if not isinstance(graph, str) or not graph:
+            raise _RequestError(
+                "BadRequest",
+                f"every entry of 'targets' needs a non-empty 'graph' name, got {document!r}",
+            )
+        targets.append((_key_from(key, "targets"), graph))
+    return tuple(targets)
+
+
+def _make_directory(path: str) -> None:
+    """Create the output directory the operator chose; a directory that cannot be is a refusal."""
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as exc:
+        raise _RequestError(
+            "BadRequest", f"the 'out_dir' {path!r} could not be created: {exc}"
+        ) from exc
+
+
+def _impact_of(
+    entities: _Entities, key: _Key, depth: int, warnings: list[str]
+) -> dict[str, object]:
+    """One entity's impact set; an entity this database has no record of yields a warning.
+
+    A routine the change deleted is asked about against the after database, and a routine it
+    added against the before one, so a key that resolves to nothing is ordinary. It costs the
+    reviewer one line of warning and an empty set, never the whole change summary.
+    """
+    located = entities.resolve(key)
+    if located is None:
+        warnings.append(f"{_names(key)} is not in this database: its impact set is empty")
+        return {"by_depth": {}, "total": 0}
+    return _expand(entities, located, depth)
+
+
+def _op_impact(api: Any, request: Mapping[str, object]) -> dict[str, object]:
+    """List what references each requested entity, transitively, up to a depth (req 9.5).
+
+    The answer is keyed by :attr:`_Key.token`, which is what ``ChangeSummary.impact`` accepts
+    as a key, and each value is an ``ImpactSet`` document: the entities found at each depth,
+    plus the total across all of them.
+    """
+    db_path = _require_str(request, "db")
+    root = _normalise_root(_require_str(request, "root"))
+    kinds = _require_kinds(request)
+    keys = _require_keys(request)
+    depth = _require_depth(request)
+    db = api.open(db_path)
+    try:
+        _check_root(db, kinds.get("file"), db_path, root)
+        entities = _Entities(db, kinds, root)
+        warnings: list[str] = []
+        sets: dict[str, object] = {}
+        for key in keys:
+            sets[key.token] = _impact_of(entities, key, depth, warnings)
+        return {"impact": sets, "warnings": warnings}
+    finally:
+        db.close()
+
+
+def _op_graphs(api: Any, request: Mapping[str, object]) -> dict[str, object]:
+    """Export one SVG per graph target into the operator's output directory (req 9.4).
+
+    This is the one operation that writes files, and it writes them nowhere but inside
+    ``out_dir``: the name of every file is built by :func:`_graph_filename`, which cannot
+    produce a path separator. The directory is created before the database is opened, so a
+    directory the operator cannot have is refused before the expensive work starts.
+    """
+    db_path = _require_str(request, "db")
+    root = _normalise_root(_require_str(request, "root"))
+    kinds = _require_kinds(request)
+    targets = _require_targets(request)
+    out_dir = _require_str(request, "out_dir")
+    _make_directory(out_dir)
+    db = api.open(db_path)
+    try:
+        _check_root(db, kinds.get("file"), db_path, root)
+        exporter = _Exporter(api, _Entities(db, kinds, root), out_dir)
+        for key, graph in targets:
+            exporter.draw(key, graph)
+        return {"graphs": exporter.files, "warnings": exporter.warnings}
+    finally:
+        db.close()
+
+
 _HANDLERS: Final[dict[str, Callable[[Any, Mapping[str, object]], dict[str, object]]]] = {
     "ping": _op_ping,
     "catalogue": _op_catalogue,
     "archs": _op_archs,
     "snapshot": _op_snapshot,
+    "impact": _op_impact,
+    "graphs": _op_graphs,
 }
 
 
@@ -1100,5 +1568,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def _leave(status: int) -> NoReturn:
+    """Leave the process at once, without running the interpreter's finalization.
+
+    Measured on the licensed machine (Understand 6.5.1204): after ``Ent.draw`` has rendered a
+    dependency graph — ``Depends On`` or ``Depended On By``, on a file or on a class — the
+    bundled interpreter aborts at shutdown with ``Fatal Python error:
+    PyInterpreterState_Delete: remaining subinterpreters`` and dies of ``SIGABRT``. The
+    answer is complete and correct on standard output by then, and both the SVG files and the
+    JSON document are intact; only the exit status is destroyed, and a non-zero exit status is
+    precisely how :class:`ApiRunner` is told that the worker itself is broken. Drawing a
+    butterfly graph first happens to avoid it and drawing one afterwards does not, so there is
+    no ordering a caller could rely on: Understand's graph engine leaves a subinterpreter
+    behind and the process must not try to finalize.
+
+    Flushing both streams by hand is therefore part of the contract, because ``os._exit``
+    skips the flush the interpreter would otherwise do. This runs only when the file is
+    executed as a script — that is, under ``upython`` — never when ``main`` is called in
+    process.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(status)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _leave(main())
