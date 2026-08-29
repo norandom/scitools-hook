@@ -327,3 +327,4 @@
   - **A header included from two TUs yields ONE entity**, attributed to its defining file (`src/shape.h`), not duplicated per including translation unit.
   - **Cross-root join: 6 keys, 6 matched, 0 unmatched, 0 metric differences.**
   - Routine longnames use C++ scoping (`Shape::area`) and are NOT absolute paths — reinforcing that the absolute-path problem is specific to FILE entities.
+  - CAVEAT on the template result: because a template is ONE entity carrying the generic signature, its metrics are measured once on the template body. A template that is cheap in one instantiation and pathological in another shows a single set of numbers, so the gate cannot see per-instantiation complexity. This is the right behaviour for the ratchet (one edit, one entity, no double-counting) but it is a real limit on what the gate detects in heavily templated C++ — state it in the README rather than letting a user infer coverage the tool does not have.
