@@ -228,7 +228,7 @@ Flow decisions: the before database is only synced/analyzed in `--staged`, `--wo
 ```mermaid
 flowchart TD
     A[read state.json] --> B{shadow exists}
-    B -- no --> C[full export: checkout-index or git archive]
+    B -- no --> C[full export: checkout-index (index side) or a throwaway index + checkout-index (commit side)]
     B -- yes --> D[diff recorded ref vs target]
     D --> E[apply adds mods dels renames to shadow]
     C --> F[write state: ref, index checksum, timestamp]
