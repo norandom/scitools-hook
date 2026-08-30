@@ -611,7 +611,7 @@ class GitRepo:
     def index_tree_id(self) -> str                                    # git write-tree (read-only wrt index content)
     def diff_names(self, a: str, b: str) -> list[StagedChange]        # git diff --name-status -M -z a b
     def export_index(self, dest: Path, paths: list[str] | None) -> None   # git checkout-index -f --prefix=dest/ (-a | -z --stdin with paths); prefix must end with "/"
-    def export_commit(self, commit: str, dest: Path, paths: list[str] | None) -> None   # git archive commit [paths] | tar -x
+    def export_commit(self, commit: str, dest: Path, paths: list[str] | None) -> None   # GIT_INDEX_FILE=<temp> git read-tree commit, then the same checkout-index call export_index makes
     def hooks_dir(self, global_: bool = False) -> Path                # core.hooksPath / rev-parse --git-path hooks / global hooks path
     def tracked_files(self) -> list[str]                              # git ls-files -z
 SyncTarget = IndexTarget | WorktreeTarget | CommitTarget(commit: str)
