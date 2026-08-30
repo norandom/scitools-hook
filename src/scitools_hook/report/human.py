@@ -34,9 +34,22 @@ Decisions worth knowing about, all of them visible in ``tests/report/test_human.
 * **Entity.** The qualified name comes from ``details["entity"]`` first, because a CodeCheck
   finding leaves ``Finding.entity`` empty (task 4.7); it is dropped when it merely repeats
   the group's own path, as it does for every file-scope finding.
+* **Parse errors** (req 2.6) print *first*, in their own section, whenever the run carries
+  any. They are not a cosmetic note: Understand analyses a file only as far as it parses, so
+  the entities after an error are missing from the database and no rule ran on them -- a run
+  over a file that failed to parse can report a clean bill of health for code it never saw.
+  The section therefore leads the output it qualifies, the summary line carries the count of
+  affected files so the tail of a long run says it too, and the no-findings line stops
+  claiming that "this change breaks no rule" when part of the change was never read. The
+  files are listed sorted by path, each error under its own file in the order the analysis
+  reported it -- the first error is the cause and the rest are its cascade -- and none are
+  dropped, because 2.6 asks for the errors, not for a sample of them.
 * **Quiet** (req 7.8) prints the summary and the blocking findings, and nothing else -- not
-  the warnings, not the pre-existing findings and not the agent block of requirement 10.4,
-  whose narrower rule 7.8 is. A caller that wants the block must not ask for quiet.
+  the warnings, not the pre-existing findings, not the agent block of requirement 10.4 and
+  not the parse-error section, whose narrower rule 7.8 is. The summary line still names how
+  many files failed to parse, so quiet cannot hide that the run is incomplete; the list of
+  errors needs a run without ``--quiet``. A caller that wants the block must not ask for
+  quiet.
 * **Counts** in the summary are taken from ``result.findings`` rather than from the
   ``*_count`` fields, so the line can never disagree with the findings printed above it;
   ``blocking_count`` is a validated mirror of the same findings and decides the exit code.
@@ -56,6 +69,7 @@ from typing import Final, Literal, NamedTuple
 from scitools_hook.config.models import Severity
 from scitools_hook.exit_codes import ExitCode, describe
 from scitools_hook.models.findings import Finding, RunResult
+from scitools_hook.models.snapshot import ParseError
 
 
 class Verbosity(StrEnum):
@@ -73,6 +87,14 @@ class ColorMode(StrEnum):
 
 
 NOTHING_TO_REPORT: Final = "nothing to report: this change breaks no rule"
+NOTHING_PARSED_TO_REPORT: Final = "nothing to report in the code that was parsed: it breaks no rule"
+"""What the same line may say when part of the change never reached the rules (req 2.6)."""
+
+PARSE_HEADER: Final = "parse errors: these files were NOT fully checked"
+_PARSE_LEAD: Final[tuple[str, ...]] = (
+    "  Understand could not finish parsing them. Code after a parse error can be missing",
+    "  from the analysis, so no rule ran on it: what follows covers only the code that parsed.",
+)
 PROJECT_HEADER: Final = "project-wide"
 ARCH_HEADER_PREFIX: Final = "architecture node "
 AGENT_HEADER: Final = "agent instructions"
@@ -159,9 +181,13 @@ def render_human(
     """Render ``result`` as text, without a trailing newline (req 7.3, 7.6, 7.8, 10.4)."""
     style = _Style(color)
     summary = _summary_line(result, style)
+    sections = []
+    if _shows_parse_errors(result, verbosity):
+        sections.append(_parse_error_section(result.parse_errors, style))
     if not result.findings:
-        return f"{NOTHING_TO_REPORT}\n{summary}"
-    sections = [_render_group(group, style) for group in _groups(_visible(result, verbosity))]
+        sections.append(f"{_nothing_line(result)}\n{summary}")
+        return "\n\n".join(sections)
+    sections.extend(_render_group(group, style) for group in _groups(_visible(result, verbosity)))
     sections.append(summary)
     if _wants_agent_block(result, verbosity, show_agent_block):
         sections.append(_agent_block(result, style))
@@ -190,6 +216,10 @@ class _Style:
     def hint(self, text: str) -> str:
         """The remediation line, kept visually behind the finding itself."""
         return self._wrap(text, _DIM)
+
+    def alarm(self, text: str) -> str:
+        """A header that reports lost coverage: as loud as an error, because it hides errors."""
+        return self._wrap(text, _RED)
 
 
 class _Group(NamedTuple):
@@ -329,6 +359,52 @@ def _ratio_tag(ratio: float) -> str:
     return f"{ratio:.1f}x limit" if ratio >= 0.1 else f"{ratio:.2g}x limit"
 
 
+def _shows_parse_errors(result: RunResult, verbosity: Verbosity) -> bool:
+    """The section belongs to any run that has parse errors, except a quiet one (req 7.8)."""
+    return bool(result.parse_errors) and verbosity is not Verbosity.QUIET
+
+
+def _parse_error_section(parse_errors: Sequence[ParseError], style: _Style) -> str:
+    """The files Understand could not finish, and every error it reported in them (req 2.6).
+
+    The wording claims only what was measured: the analysis stops where the parse stops, so
+    the code after an error is absent from the database and no rule was evaluated on it. It
+    does not guess which entities were lost -- the gate cannot know -- and it does not soften
+    it either, because a reader who takes this for a formatting nit will read the findings
+    below as coverage of a file that was never read.
+    """
+    lines = [style.alarm(PARSE_HEADER)] + list(_PARSE_LEAD)
+    for path, errors in _parse_errors_by_file(parse_errors):
+        lines.append(f"  {path}")
+        lines.extend(f"    {_parse_error_line(error)}" for error in errors)
+    return "\n".join(lines)
+
+
+def _parse_errors_by_file(parse_errors: Sequence[ParseError]) -> list[tuple[str, list[ParseError]]]:
+    """Group by file, files sorted by path, errors kept in the order the analysis reported.
+
+    Sorting the files matches the findings section and survives a producer that lists them in
+    whatever order Understand printed; the errors inside a file are *not* re-ordered, because
+    the first one is the cause and the rest are the cascade it set off.
+    """
+    buckets: dict[str, list[ParseError]] = {}
+    for error in parse_errors:
+        buckets.setdefault(error.path.as_posix(), []).append(error)
+    return [(path, buckets[path]) for path in sorted(buckets)]
+
+
+def _parse_error_line(error: ParseError) -> str:
+    """One error, with its line when the analysis gave one."""
+    if error.line is None:
+        return error.message
+    return f"line {error.line}: {error.message}"
+
+
+def _nothing_line(result: RunResult) -> str:
+    """What "no findings" means -- which is less than it sounds when a file failed to parse."""
+    return NOTHING_PARSED_TO_REPORT if result.parse_errors else NOTHING_TO_REPORT
+
+
 class _Counts(NamedTuple):
     """What the summary line reports, counted from the findings themselves."""
 
@@ -349,14 +425,30 @@ def _counts(findings: Sequence[Finding]) -> _Counts:
 
 
 def _summary_line(result: RunResult, style: _Style) -> str:
-    """Counts per severity and the exit code with its documented meaning (req 7.3, 1.6)."""
+    """Counts per severity, the parse failures, and the exit code's meaning (req 7.3, 1.6, 2.6).
+
+    The parse-failure segment appears only when there is one, so a run of code that parsed
+    renders exactly the line it always did. It is in the summary rather than only in the
+    section above because this line is the last thing a long run prints and the only thing a
+    quiet run prints -- and "0 errors" next to an unparsed file is the misreading that
+    requirement 2.6 exists to prevent.
+    """
     counts = _counts(result.findings)
     code = ExitCode.VIOLATIONS if counts.blocking else ExitCode.OK
-    return style.strong(
+    segments = [
         f"summary: {_plural(counts.errors, 'error')}, {_plural(counts.warnings, 'warning')}, "
-        f"{counts.preexisting} pre-existing, {counts.blocking} blocking "
-        f"| exit {code.value}: {describe(code)}"
-    )
+        f"{counts.preexisting} pre-existing, {counts.blocking} blocking"
+    ]
+    unparsed = _unparsed_files(result)
+    if unparsed:
+        segments.append(f"{_plural(unparsed, 'file')} failed to parse, not fully checked")
+    segments.append(f"exit {code.value}: {describe(code)}")
+    return style.strong(" | ".join(segments))
+
+
+def _unparsed_files(result: RunResult) -> int:
+    """How many distinct files failed to parse; several errors in one file are one file."""
+    return len({error.path for error in result.parse_errors})
 
 
 def _wants_agent_block(result: RunResult, verbosity: Verbosity, show: bool) -> bool:

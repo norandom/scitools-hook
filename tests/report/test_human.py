@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -27,8 +29,9 @@ import pytest
 from scitools_hook.config.models import Severity
 from scitools_hook.exit_codes import ExitCode, describe
 from scitools_hook.models.findings import Finding, FindingKind, RunResult
-from scitools_hook.models.snapshot import EntityKey, EntityRef
+from scitools_hook.models.snapshot import EntityKey, EntityRef, ParseError
 from scitools_hook.report.human import (
+    PARSE_HEADER,
     ColorMode,
     Verbosity,
     _limit_distance,
@@ -225,7 +228,7 @@ def comment_ratchet() -> Finding:
     )
 
 
-def run(*findings: Finding) -> RunResult:
+def run(*findings: Finding, parse_errors: Sequence[ParseError] = ()) -> RunResult:
     """A ``RunResult`` around ``findings`` with the counts the pipeline would have filled in."""
     return RunResult(
         tool_version="0.1.0",
@@ -235,6 +238,7 @@ def run(*findings: Finding) -> RunResult:
         started_at="2026-01-01T09:00:00Z",
         seconds=1.5,
         findings=list(findings),
+        parse_errors=list(parse_errors),
         analyzed_files=3,
         blocking_count=sum(1 for finding in findings if finding.blocking),
         warning_count=sum(1 for finding in findings if finding.severity == "warning"),
@@ -765,3 +769,160 @@ def test_agent_block_is_absent_in_quiet_mode() -> None:
 
 def test_output_is_ascii_so_it_survives_any_console() -> None:
     assert render_human(blocking_run(), Verbosity.NORMAL, ColorMode.ON, True).isascii()
+
+
+# --- parse errors: the coverage warning of requirement 2.6 ----------------------
+
+
+def parse_error(path: str, line: int | None, message: str) -> ParseError:
+    """One error exactly as ``und analyze`` reported it (models/snapshot.py)."""
+    return ParseError(path=Path(path), line=line, message=message)
+
+
+def cascade() -> list[ParseError]:
+    """The measured shape: a star-in-list literal, then the errors it cascades into.
+
+    Understand 6.5.1204 fails on ``["k", *xs]`` and then reports every routine after it as
+    absent, so this is not one annotated line -- it is a file the gate never checked past
+    line 12. The second error carries no line, which is the other shape ``ParseError`` takes.
+    """
+    return [
+        parse_error(ENGINE, 12, "expected token ']' at token *"),
+        parse_error(ENGINE, None, "expected newline at token dedent"),
+    ]
+
+
+def two_files() -> list[ParseError]:
+    """Errors in two files, handed over in the wrong path order on purpose.
+
+    The producer lists ``text.cpp`` first, so the snapshot below -- which puts ``engine.py``
+    first -- fails if the renderer stops sorting the files it groups.
+    """
+    return [parse_error(TEXT, 3, "unknown token")] + cascade()
+
+
+def blocking_run_with(parse_errors: Sequence[ParseError]) -> RunResult:
+    """The mixed run of the snapshots, plus the parse errors of the run that produced it."""
+    return run(*blocking_run().findings, parse_errors=parse_errors)
+
+
+PARSE_BLOCK_TEXT: Final = """\
+parse errors: these files were NOT fully checked
+  Understand could not finish parsing them. Code after a parse error can be missing
+  from the analysis, so no rule ran on it: what follows covers only the code that parsed.
+  src/analysis/engine.py
+    line 12: expected token ']' at token *
+    expected newline at token dedent
+  src/util/text.cpp
+    line 3: unknown token"""
+
+CLEAN_PARSE_SUMMARY: Final = (
+    "summary: 0 errors, 0 warnings, 0 pre-existing, 0 blocking "
+    "| 2 files failed to parse, not fully checked "
+    "| exit 0: no blocking violations"
+)
+
+CLEAN_PARSE_TEXT: Final = (
+    f"{PARSE_BLOCK_TEXT}\n\n"
+    "nothing to report in the code that was parsed: it breaks no rule\n"
+    f"{CLEAN_PARSE_SUMMARY}"
+)
+
+
+def test_a_run_without_parse_errors_renders_byte_identically() -> None:
+    """The whole section is absent when nothing failed to parse, in both shapes of output."""
+    assert render_human(blocking_run(), Verbosity.NORMAL, ColorMode.OFF, True) == BLOCKING_TEXT
+    assert render_human(run(), color=ColorMode.OFF) == EMPTY_TEXT
+    assert "parse" not in BLOCKING_TEXT
+    assert "parse" not in EMPTY_TEXT
+
+
+def test_a_clean_run_with_parse_errors_is_not_reported_as_clean() -> None:
+    """The silent-green case: no finding, because most of the file was never analysed."""
+    got = render_human(run(parse_errors=two_files()), Verbosity.NORMAL, ColorMode.OFF, True)
+    assert got == CLEAN_PARSE_TEXT
+    assert "this change breaks no rule" not in got
+
+
+def test_one_parse_error_names_its_file_its_line_and_its_message() -> None:
+    text = render_human(
+        run(parse_errors=[parse_error(TEXT, 3, "unknown token")]), color=ColorMode.OFF
+    )
+    assert "  src/util/text.cpp" in text
+    assert "    line 3: unknown token" in text
+
+
+def test_the_section_says_the_code_was_not_checked() -> None:
+    """A reader must not be able to mistake a parse error for a cosmetic note (req 2.6)."""
+    text = render_human(run(parse_errors=cascade()), color=ColorMode.OFF)
+    assert "NOT fully checked" in text
+    assert "no rule ran on it" in text
+
+
+def test_every_error_of_every_file_is_listed_under_its_own_file() -> None:
+    text = render_human(run(parse_errors=two_files()), color=ColorMode.OFF)
+    assert PARSE_BLOCK_TEXT in text
+    assert text.index(ENGINE) < text.index(TEXT)
+    assert text.count("line 12: expected token ']' at token *") == 1
+    assert "expected newline at token dedent" in text
+    assert "unknown token" in text
+
+
+def test_an_error_without_a_line_prints_its_message_alone() -> None:
+    text = render_human(
+        run(parse_errors=[parse_error(TEXT, None, "file not read")]), color=ColorMode.OFF
+    )
+    assert "    file not read" in text
+    assert "line None" not in text
+
+
+def test_the_summary_counts_the_files_that_failed_to_parse() -> None:
+    text = render_human(run(parse_errors=two_files()), color=ColorMode.OFF)
+    assert "| 2 files failed to parse, not fully checked |" in text
+
+
+def test_the_summary_counts_one_file_in_the_singular_however_many_errors_it_has() -> None:
+    text = render_human(run(parse_errors=cascade()), color=ColorMode.OFF)
+    assert "| 1 file failed to parse, not fully checked |" in text
+
+
+def test_the_summary_says_nothing_about_parsing_when_everything_parsed() -> None:
+    text = render_human(blocking_run(), color=ColorMode.OFF)
+    assert "failed to parse" not in text
+
+
+def test_the_section_precedes_the_findings_and_leaves_them_untouched() -> None:
+    """A blocking run gains the section and the summary tag, and nothing else moves."""
+    text = render_human(
+        run(*blocking_run().findings, parse_errors=two_files()),
+        Verbosity.NORMAL,
+        ColorMode.OFF,
+        True,
+    )
+    assert text.startswith(f"{PARSE_BLOCK_TEXT}\n\n")
+    unchanged = text[len(PARSE_BLOCK_TEXT) + 2 :].replace(
+        " | 2 files failed to parse, not fully checked |", " |"
+    )
+    assert unchanged == BLOCKING_TEXT
+
+
+def test_quiet_still_reports_the_parse_failures_in_its_summary() -> None:
+    """Requirement 7.8 keeps the list out of quiet output; the count is in the line it prints."""
+    text = render_human(blocking_run_with(two_files()), Verbosity.QUIET, ColorMode.OFF, True)
+    assert "| 2 files failed to parse, not fully checked |" in text
+    assert "parse errors: these files were NOT fully checked" not in text
+
+
+def test_the_section_colours_and_strips_back_to_the_plain_rendering() -> None:
+    result = blocking_run_with(two_files())
+    colored = render_human(result, Verbosity.NORMAL, ColorMode.ON, True)
+    plain = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True)
+    assert f"\x1b[1;31m{PARSE_HEADER}\x1b[0m" in colored
+    assert ANSI.sub("", colored) == plain
+    assert colored.isascii()
+
+
+def test_quiet_with_no_findings_still_reports_the_parse_failures() -> None:
+    """The worst case: nothing to report, and part of the change was never read."""
+    text = render_human(run(parse_errors=two_files()), Verbosity.QUIET, ColorMode.OFF, True)
+    assert "| 2 files failed to parse, not fully checked |" in text
