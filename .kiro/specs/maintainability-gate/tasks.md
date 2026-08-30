@@ -135,7 +135,7 @@
   - _Requirements: 10.1, 10.2, 10.3_
   - _Boundary: report/agent_rules_
 
-- [ ] 5.5 Render parse errors in the human output (ESCAPED DEFECT from 5.1)
+- [x] 5.5 Render parse errors in the human output (ESCAPED DEFECT from 5.1)
   - `RunResult.parse_errors` reaches the JSON output already -- `render_json` is `result.model_dump_json(...)`, which serialises the model whole by deliberate design, so **requirement 5.4 is satisfied and `json_out.py` must NOT be changed**. (A grep for `parse_errors` in `report/` finds nothing, which is misleading: JSON selects no field by name.)
   - The defect is in `report/human.py`, which never mentions parse errors, leaving requirement 2.6's "shall list those files and errors in its output" unmet for the human view.
   - This is a correctness defect, not cosmetics: see the parse-error entity-loss finding below -- an unparsed file loses every entity after the failure, so a run can check almost nothing and print a clean bill of health.
@@ -188,7 +188,7 @@
   - _Requirements: 1.2, 1.4, 2.6, 12.8_
   - _Boundary: understand/und_cli_
 
-- [ ] 6.6 Implement `ApiRunner`, the typed adapter wrappers and their fakes
+- [x] 6.6 Implement `ApiRunner`, the typed adapter wrappers and their fakes
   - `ApiRunner.run(op, request)` executing in-process (`worker.dispatch`) or via `upython worker.py <op>` subprocess with timeout and `CommandLog`; error envelopes → `LicenseError` / `AnalysisFailedError`; wrappers `SnapshotExtractor` (builds the self-describing `ExtractRequest` from settings: kind strings, synthetic ids, ignore regexes), `ImpactExpander`, `GraphExporter`, `MetricCatalogue` (satisfies the config `MetricAvailability` protocol) validating worker output into models and raising `ArchitectureNotFoundError` with the available list; `tests/fakes/FakeApiRunner` (fixture dicts per op) and `FakeSnapshotExtractor` (fixture snapshots)
   - Done when unit tests with `FakeApiRunner` validate a fixture document into `ProjectSnapshot`, and a contract test shows both modes returning identical snapshots for the same database
   - _Requirements: 1.2, 1.4, 3.8, 5.5, 6.8_
