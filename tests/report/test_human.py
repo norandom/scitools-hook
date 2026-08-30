@@ -20,15 +20,22 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final
 
 import pytest
 
+from scitools_hook.config.metric_names import Scope
 from scitools_hook.config.models import Severity
 from scitools_hook.exit_codes import ExitCode, describe
-from scitools_hook.models.findings import Finding, FindingKind, RunResult
+from scitools_hook.models.findings import (
+    Finding,
+    FindingKind,
+    HighestValue,
+    RunResult,
+    TightenedLimit,
+)
 from scitools_hook.models.snapshot import EntityKey, EntityRef, ParseError
 from scitools_hook.report.human import (
     PARSE_HEADER,
@@ -228,7 +235,14 @@ def comment_ratchet() -> Finding:
     )
 
 
-def run(*findings: Finding, parse_errors: Sequence[ParseError] = ()) -> RunResult:
+def run(
+    *findings: Finding,
+    parse_errors: Sequence[ParseError] = (),
+    ignored_counts: Mapping[Scope, int] | None = None,
+    unavailable_metrics: Mapping[str, Sequence[str]] | None = None,
+    tightened: Sequence[TightenedLimit] = (),
+    highest: Sequence[HighestValue] = (),
+) -> RunResult:
     """A ``RunResult`` around ``findings`` with the counts the pipeline would have filled in."""
     return RunResult(
         tool_version="0.1.0",
@@ -239,6 +253,12 @@ def run(*findings: Finding, parse_errors: Sequence[ParseError] = ()) -> RunResul
         seconds=1.5,
         findings=list(findings),
         parse_errors=list(parse_errors),
+        ignored_counts=dict(ignored_counts or {}),
+        unavailable_metrics={
+            language: list(metrics) for language, metrics in (unavailable_metrics or {}).items()
+        },
+        tightened=list(tightened),
+        highest=list(highest),
         analyzed_files=3,
         blocking_count=sum(1 for finding in findings if finding.blocking),
         warning_count=sum(1 for finding in findings if finding.severity == "warning"),
@@ -926,3 +946,299 @@ def test_quiet_with_no_findings_still_reports_the_parse_failures() -> None:
     """The worst case: nothing to report, and part of the change was never read."""
     text = render_human(run(parse_errors=two_files()), Verbosity.QUIET, ColorMode.OFF, True)
     assert "| 2 files failed to parse, not fully checked |" in text
+
+
+# --- the run facts beyond the findings: unavailable, ignored, tightened, highest ---
+
+
+UNAVAILABLE: Final[dict[str, list[str]]] = {
+    "Python": ["PercentLackOfCohesion", "CountClassCoupling"],
+    "C++": ["Knots"],
+}
+"""Language -> the metrics Understand has no value for there (``RunResult`` states the key).
+
+Handed over unsorted in both directions, so the snapshot below fails if the renderer prints
+whatever order the producer happened to build.
+"""
+
+IGNORED: Final[dict[Scope, int]] = {"file": 1, "routine": 8, "class": 3}
+"""Also unsorted: the scopes must print in the canonical ``SCOPES`` order, not insertion order."""
+
+TIGHTENED: Final[list[TightenedLimit]] = [
+    TightenedLimit(rule="routine.CyclomaticStrict", previous=10, current=8),
+    TightenedLimit(rule="file.CountLineCode", previous=500, current=430),
+]
+"""Two limits an adaptive run lowered, in an order the renderer must not keep (req 8.3)."""
+
+HIGHEST: Final[list[HighestValue]] = [
+    HighestValue(scope="routine", metric="CyclomaticStrict", value=20, entity=EVALUATE),
+    HighestValue(scope="file", metric="CountLineCode", value=700, entity=file_ref(APP)),
+    HighestValue(scope="project", metric="AVG:CyclomaticStrict", value=4.5),
+]
+"""Ranked by descending value, the order ``analysis/thresholds`` produces and 5.6 wants kept.
+
+The last one has no entity at all: a population metric belongs to no single element.
+"""
+
+UNAVAILABLE_BLOCK: Final = """\
+unavailable metrics: these limits were NOT evaluated
+  Understand reports no value for them in the language named, so nothing was measured
+  against their limits and no finding for them can exist, whatever the code does.
+  not available for C++: Knots
+  not available for Python: CountClassCoupling, PercentLackOfCohesion"""
+
+IGNORED_BLOCK: Final = """\
+ignored entities: matched an ignore pattern, so no rule ran on them
+  routine 8, class 3, file 1"""
+
+TIGHTENED_BLOCK: Final = """\
+tightened limits: the baseline moved down to what this run measured
+  file.CountLineCode  500 -> 430
+  routine.CyclomaticStrict  10 -> 8"""
+
+HIGHEST_BLOCK: Final = """\
+highest values: the largest value per metric, whether or not it breaks a limit
+  routine.CyclomaticStrict  20  engine.Engine.evaluate  src/analysis/engine.py  line 42
+  file.CountLineCode  700  src/cli/app.py  line 1
+  project.AVG:CyclomaticStrict  4.5"""
+
+BLOCKING_SUMMARY: Final = (
+    "summary: 6 errors, 2 warnings, 1 pre-existing, 5 blocking | exit 1: blocking violations found"
+)
+
+UNAVAILABLE_SEGMENT: Final = "3 metrics unavailable, those limits were not evaluated"
+
+FACTS_SUMMARY: Final = (
+    "summary: 6 errors, 2 warnings, 1 pre-existing, 5 blocking "
+    f"| {UNAVAILABLE_SEGMENT} "
+    "| exit 1: blocking violations found"
+)
+
+FACTS_TEXT: Final = f"{UNAVAILABLE_BLOCK}\n\n" + BLOCKING_TEXT.replace(
+    BLOCKING_SUMMARY,
+    f"{IGNORED_BLOCK}\n\n{TIGHTENED_BLOCK}\n\n{HIGHEST_BLOCK}\n\n{FACTS_SUMMARY}",
+)
+"""The whole shape: the coverage warning leads, the three notes sit between the findings and
+the summary line, and the agent block still has the last word."""
+
+
+def facts_run() -> RunResult:
+    """The mixed run of the snapshots, carrying every fact this section renders."""
+    return run(
+        *blocking_run().findings,
+        ignored_counts=IGNORED,
+        unavailable_metrics=UNAVAILABLE,
+        tightened=TIGHTENED,
+        highest=HIGHEST,
+    )
+
+
+def test_the_blocking_summary_line_is_the_one_the_snapshots_carry() -> None:
+    """Guards the two snapshots below, which are built by substituting into ``BLOCKING_TEXT``."""
+    assert BLOCKING_SUMMARY in BLOCKING_TEXT
+    assert BLOCKING_SUMMARY in QUIET_TEXT
+
+
+def test_a_run_carrying_none_of_these_facts_renders_byte_identically() -> None:
+    """The no-op run: empty -- and zero-valued -- fields must not add a single character."""
+    blocking = render_human(blocking_run(), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    assert blocking == BLOCKING_TEXT
+    assert render_human(run(), Verbosity.NORMAL, ColorMode.OFF, True, True) == EMPTY_TEXT
+    nothing = run(
+        *blocking_run().findings,
+        ignored_counts={"routine": 0, "class": 0},
+        unavailable_metrics={"Python": [], "C++": []},
+        tightened=[],
+        highest=[],
+    )
+    assert render_human(nothing, Verbosity.NORMAL, ColorMode.OFF, True, True) == BLOCKING_TEXT
+
+
+def test_every_fact_renders_in_its_place_around_the_findings() -> None:
+    assert render_human(facts_run(), Verbosity.NORMAL, ColorMode.OFF, True, True) == FACTS_TEXT
+
+
+def test_the_facts_render_without_findings_too() -> None:
+    """A clean run still owes 3.6, 5.5, 5.6 and 8.3 -- and is where 5.6 matters most."""
+    result = run(
+        ignored_counts=IGNORED,
+        unavailable_metrics=UNAVAILABLE,
+        tightened=TIGHTENED,
+        highest=HIGHEST,
+    )
+    text = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, True)
+    assert text == (
+        f"{UNAVAILABLE_BLOCK}\n\n{IGNORED_BLOCK}\n\n{TIGHTENED_BLOCK}\n\n{HIGHEST_BLOCK}\n\n"
+        "nothing to report: this change breaks no rule that was evaluated\n"
+        "summary: 0 errors, 0 warnings, 0 pre-existing, 0 blocking "
+        f"| {UNAVAILABLE_SEGMENT} "
+        "| exit 0: no blocking violations"
+    )
+
+
+# --- unavailable metrics: the channel that says a limit went unevaluated (req 5.5) ---
+
+
+def test_the_unavailable_section_names_each_language_and_its_metrics() -> None:
+    text = render_human(run(unavailable_metrics=UNAVAILABLE), color=ColorMode.OFF)
+    assert UNAVAILABLE_BLOCK in text
+    assert "not available for Python: CountClassCoupling, PercentLackOfCohesion" in text
+    assert "not available for C++: Knots" in text
+
+
+def test_the_unavailable_section_says_the_limit_was_never_evaluated() -> None:
+    """A reader must not take an unevaluated limit for a limit that passed (req 5.5)."""
+    text = render_human(run(unavailable_metrics=UNAVAILABLE), color=ColorMode.OFF)
+    assert "NOT evaluated" in text
+    assert "no finding for them can exist" in text
+
+
+def test_the_unavailable_section_leads_the_findings_it_qualifies() -> None:
+    result = run(*blocking_run().findings, unavailable_metrics=UNAVAILABLE)
+    text = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True)
+    assert text.startswith(f"{UNAVAILABLE_BLOCK}\n\n{ENGINE}\n")
+
+
+def test_the_two_coverage_warnings_lead_with_the_parse_errors_first() -> None:
+    result = run(
+        *blocking_run().findings, parse_errors=two_files(), unavailable_metrics=UNAVAILABLE
+    )
+    text = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True)
+    assert text.startswith(f"{PARSE_BLOCK_TEXT}\n\n{UNAVAILABLE_BLOCK}\n\n")
+    assert (f"| 2 files failed to parse, not fully checked | {UNAVAILABLE_SEGMENT} |") in text
+
+
+def test_a_language_that_lost_no_metric_prints_no_line() -> None:
+    text = render_human(
+        run(unavailable_metrics={"Python": ["Knots"], "C++": []}), color=ColorMode.OFF
+    )
+    assert "not available for Python: Knots" in text
+    assert "C++" not in text
+
+
+def test_the_summary_counts_the_metrics_that_were_never_evaluated() -> None:
+    text = render_human(run(unavailable_metrics=UNAVAILABLE), color=ColorMode.OFF)
+    assert f"| {UNAVAILABLE_SEGMENT} |" in text
+
+
+def test_the_summary_counts_one_metric_in_the_singular() -> None:
+    text = render_human(
+        run(unavailable_metrics={"Python": ["Knots"], "C++": ["Knots"]}), color=ColorMode.OFF
+    )
+    assert "| 1 metric unavailable, those limits were not evaluated |" in text
+
+
+def test_the_summary_says_nothing_about_metrics_when_every_one_was_evaluated() -> None:
+    text = render_human(blocking_run(), color=ColorMode.OFF)
+    assert "unavailable" not in text
+
+
+def test_quiet_withholds_the_unavailable_list_but_keeps_its_count() -> None:
+    """5.5's precedent: 7.8 is the narrower rule, but quiet may not hide an incomplete run."""
+    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, True)
+    assert f"| {UNAVAILABLE_SEGMENT} |" in text
+    assert "unavailable metrics: these limits were NOT evaluated" not in text
+
+
+def test_the_unavailable_section_is_as_loud_as_the_parse_errors() -> None:
+    """Both report coverage that was lost, so both wear the alarm colour."""
+    result = facts_run()
+    colored = render_human(result, Verbosity.NORMAL, ColorMode.ON, True, True)
+    plain = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, True)
+    header = UNAVAILABLE_BLOCK.splitlines()[0]
+    assert f"\x1b[1;31m{header}\x1b[0m" in colored
+    assert ANSI.sub("", colored) == plain
+    assert colored.isascii()
+
+
+# --- ignored entities (req 3.6), tightened limits (req 8.3), highest values (req 5.6) ---
+
+
+def test_the_ignored_section_counts_every_scope_that_excluded_something() -> None:
+    text = render_human(run(ignored_counts=IGNORED), color=ColorMode.OFF)
+    assert IGNORED_BLOCK in text
+
+
+def test_the_ignored_counts_print_in_scope_order_not_insertion_order() -> None:
+    text = render_human(run(ignored_counts=IGNORED), color=ColorMode.OFF)
+    assert "  routine 8, class 3, file 1" in text
+
+
+def test_a_scope_that_ignored_nothing_is_not_listed() -> None:
+    text = render_human(run(ignored_counts={"routine": 4, "class": 0}), color=ColorMode.OFF)
+    assert "  routine 4" in text
+    assert "class" not in text
+
+
+def test_the_tightened_section_names_each_limit_and_both_values() -> None:
+    text = render_human(run(tightened=TIGHTENED), color=ColorMode.OFF)
+    assert TIGHTENED_BLOCK in text
+    assert "  routine.CyclomaticStrict  10 -> 8" in text
+
+
+def test_the_highest_values_print_only_when_the_operator_asks() -> None:
+    """Requirement 5.6 is conditional on ``--show-highest``; nothing else turns it on."""
+    asked = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    unasked = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, False)
+    assert HIGHEST_BLOCK in asked
+    assert "highest" not in unasked
+    assert unasked == EMPTY_TEXT
+
+
+def test_the_highest_value_names_the_entity_that_has_it() -> None:
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    assert "  routine.CyclomaticStrict  20  engine.Engine.evaluate  src/analysis/engine.py" in text
+    assert "line 42" in text
+
+
+def test_a_file_scope_highest_does_not_repeat_its_path() -> None:
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    assert "  file.CountLineCode  700  src/cli/app.py  line 1" in text
+
+
+def test_a_population_highest_prints_without_an_entity() -> None:
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    assert text.endswith("  project.AVG:CyclomaticStrict  4.5\n\n" + EMPTY_TEXT)
+
+
+def test_quiet_prints_none_of_the_three_notes() -> None:
+    """7.8 prints the summary and the blocking findings; the notes wait for a normal run."""
+    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, True)
+    assert text == QUIET_TEXT.replace(BLOCKING_SUMMARY, FACTS_SUMMARY)
+    assert "ignored entities" not in text
+    assert "tightened limits" not in text
+    assert "highest values" not in text
+
+
+# --- the no-findings claim must not outrun what the run actually checked -----------
+
+
+def test_a_clean_run_with_an_unevaluated_limit_does_not_claim_it_breaks_no_rule() -> None:
+    """Since 2.4 the Gate can drop a shipped threshold and exit 0; 'breaks no rule' would lie."""
+    text = render_human(run(unavailable_metrics=UNAVAILABLE), color=ColorMode.OFF)
+    assert "this change breaks no rule that was evaluated" in text
+    assert "this change breaks no rule\n" not in text
+
+
+def test_the_two_coverage_caveats_compose_in_the_nothing_line() -> None:
+    """A parse error narrows what was READ; an unavailable metric narrows which rules RAN."""
+    text = render_human(
+        run(parse_errors=two_files(), unavailable_metrics=UNAVAILABLE), color=ColorMode.OFF
+    )
+    assert (
+        "nothing to report in the code that was parsed: it breaks no rule that was evaluated"
+        in text
+    )
+
+
+def test_quiet_still_refuses_the_unqualified_claim_when_a_limit_went_unevaluated() -> None:
+    """Quiet prints the nothing-line, so the mode most likely to be skimmed must not lie."""
+    text = render_human(run(unavailable_metrics=UNAVAILABLE), Verbosity.QUIET, ColorMode.OFF, True)
+    assert "that was evaluated" in text
+
+
+def test_a_run_that_evaluated_everything_makes_the_plain_claim() -> None:
+    """The hedge must not leak into a run with full coverage."""
+    text = render_human(run(), color=ColorMode.OFF)
+    assert "nothing to report: this change breaks no rule" in text
+    assert "that was evaluated" not in text

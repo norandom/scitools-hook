@@ -1,12 +1,13 @@
 """The human view of a run: findings grouped by file, then one summary line (req 7.3).
 
 The renderer is a pure function of a :class:`~scitools_hook.models.findings.RunResult` and
-three decisions the caller has already made -- how much to print, whether to colour, and
-whether the run should end with instructions for a coding agent. It reads neither
-``sys.stdout`` nor the environment: requirement 7.6 (no colour on a non-interactive terminal
-unless forced) is a decision about the terminal, which belongs to the CLI, so the CLI computes
-it with :func:`resolve_color` and passes the answer in. That keeps every rendering test free
-of monkeypatching and makes the output byte-deterministic.
+four decisions the caller has already made -- how much to print, whether to colour, whether
+the run should end with instructions for a coding agent, and whether the operator asked for
+the highest values (req 5.6). It reads neither ``sys.stdout`` nor the environment:
+requirement 7.6 (no colour on a non-interactive terminal unless forced) is a decision about
+the terminal, which belongs to the CLI, so the CLI computes it with :func:`resolve_color` and
+passes the answer in. That keeps every rendering test free of monkeypatching and makes the
+output byte-deterministic.
 
 Layout, per finding, is a head line and one or two indented lines::
 
@@ -44,12 +45,31 @@ Decisions worth knowing about, all of them visible in ``tests/report/test_human.
   files are listed sorted by path, each error under its own file in the order the analysis
   reported it -- the first error is the cause and the rest are its cascade -- and none are
   dropped, because 2.6 asks for the errors, not for a sample of them.
+* **Unavailable metrics** (req 5.5) print second, in the same alarm colour, because they are
+  the same kind of news: a metric Understand does not provide for a language is a limit that
+  was never evaluated, so the findings below cover less than the configured rules do. Since
+  task 2.4 a shipped default whose metric the configured language lacks is dropped and
+  reported instead of stopping the run, which leaves this section as the only channel saying
+  so -- a run can now check fewer rules than the operator configured and still exit 0. Each
+  line names the language first (``not available for Python: ...``), because the field is
+  keyed by language and a bare mapping of names to names reads either way round.
+* **Ignored entities** (req 3.6), **tightened limits** (req 8.3) and **highest values**
+  (req 5.6) print after the findings and before the summary: they are notes about the run
+  rather than warnings about it, so they sit next to the line that closes it. A scope that
+  ignored nothing contributes no count, a run that tightened nothing prints no section, and
+  the highest values print only when the operator asked -- 5.6 is the one requirement here
+  that is conditional on a flag, so the caller passes the answer in exactly as it does for
+  the agent block. Highest values keep the producer's ranking (descending value); everything
+  else is sorted here, because no order in the data means anything.
 * **Quiet** (req 7.8) prints the summary and the blocking findings, and nothing else -- not
-  the warnings, not the pre-existing findings, not the agent block of requirement 10.4 and
-  not the parse-error section, whose narrower rule 7.8 is. The summary line still names how
-  many files failed to parse, so quiet cannot hide that the run is incomplete; the list of
-  errors needs a run without ``--quiet``. A caller that wants the block must not ask for
-  quiet.
+  the warnings, not the pre-existing findings, not the agent block of requirement 10.4, and
+  none of the four sections above, whose narrower rule 7.8 is. The summary line still names
+  how many files failed to parse and how many metrics went unevaluated, so quiet cannot hide
+  that the run checked less than it was asked to; the lists themselves need a run without
+  ``--quiet``. The other three carry no such claim -- an ignore pattern is the operator's own
+  instruction, tightening only ever narrows a limit, and a highest value is not a statement
+  about coverage at all -- so they leave no trace in the quiet line. A caller that wants any
+  of this must not ask for quiet.
 * **Counts** in the summary are taken from ``result.findings`` rather than from the
   ``*_count`` fields, so the line can never disagree with the findings printed above it;
   ``blocking_count`` is a validated mirror of the same findings and decides the exit code.
@@ -61,14 +81,15 @@ Decisions worth knowing about, all of them visible in ``tests/report/test_human.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
+from scitools_hook.config.metric_names import SCOPES, Scope
 from scitools_hook.config.models import Severity
 from scitools_hook.exit_codes import ExitCode, describe
-from scitools_hook.models.findings import Finding, RunResult
+from scitools_hook.models.findings import Finding, HighestValue, RunResult, TightenedLimit
 from scitools_hook.models.snapshot import ParseError
 
 
@@ -88,12 +109,29 @@ class ColorMode(StrEnum):
 
 NOTHING_TO_REPORT: Final = "nothing to report: this change breaks no rule"
 NOTHING_PARSED_TO_REPORT: Final = "nothing to report in the code that was parsed: it breaks no rule"
+UNEVALUATED_SUFFIX: Final = " that was evaluated"
+"""Narrows the no-findings claim when a limit never ran (req 5.5).
+
+It is a suffix rather than a fourth constant because the two caveats are independent: a
+parse error narrows *what was read* (req 2.6), an unavailable metric narrows *which rules
+ran* (req 5.5). Composing them keeps all four combinations honest.
+"""
 """What the same line may say when part of the change never reached the rules (req 2.6)."""
 
 PARSE_HEADER: Final = "parse errors: these files were NOT fully checked"
 _PARSE_LEAD: Final[tuple[str, ...]] = (
     "  Understand could not finish parsing them. Code after a parse error can be missing",
     "  from the analysis, so no rule ran on it: what follows covers only the code that parsed.",
+)
+UNAVAILABLE_HEADER: Final = "unavailable metrics: these limits were NOT evaluated"
+_UNAVAILABLE_LEAD: Final[tuple[str, ...]] = (
+    "  Understand reports no value for them in the language named, so nothing was measured",
+    "  against their limits and no finding for them can exist, whatever the code does.",
+)
+IGNORED_HEADER: Final = "ignored entities: matched an ignore pattern, so no rule ran on them"
+TIGHTENED_HEADER: Final = "tightened limits: the baseline moved down to what this run measured"
+HIGHEST_HEADER: Final = (
+    "highest values: the largest value per metric, whether or not it breaks a limit"
 )
 PROJECT_HEADER: Final = "project-wide"
 ARCH_HEADER_PREFIX: Final = "architecture node "
@@ -177,18 +215,22 @@ def render_human(
     verbosity: Verbosity = Verbosity.NORMAL,
     color: ColorMode = ColorMode.OFF,
     show_agent_block: bool = True,
+    show_highest: bool = False,
 ) -> str:
-    """Render ``result`` as text, without a trailing newline (req 7.3, 7.6, 7.8, 10.4)."""
+    """Render ``result`` as text, without a trailing newline.
+
+    Covers requirements 7.3, 7.6, 7.8 and 10.4, the parse errors of 2.6, and the run facts
+    3.6, 5.5, 8.3 and -- when ``show_highest`` says the operator asked for them -- 5.6.
+    """
     style = _Style(color)
-    summary = _summary_line(result, style)
     sections = []
     if _shows_parse_errors(result, verbosity):
         sections.append(_parse_error_section(result.parse_errors, style))
-    if not result.findings:
-        sections.append(f"{_nothing_line(result)}\n{summary}")
-        return "\n\n".join(sections)
+    if _shows_unavailable(result, verbosity):
+        sections.append(_unavailable_section(result.unavailable_metrics, style))
     sections.extend(_render_group(group, style) for group in _groups(_visible(result, verbosity)))
-    sections.append(summary)
+    sections.extend(_note_sections(result, verbosity, show_highest, style))
+    sections.append(_closing(result, style))
     if _wants_agent_block(result, verbosity, show_agent_block):
         sections.append(_agent_block(result, style))
     return "\n\n".join(sections)
@@ -400,9 +442,134 @@ def _parse_error_line(error: ParseError) -> str:
     return f"line {error.line}: {error.message}"
 
 
+def _shows_unavailable(result: RunResult, verbosity: Verbosity) -> bool:
+    """The section belongs to any run that skipped a metric, except a quiet one (req 7.8)."""
+    return bool(_unavailable_metrics(result)) and verbosity is not Verbosity.QUIET
+
+
+def _unavailable_metrics(result: RunResult) -> set[str]:
+    """Every metric that went unevaluated for at least one language (req 5.5).
+
+    Counted per metric rather than per (language, metric) pair, because the question the
+    number answers is "how many of my limits were not checked", and a metric missing in two
+    languages is still one unchecked limit. A language whose list is empty contributes
+    nothing, so a mapping full of empty lists renders no section and adds no summary segment.
+    """
+    return {metric for metrics in result.unavailable_metrics.values() for metric in metrics}
+
+
+def _unavailable_section(unavailable: Mapping[str, Sequence[str]], style: _Style) -> str:
+    """Which metrics Understand has no value for, per language (req 5.5).
+
+    This is a coverage warning, not a note: a threshold whose metric is unavailable is never
+    evaluated, so it can never produce a finding however bad the code is. Since task 2.4 a
+    shipped default whose metric the configured language lacks is dropped and reported rather
+    than fatal, which makes this the only place a human is told that the gate checked less
+    than the configuration asked for -- hence the alarm colour and the leading position, both
+    borrowed from the parse-error section for the same reason.
+
+    ``unavailable`` is keyed by language, which no reader can tell from a mapping of names to
+    names, so each line spells the direction out instead of printing a bare pair.
+    """
+    lines = [style.alarm(UNAVAILABLE_HEADER)] + list(_UNAVAILABLE_LEAD)
+    for language in sorted(unavailable):
+        metrics = sorted(unavailable[language])
+        if metrics:
+            lines.append(f"  not available for {language}: {', '.join(metrics)}")
+    return "\n".join(lines)
+
+
+def _note_sections(
+    result: RunResult, verbosity: Verbosity, show_highest: bool, style: _Style
+) -> list[str]:
+    """What the run did besides finding things; none of it survives quiet mode (req 7.8)."""
+    if verbosity is Verbosity.QUIET:
+        return []
+    sections = []
+    if _ignored_parts(result.ignored_counts):
+        sections.append(_ignored_section(result.ignored_counts, style))
+    if result.tightened:
+        sections.append(_tightened_section(result.tightened, style))
+    if show_highest and result.highest:
+        sections.append(_highest_section(result.highest, style))
+    return sections
+
+
+def _ignored_section(counts: Mapping[Scope, int], style: _Style) -> str:
+    """How many entities the ignore lists excluded from every rule, per scope (req 3.6)."""
+    return "\n".join([style.strong(IGNORED_HEADER), f"  {', '.join(_ignored_parts(counts))}"])
+
+
+def _ignored_parts(counts: Mapping[Scope, int]) -> list[str]:
+    """``routine 8`` for each scope that excluded something, in the canonical scope order.
+
+    A scope that ignored nothing says nothing, so a zero -- which the producer omits but a
+    hand-assembled result can still carry -- prints no part, and a mapping of nothing but
+    zeros prints no section at all.
+    """
+    return [f"{scope} {counts[scope]}" for scope in SCOPES if counts.get(scope, 0) > 0]
+
+
+def _tightened_section(tightened: Sequence[TightenedLimit], style: _Style) -> str:
+    """Which limits this run lowered, and from what to what (req 8.3).
+
+    Sorted by rule name: the baseline is a mapping, so the order it yields entries in carries
+    no meaning that ranking them by name would destroy.
+    """
+    lines = [style.strong(TIGHTENED_HEADER)]
+    for limit in sorted(tightened, key=lambda entry: entry.rule):
+        lines.append(f"  {limit.rule}  {_number(limit.previous)} -> {_number(limit.current)}")
+    return "\n".join(lines)
+
+
+def _highest_section(highest: Sequence[HighestValue], style: _Style) -> str:
+    """The largest value per metric and the entity holding it, when asked for (req 5.6).
+
+    The producer's order is kept, because it *is* a ranking -- ``analysis.thresholds`` sorts
+    by descending value -- and re-sorting it here would throw away the one thing that tells a
+    reader where to look first.
+    """
+    lines = [style.strong(HIGHEST_HEADER)]
+    lines.extend(f"  {'  '.join(_highest_parts(item))}" for item in highest)
+    return "\n".join(lines)
+
+
+def _highest_parts(item: HighestValue) -> list[str]:
+    """Rule name, value, and where the value lives -- each part omitted when it says nothing.
+
+    The rule name is the one findings use (``<scope>.<metric>``) so the two sections can be
+    read together. A population metric belongs to no entity and stops after the value; a
+    file's longname is its own path, so it is printed once rather than twice.
+    """
+    parts = [f"{item.scope}.{item.metric}", _number(item.value)]
+    ref = item.entity
+    if ref is None:
+        return parts
+    parts.append(ref.key.longname)
+    if ref.key.path and ref.key.path != ref.key.longname:
+        parts.append(ref.key.path)
+    if ref.line is not None:
+        parts.append(f"line {ref.line}")
+    return parts
+
+
+def _closing(result: RunResult, style: _Style) -> str:
+    """The summary line, led by the no-findings line when no finding was printed above it."""
+    summary = _summary_line(result, style)
+    return summary if result.findings else f"{_nothing_line(result)}\n{summary}"
+
+
 def _nothing_line(result: RunResult) -> str:
-    """What "no findings" means -- which is less than it sounds when a file failed to parse."""
-    return NOTHING_PARSED_TO_REPORT if result.parse_errors else NOTHING_TO_REPORT
+    """What "no findings" means -- which is less than it sounds when coverage was lost.
+
+    "This change breaks no rule" is a claim about rules that ran. A metric Understand had
+    no value for never ran, so saying it unqualified is the same misreading requirement 2.6
+    already forces the parse-error wording to avoid -- and since task 2.4 the Gate can drop
+    a shipped threshold and still exit 0, which makes this the common case rather than the
+    exotic one.
+    """
+    line = NOTHING_PARSED_TO_REPORT if result.parse_errors else NOTHING_TO_REPORT
+    return f"{line}{UNEVALUATED_SUFFIX}" if _unavailable_metrics(result) else line
 
 
 class _Counts(NamedTuple):
@@ -427,11 +594,13 @@ def _counts(findings: Sequence[Finding]) -> _Counts:
 def _summary_line(result: RunResult, style: _Style) -> str:
     """Counts per severity, the parse failures, and the exit code's meaning (req 7.3, 1.6, 2.6).
 
-    The parse-failure segment appears only when there is one, so a run of code that parsed
-    renders exactly the line it always did. It is in the summary rather than only in the
-    section above because this line is the last thing a long run prints and the only thing a
-    quiet run prints -- and "0 errors" next to an unparsed file is the misreading that
-    requirement 2.6 exists to prevent.
+    The parse-failure and unavailable-metric segments appear only when there is one, so a run
+    that parsed everything and measured every metric renders exactly the line it always did.
+    They are in the summary rather than only in the sections above because this line is the
+    last thing a long run prints and the only thing a quiet run prints -- and "0 errors" next
+    to an unparsed file, or next to a threshold that was never evaluated, is the misreading
+    requirements 2.6 and 5.5 exist to prevent. The exclusions, the tightening and the highest
+    values make no claim about coverage and stay out of this line.
     """
     counts = _counts(result.findings)
     code = ExitCode.VIOLATIONS if counts.blocking else ExitCode.OK
@@ -442,6 +611,11 @@ def _summary_line(result: RunResult, style: _Style) -> str:
     unparsed = _unparsed_files(result)
     if unparsed:
         segments.append(f"{_plural(unparsed, 'file')} failed to parse, not fully checked")
+    unavailable = _unavailable_metrics(result)
+    if unavailable:
+        segments.append(
+            f"{_plural(len(unavailable), 'metric')} unavailable, those limits were not evaluated"
+        )
     segments.append(f"exit {code.value}: {describe(code)}")
     return style.strong(" | ".join(segments))
 
