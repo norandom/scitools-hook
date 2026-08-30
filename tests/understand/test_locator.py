@@ -92,15 +92,18 @@ class StubProbes:
     """The three injected probes, recording every call and answering as configured.
 
     ``version`` is what ``und`` reports; ``inprocess`` and ``upython`` are the API versions
-    the two API probes return, or ``None`` for a probe that failed. ``errors`` raises an
-    ``OSError`` from the named probe instead, which is what a probe that cannot even start
-    does in production.
+    the two API probes return, or ``None`` for a probe that failed. ``errors`` raises the
+    given exception from the named probe instead. It is typed ``Exception`` rather than
+    ``OSError`` on purpose: production raises ``OSError`` for a probe that cannot start, but
+    the guard under test catches *only* ``OSError``, so a test proving the guard is narrow
+    must be able to inject something else -- a ``subprocess.TimeoutExpired``, which is not an
+    ``OSError``. Narrowing this annotation would make that test unwritable.
     """
 
     version: str = "6.5.1204"
     inprocess: str | None = None
     upython: str | None = None
-    errors: dict[str, OSError] = field(default_factory=dict)
+    errors: dict[str, Exception] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
 
     def und_version(self, und: Path) -> str:
