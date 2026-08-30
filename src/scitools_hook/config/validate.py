@@ -6,13 +6,33 @@ that need nothing but the settings themselves always run (they are also re-run h
 checked against an Understand metric catalogue when one is supplied. The catalogue arrives
 through the ``MetricAvailability`` protocol declared here, so ``config`` never imports the
 ``understand`` adapter. Every failure is a ``ConfigError`` naming the dotted key.
+
+Availability is the one check whose answer depends on whose threshold it is. Requirement 3.8
+rejects an *unknown metric name*, while requirement 3.1 promises the Gate runs on its built-in
+defaults — and those defaults ship ``class.PercentLackOfCohesion``, which Understand computes
+for C++ and not for Python. A metric no configured language has is therefore a ``ConfigError``
+only when the Gate does not ship it: an unknown name, which is what 3.8 is about. One the Gate
+ships is a known metric that this repository's languages do not compute, which is requirement
+5.5 — skipped and reported, not fatal. Who *wrote* it cannot be the test: ``scitools-hook init``
+(req 3.9) copies every built-in default into the repository file, so a rule keyed on provenance
+would stop the Gate on a Python repository as soon as the operator ran ``init`` and uncommented
+``languages``. :class:`AvailabilityReport` carries the drops out, per language, so the run
+reports that they were never evaluated instead of going quietly green.
+
+Dropping has one dangerous edge, which :func:`_check_languages` closes: a misspelt *language*
+makes every question come back empty, so every shipped default would drop and the Gate would
+run green on no rules at all. A configured language the catalogue computes nothing for is
+therefore a configuration error naming the language.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Final, Protocol, runtime_checkable
 
+from scitools_hook.config.defaults import is_default_threshold
 from scitools_hook.config.metric_names import (
     ELEMENT_SCOPES,
     SCOPES,
@@ -34,6 +54,15 @@ from scitools_hook.config.models import (
 from scitools_hook.config.models_validation import compile_patterns
 from scitools_hook.errors import ConfigError
 
+LANGUAGE_SCOPES: Final[tuple[Scope, ...]] = (*ELEMENT_SCOPES, "project")
+"""Scopes whose metric list is language-specific; ``arch`` answers the same for any name."""
+
+_LANGUAGE_HINT: Final = (
+    "check the spelling; the 'Languages' block of `und list settings <database>` "
+    "names the languages this Understand build knows"
+)
+"""There is no ``und -languages``: that invocation exits 1 with 'No valid command' (measured)."""
+
 
 @runtime_checkable
 class MetricAvailability(Protocol):
@@ -43,20 +72,56 @@ class MetricAvailability(Protocol):
         """Metric identifiers Understand computes for ``language`` at ``scope``."""
 
 
-def validate_settings(settings: Settings, availability: MetricAvailability | None) -> None:
+def _frozen_metrics(
+    metrics: Mapping[str, tuple[str, ...]] | None = None,
+) -> Mapping[str, tuple[str, ...]]:
+    """A read-only view of ``metrics``: the report hands out no container a caller can edit."""
+    return MappingProxyType(dict(metrics or {}))
+
+
+@dataclass(frozen=True, slots=True)
+class AvailabilityReport:
+    """What the metric catalogue left of the configured thresholds (req 3.1, 5.5).
+
+    ``thresholds`` is what the run evaluates. ``dropped`` are the built-in defaults whose
+    metric no configured language has; ``unavailable`` names those metrics per language, so a
+    dropped threshold is reported rather than forgotten. It is read-only and holds tuples,
+    because a frozen report that handed out a live ``dict`` would be frozen in name only;
+    ``RunResult.unavailable_metrics`` takes ``{language: list(metrics) for language, metrics
+    in report.unavailable.items()}`` and ``evaluate_thresholds``'s ``catalogue_unavailable``
+    takes it as it is. A metric the Gate does not ship never reaches this report — it is a
+    ``ConfigError``.
+
+    Note for the caller: ``analysis.thresholds`` reports only the unavailable metrics that a
+    threshold in the list it was given names, so a dropped one is filtered out there. Pass
+    ``unavailable`` into ``RunResult.unavailable_metrics`` as well as into
+    ``catalogue_unavailable``, or the drop disappears from the report.
+    """
+
+    thresholds: tuple[ThresholdSpec, ...] = ()
+    dropped: tuple[ThresholdSpec, ...] = ()
+    unavailable: Mapping[str, tuple[str, ...]] = field(default_factory=_frozen_metrics)
+
+
+def validate_settings(
+    settings: Settings, availability: MetricAvailability | None
+) -> AvailabilityReport:
     """Check ``settings`` beyond its shape; raise ``ConfigError`` naming the dotted key.
 
     Pure: no file system, no Understand, no mutation. ``file`` is left unset because a
     ``Settings`` no longer knows where a value came from — ``config.loader.attach_source``
-    fills it in from the provenance map. When ``availability`` is given, every configured
-    metric must exist for at least one configured language at its scope (req 3.8, 5.5).
+    fills it in from the provenance map. When ``availability`` is given, every metric the
+    Gate does not itself ship must exist for at least one configured language at its scope
+    (req 3.8); the returned report says which thresholds survived that check and which
+    shipped default this repository's languages cannot compute (req 3.1, 5.5).
     """
     for spec in settings.thresholds:
         _check_threshold(spec)
     _check_ignores(settings.ignore)
     _check_structure(settings.structure)
-    if availability is not None:
-        _check_availability(settings, availability)
+    if availability is None:
+        return AvailabilityReport(thresholds=tuple(settings.thresholds))
+    return _check_availability(settings, availability)
 
 
 def _threshold_key(spec: ThresholdSpec) -> str:
@@ -106,8 +171,8 @@ def _check_synthetic(scope: Scope, ref: MetricRef, key: str) -> None:
 def _check_ignores(ignore: IgnoreRules) -> None:
     """Every ignore pattern compiles as a regular expression (req 3.6)."""
     lists = (("files", ignore.files), ("classes", ignore.classes), ("routines", ignore.routines))
-    for field, patterns in lists:
-        key = f"ignore.{field}"
+    for name, patterns in lists:
+        key = f"ignore.{name}"
         try:
             compile_patterns(patterns)
         except ValueError as err:
@@ -165,13 +230,78 @@ def _check_coupling(rules: Sequence[CouplingRule]) -> None:
         )
 
 
-def _check_availability(settings: Settings, availability: MetricAvailability) -> None:
-    """Reject metrics the catalogue reports for none of the configured languages (req 3.8)."""
+def _check_availability(settings: Settings, availability: MetricAvailability) -> AvailabilityReport:
+    """Split the thresholds into the ones this run can evaluate and the ones it cannot.
+
+    A metric the catalogue reports for none of the configured languages stops the Gate when
+    the Gate does not ship it — an unknown name, req 3.8 — and is dropped with a note when it
+    is one of the built-in defaults, which are known metrics this repository's languages
+    happen not to compute (req 3.1, 5.5).
+    """
     languages = settings.project.languages or []
     if not languages:
-        return
+        return AvailabilityReport(thresholds=tuple(settings.thresholds))
+    _check_languages(languages, availability)
+    evaluated: list[ThresholdSpec] = []
+    dropped: list[ThresholdSpec] = []
     for spec in settings.thresholds:
-        _check_metric_exists(spec, languages, availability)
+        if _metric_exists(spec, languages, availability):
+            evaluated.append(spec)
+        elif is_default_threshold(spec.scope, spec.metric):
+            dropped.append(spec)
+        else:
+            raise _unknown_metric(spec, languages)
+    return AvailabilityReport(
+        thresholds=tuple(evaluated),
+        dropped=tuple(dropped),
+        unavailable=_unavailable_metrics(languages, dropped),
+    )
+
+
+def _check_languages(languages: Sequence[str], availability: MetricAvailability) -> None:
+    """Refuse a configured language Understand computes nothing at all for (req 3.8).
+
+    A misspelt language answers every availability question with nothing, so without this
+    check every shipped default would be dropped as unavailable and the Gate would run green
+    having evaluated no rule at all — a worse silence than the one dropping fixes. The
+    architecture scope is deliberately not asked: its metric list carries no language, so it
+    answers the same for any string, a typo included (measured against the install). An empty
+    name is refused before the catalogue is asked at all, because a kind string carrying no
+    language matches *every* language — it answers the union, so a blank would quietly widen
+    every threshold instead of narrowing it (measured: 50 metrics at the routine scope).
+    """
+    for language in languages:
+        if not language.strip():
+            raise ConfigError(
+                "project.languages: a language name is empty",
+                key="project.languages",
+                hint=_LANGUAGE_HINT,
+            )
+        if any(availability.available(language, scope) for scope in LANGUAGE_SCOPES):
+            continue
+        raise ConfigError(
+            f"project.languages: Understand computes no metric for language {language!r}",
+            key="project.languages",
+            hint=_LANGUAGE_HINT,
+        )
+
+
+def _unavailable_metrics(
+    languages: Sequence[str], dropped: Sequence[ThresholdSpec]
+) -> Mapping[str, tuple[str, ...]]:
+    """The dropped metrics per language, for ``RunResult.unavailable_metrics`` (req 5.5).
+
+    A dropped threshold is unavailable for every configured language — that is why it was
+    dropped — so each language carries the whole list, and requirement 5.5's "which metrics
+    for which language" holds for all of them. The names lose their stats prefix, because the
+    catalogue, the snapshot and ``analysis.thresholds`` all speak the bare metric id: a
+    dropped ``AVG:CyclomaticStrict`` has to be reported as ``CyclomaticStrict`` or it matches
+    nothing downstream.
+    """
+    if not dropped:
+        return _frozen_metrics()
+    metrics = tuple(sorted({spec.ref.metric for spec in dropped}))
+    return _frozen_metrics({language: metrics for language in sorted(languages)})
 
 
 def _query_scopes(spec: ThresholdSpec) -> tuple[Scope, ...]:
@@ -181,19 +311,26 @@ def _query_scopes(spec: ThresholdSpec) -> tuple[Scope, ...]:
     return (spec.scope,)
 
 
-def _check_metric_exists(
+def _metric_exists(
     spec: ThresholdSpec, languages: Sequence[str], availability: MetricAvailability
-) -> None:
+) -> bool:
+    """Whether any configured language computes this metric at the scope it is configured for."""
     metric = spec.ref.metric
     if metric in SYNTHETIC_METRICS:
-        return
-    for language in languages:
-        for scope in _query_scopes(spec):
-            if metric in availability.available(language, scope):
-                return
+        return True
+    return any(
+        metric in availability.available(language, scope)
+        for language in languages
+        for scope in _query_scopes(spec)
+    )
+
+
+def _unknown_metric(spec: ThresholdSpec, languages: Sequence[str]) -> ConfigError:
+    """The error an unknown metric name becomes: not shipped, and no language has it (3.8)."""
     key = _threshold_key(spec)
-    raise ConfigError(
-        f"{key}: no metric {metric!r} for {', '.join(languages)} at the {spec.scope} scope",
+    return ConfigError(
+        f"{key}: no metric {spec.ref.metric!r} for {', '.join(languages)} "
+        f"at the {spec.scope} scope",
         key=key,
         hint="check the name against Understand's metric list for these languages",
     )

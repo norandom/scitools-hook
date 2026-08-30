@@ -12,6 +12,7 @@ from scitools_hook.config.defaults import (
     DEFAULT_SEVERITIES,
     DEFAULT_THRESHOLDS,
     default_settings,
+    is_default_threshold,
 )
 from scitools_hook.config.metric_names import SYNTHETIC_METRICS, Scope, parse_metric_name
 from scitools_hook.config.models import Limit, Settings, ThresholdSpec
@@ -208,3 +209,27 @@ def test_default_fan_limits_are_installed_as_warnings() -> None:
 def test_default_hints_is_an_empty_override_map() -> None:
     assert DEFAULT_HINTS == {}
     assert default_settings().hints == {}
+
+
+# --- which thresholds the Gate itself ships (req 3.1) ----------------------------
+
+
+def test_a_shipped_threshold_is_known_as_a_default() -> None:
+    """``config.validate`` asks this to tell a default from a metric an operator wrote."""
+    assert is_default_threshold("class", "PercentLackOfCohesion")
+    assert is_default_threshold("project", "AVG:CyclomaticStrict")
+
+
+def test_a_metric_the_defaults_do_not_ship_is_not_a_default() -> None:
+    assert not is_default_threshold("class", "CyclomaticStrickt")
+    assert not is_default_threshold("routine", "PercentLackOfCohesion")
+
+
+def test_a_shipped_threshold_is_recognised_however_its_prefix_is_written() -> None:
+    """The prefix is case-insensitive in TOML, so the two spellings are one threshold."""
+    assert is_default_threshold("project", "avg:CyclomaticStrict")
+    assert not is_default_threshold("project", "MEDIAN:CyclomaticStrict")
+
+
+def test_a_string_that_is_not_a_metric_name_is_nobody_s_default() -> None:
+    assert not is_default_threshold("routine", "A:B:C")

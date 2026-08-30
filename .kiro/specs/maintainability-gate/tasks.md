@@ -37,7 +37,7 @@
   - _Requirements: 3.2, 3.6, 3.8, 3.10_
   - _Boundary: config/loader, config/validate_
 
-- [ ] 2.4 Stop the built-in defaults from failing availability validation (ESCAPED DEFECT from 2.2/2.3)
+- [x] 2.4 Stop the built-in defaults from failing availability validation (ESCAPED DEFECT from 2.2/2.3)
   - Reproduced by the controller: with **no configuration file at all** and `project.languages = ["Python"]`, `validate_settings` raises `ConfigError: thresholds.class.PercentLackOfCohesion: no metric 'PercentLackOfCohesion' for Python at the class scope`. The Gate therefore **refuses to run on a Python-only repository out of the box** -- including this repository, which blocks the 10.4 self-gate.
   - This contradicts the requirements as written. Requirement 3.8's trigger is "**If a configuration file contains** an unknown metric name..."; requirement 3.1 says the Gate "shall ship built-in default thresholds ... and **shall run with those defaults when no configuration file exists**." `config/validate.py:_check_availability` applies the rejection to every `ThresholdSpec` without regard to where it came from, so a default the tool ships for C++ kills a Python run.
   - Note the codebase already knows the metric is Python-unavailable in three places and still hard-fails: `defaults.py:95` lists `class.PercentLackOfCohesion` in `_SOFT_THRESHOLDS` (severity `warning`), `template.py:133` says "PercentLackOfCohesion is unavailable for Python", and `hints.py:112` carries its hint. Severity is irrelevant to `_check_metric_exists`, which raises before severity is ever consulted.

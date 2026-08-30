@@ -206,9 +206,14 @@ def one_threshold(metric: str) -> Settings:
 
 
 def test_a_metric_the_catalogue_knows_passes_configuration_validation() -> None:
+    # `routine.CyclomaticStrict` is a shipped default, so a catalogue answer that stopped
+    # matching would drop it rather than raise: assert it is evaluated, not merely accepted.
     catalogue = a_catalogue({PYTHON_ROUTINE_KIND: PYTHON_ROUTINE_METRICS})
 
-    validate_settings(one_threshold("CyclomaticStrict"), catalogue)
+    report = validate_settings(one_threshold("CyclomaticStrict"), catalogue)
+
+    assert {spec.rule for spec in report.thresholds} == {"routine.CyclomaticStrict"}
+    assert report.dropped == ()
 
 
 def test_a_metric_the_catalogue_does_not_know_is_a_configuration_error() -> None:
@@ -259,11 +264,33 @@ def test_the_real_catalogue_answers_for_the_project_and_architecture_scopes() ->
 
 @pytest.mark.contract
 def test_the_built_in_defaults_pass_validation_against_the_real_catalogue() -> None:
-    """Requirement 3.8 against the shipped configuration: no default may be rejected."""
+    """Requirement 3.8 against the shipped configuration: no default may be rejected — and
+    none may be quietly dropped either, since between them Python and C++ have every one."""
     settings = default_settings()
     settings.project.languages = ["Python", "C++"]
 
-    validate_settings(settings, real_catalogue())
+    report = validate_settings(settings, real_catalogue())
+
+    assert report.dropped == ()
+    assert len(report.thresholds) == len(settings.thresholds)
+
+
+@pytest.mark.contract
+def test_the_built_in_defaults_run_on_a_python_only_repository() -> None:
+    """Requirement 3.1 against the real install: the shipped defaults must not refuse to start
+    on this very repository, which is Python-only. ``PercentLackOfCohesion`` is a C++/Java
+    class metric Understand does not compute for Python, so it is dropped and reported (5.5),
+    not fatal — the two-language test above passes even when this one fails."""
+    settings = default_settings()
+    settings.project.languages = ["Python"]
+
+    report = validate_settings(settings, real_catalogue())
+
+    dropped = {spec.rule for spec in report.dropped}
+    assert "class.PercentLackOfCohesion" in dropped
+    assert "PercentLackOfCohesion" in report.unavailable["Python"]
+    assert "routine.CyclomaticStrict" in {spec.rule for spec in report.thresholds}
+    assert dropped.isdisjoint({spec.rule for spec in report.thresholds})
 
 
 @pytest.mark.contract

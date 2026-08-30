@@ -13,12 +13,14 @@ measured against the installed Understand (6.5.1204, 2026-08-30):
   answers the 18 metrics a Python routine really has.
 * **``c++`` is not a kind-string language.** ``Metric.list("c++ file …")`` answers nothing at
   all, ``Metric.list("c file …")`` answers 42, and Understand's kind long names for C++
-  entities read ``C Class Type``. ``Ent.language()`` and ``und -languages`` both say ``C++``,
-  so exactly one alias closes the gap — and without it a C++ repository has no available
-  metric and every threshold it configures is rejected. Everything else measured (``Python``,
-  ``Java``, ``C#``, ``Ada``, ``Web``, ``Fortran``, ``Pascal``, ``Jovial``, ``VHDL``,
-  ``Assembly``, ``Basic``) answers under its own name, case-insensitively; a JavaScript file
-  is a ``Web`` entity and ``db.language()`` says ``Web``, so no second alias is needed.
+  entities read ``C Class Type``. ``Ent.language()`` says ``C++``, and so does the
+  ``Languages`` block of ``und list settings <db>`` — there is no ``und -languages``, which
+  exits 1 with "No valid command found" (measured). So exactly one alias closes the gap, and
+  without it a C++ repository has no available metric and every threshold it configures is
+  rejected. Everything else measured (``Python``, ``Java``, ``C#``, ``Ada``, ``Web``,
+  ``Fortran``, ``Pascal``, ``Jovial``, ``VHDL``, ``Assembly``, ``Basic``) answers under its
+  own name, case-insensitively; a JavaScript file is a ``Web`` entity and ``db.language()``
+  says ``Web``, so no second alias is needed.
 * **Two scopes have no entity kind of their own.** ``Metric.list("project")`` answers nothing
   — the project-level metrics (``MaxCyclomaticStrict``, ``MaxNesting``) are in the *bare*
   language list, which is a superset of the three element-scope lists. ``architecture``

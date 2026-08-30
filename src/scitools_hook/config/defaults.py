@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from scitools_hook.config.metric_names import Scope
+from scitools_hook.config.metric_names import Scope, format_metric_name, parse_metric_name
 from scitools_hook.config.models import (
     CodeCheckSettings,
     FanKey,
@@ -23,6 +23,7 @@ from scitools_hook.config.models import (
     ThresholdSpec,
     thresholds_from_tables,
 )
+from scitools_hook.errors import ConfigError
 
 ThresholdTable = dict[str, float | dict[str, float]]
 """Metric name -> scalar maximum or ``{max, min}`` table, i.e. the TOML shape."""
@@ -137,6 +138,32 @@ def _default_structure() -> StructureRules:
         fan={key: Limit(max=value) for key, value in DEFAULT_FAN.items()},
         fan_severity=DEFAULT_SEVERITIES["structure.fan_out"],
     )
+
+
+_DEFAULT_RULES: Final[frozenset[str]] = frozenset(
+    f"{scope}.{format_metric_name(parse_metric_name(metric))}"
+    for scope, table in DEFAULT_THRESHOLDS.items()
+    for metric in table
+)
+"""Every shipped threshold as a canonical rule name, the form ``ThresholdSpec.rule`` takes."""
+
+
+def is_default_threshold(scope: Scope, metric: str) -> bool:
+    """True when the built-in defaults ship a threshold for ``scope`` and ``metric`` (req 3.1).
+
+    ``config.validate`` asks this about a threshold whose metric the Understand catalogue does
+    not have, to tell a default the Gate itself ships — dropped and reported, req 5.5 — from a
+    metric an operator asked for, which is a configuration error (req 3.8). The name is
+    compared in the canonical form ``ThresholdSpec.rule`` uses, so the case-insensitive stats
+    prefix of ``avg:CyclomaticStrict`` matches the shipped ``AVG:CyclomaticStrict`` and the
+    two ways of writing one threshold cannot disagree about who owns it. A string that is not
+    a metric name at all is nobody's default.
+    """
+    try:
+        ref = parse_metric_name(metric)
+    except ConfigError:
+        return False
+    return f"{scope}.{format_metric_name(ref)}" in _DEFAULT_RULES
 
 
 def default_settings() -> Settings:
