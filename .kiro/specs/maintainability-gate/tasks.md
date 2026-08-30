@@ -126,6 +126,14 @@
   - _Requirements: 10.1, 10.2, 10.3_
   - _Boundary: report/agent_rules_
 
+- [ ] 5.5 Render parse errors in the human and JSON output (ESCAPED DEFECT from 5.1/5.2)
+  - `RunResult.parse_errors` is carried in the model but **no renderer emits it**: `report/human.py`, `report/json_out.py`, `report/markdown.py` and the SARIF renderer contain no reference to it. Requirement 2.6 says the Gate "shall list those files and errors in its output"; requirement 5.4 says the JSON document shall contain "the parse errors". Both are unmet.
+  - This is a correctness defect, not cosmetics: see the parse-error entity-loss finding below -- an unparsed file loses every entity after the failure, so a run can check almost nothing and print a clean bill of health.
+  - Human output must name the affected files and say plainly that entities in them were not checked; JSON must carry them in the documented schema.
+  - Done when a run whose analysis reported parse errors shows them in human output and in the JSON document, and a test fails if either renderer drops them
+  - _Requirements: 2.6, 5.4_
+  - _Boundary: report/human, report/json_out_
+
 - [ ] 6. Understand adapter: API worker, location, `und` wrapper, database lifecycle
 - [x] 6.1 Implement the stdlib-only API worker skeleton with `ping`, `catalogue` and `archs`
   - `worker.py` importing only the standard library and `understand`; JSON request on stdin / result on stdout when run as a script; `dispatch(op, request)` for in-process use; error envelope mapping `UnderstandError` texts (`NoApiLicense`, `DBUnableOpen`, `DBOldVersion`) to typed error names; `catalogue` returns available metrics per language and scope kind; `archs` returns root architecture names and nodes at a depth
