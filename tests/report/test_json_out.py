@@ -129,7 +129,7 @@ def full_run() -> RunResult:
         ],
         findings=findings,
         ignored_counts={"routine": 2, "file": 1},
-        unavailable_metrics={"PercentLackOfCohesion": ["Python"]},
+        unavailable_metrics={"Python": ["PercentLackOfCohesion"]},
         parse_errors=[ParseError(path=Path("src/util/text.cpp"), line=3, message="unknown token")],
         tightened=[TightenedLimit(rule="routine.CountLineCode", previous=80, current=72)],
         highest=[
@@ -230,7 +230,7 @@ def test_document_carries_everything_requirement_7_4_lists() -> None:
         },
     ]
     assert document["ignored_counts"] == {"routine": 2, "file": 1}
-    assert document["unavailable_metrics"] == {"PercentLackOfCohesion": ["Python"]}
+    assert document["unavailable_metrics"] == {"Python": ["PercentLackOfCohesion"]}
     assert document["parse_errors"] == [
         {"path": "src/util/text.cpp", "line": 3, "message": "unknown token"}
     ]

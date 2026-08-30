@@ -194,6 +194,13 @@ class RunResult(DataModel):
     findings: list[Finding] = Field(default_factory=list)
     ignored_counts: dict[Scope, int] = Field(default_factory=dict)
     unavailable_metrics: dict[str, list[str]] = Field(default_factory=dict)
+    """Metrics skipped for want of catalogue support, keyed **language -> metrics** (req 5.5).
+
+    The orientation is not deducible from the type and has been written backwards once, so it
+    is stated here: the key is the language. This matches ``ProjectSnapshot.unavailable``,
+    ``AvailabilityReport.unavailable`` and ``evaluate_thresholds(catalogue_unavailable=...)``,
+    which lets a pipeline pass one through to the other without transposing.
+    """
     parse_errors: list[ParseError] = Field(default_factory=list)
     tightened: list[TightenedLimit] = Field(default_factory=list)
     highest: list[HighestValue] = Field(default_factory=list)
