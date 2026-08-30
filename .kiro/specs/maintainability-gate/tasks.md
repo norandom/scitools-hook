@@ -368,29 +368,35 @@
 
 ## PRODUCT-LEVEL FINDING — parse errors cause ENTITY LOSS, not just noise
 
-Measured on Understand 6.5.1204 (controller, 2026-08-30). **Understand's Python parser cannot parse PEP 448 unpacking in a list/dict literal.** A single `return ["k", *xs]` on line 2 of a file produces:
-
-```
-Error: expected token ']' at token *          File: unpack.py Line: 2
-Error: expected newline at token dedent       File: unpack.py Line: 5
-Error: expected identifier at token indent    File: unpack.py Line: 6
-... cascading to the end of the file
-```
-
-and the consequence is not a warning — it is **silent entity loss**. Identical files, one using `["k", *xs]` and one using `["k"] + list(xs)`:
+Measured on Understand 6.5.1204 (controller, 2026-08-30). Understand's Python parser fails on **star-unpacking inside a list literal** -- `["k", *xs]` -- and the failure is not a warning, it is **silent entity loss**. Identical files, one using `["k", *xs]` and one using `["k"] + list(xs)`:
 
 | file | routines Understand reports | truth |
 |---|---|---|
 | `plain.py`  | `head`, `after_one`, `after_two` | 3 |
 | `unpack.py` | **`head` only**, and at 5 lines instead of 2 | 3 |
 
-Every routine after the unparsed construct **vanishes from the database**. The gate would then evaluate almost nothing in that file and report no violations — the same silent-green failure this project has been fighting, but produced by the analysis engine rather than our code. Modern Python uses `*`/`**` unpacking widely, so this is not an edge case.
+The first error (`Error: expected token ']' at token *`) cascades (`expected newline at token dedent`, `expected identifier at token indent`, ...) to the end of the file, and **every routine after the construct vanishes from the database**. The gate would then evaluate almost nothing in that file and report no violations -- the same silent-green failure this project keeps hitting, but produced by the analysis engine rather than our code.
+
+**The blast radius is narrow and was measured form by form.** Only the list literal breaks; each of these was checked with a sentinel function after the construct, and the sentinel survived:
+
+| form | example | parses? |
+|---|---|---|
+| star in a **list** literal | `["k", *xs]` | **NO — truncates the file** |
+| star in a set literal | `{1, *xs}` | yes |
+| star in a tuple literal | `(1, *xs)` | yes |
+| `**` in a dict literal | `{"k": 1, **d}` | yes |
+| star/`**` in a **call** | `f(*xs)`, `f(**d)` | yes |
+| walrus | `if (n := len(xs)) > 2:` | yes |
+| `match` statement | `match x: case {"a": v}:` | yes |
+
+So the rule to encode is specific: **`*` inside `[...]`**. Not "PEP 448", not unpacking generally.
 
 **Consequences and required handling:**
-- Requirement 2.6 already says parse errors must be listed and rules still evaluated on what parsed — that is the right design and it is what saves us. But 2.6's rendering must be **loud**: a parse error means *missing entities*, not a cosmetic note. Task 5.1's human renderer and 5.2's JSON must present parse errors as a coverage warning, not a footnote, and the summary should say how many files failed to parse.
-- 8.3 (CheckPipeline) must carry `parse_errors` into `RunResult` on every run, and should consider making a parse error in a STAGED file a blocking finding — a commit whose changed file cannot be parsed has not been checked.
-- 10.4 (self-gate): the tool's own source must avoid PEP 448 unpacking in list/dict literals, or its self-check silently skips routines. A false `CountLineCode 72` was already observed on `und_cli.py` for a routine whose real size is 14.
-- 10.1 (contract tests): add a fixture with an unparsable construct and assert the parse error is reported AND that the surviving entities are still evaluated.
+- Requirement 2.6 already says parse errors must be listed and rules still evaluated on what parsed -- that design is what saves us. But 2.6's rendering must be **loud**: a parse error means *missing entities*, not a cosmetic note. Task 5.1's human renderer and 5.2's JSON must present parse errors as a coverage warning, and the summary should say how many files failed to parse.
+- 8.3 (CheckPipeline) must carry `parse_errors` into `RunResult` on every run, and should consider making a parse error in a STAGED file a blocking finding -- a commit whose changed file cannot be parsed has not been checked.
+- 10.4 (self-gate): our own source currently has **14 star-in-list-literal sites in 7 files** (`analysis/structure/fan.py`, `config/template.py`, `report/agent_rules.py` x2, `report/human.py`, `report/markdown.py` x5, `understand/und_cli.py` x3, `understand/worker.py`), each of which blinds the self-gate to the rest of its file. Rewrite them (`[a, *b]` -> `[a] + list(b)`) as part of 10.4, and keep a test that fails if a new one appears.
+- 10.1 (contract tests): add a fixture with `["k", *xs]` and assert both that the parse error is reported AND that the surviving entities are still evaluated.
+
 - 6.5: `und license` is only reached when `-isundlicensed` FAILS -- a `0` reply is answered first. A test that plans `-isundlicensed: "0"` alongside a `license` entry leaves that entry dead and the fallback verdict untested. Force the fallback with `{"stderr": ..., "rc": 1}`, and isolate the `rc` disjunct with healthy-looking output at rc 1 (error text alone is caught by `_has_error_line`, so it cannot distinguish them).
 - 6.7 (measured on the licensed machine, controller): **CodeCheck is NOT licensed here.** `und -db X codecheck` exits **rc 1** printing exactly `Licensing Error: No license for CodeCheck. \nStopping CodeCheck. ` (already the `CODECHECK_NO_LICENSE` fixture). The wrapper maps this to `LicenseError` via `LICENSE_TEXT`. The contract test therefore MUST skip -- but skip on a *probe* (run it, detect the licensing text), never unconditionally, so it starts passing by itself on a machine that does have the licence.
 - 6.7 `und help codecheck` facts: the command takes two positional arguments, `<configuration> <outputDir>`, and **all switches must appear before them**. CSV is the DEFAULT output (`-html` adds HTML "in addition to the .csv output"). `-files <listfile>` takes a plain list file that does NOT need a leading `@` (unlike `analyze -files @list`). Do NOT pass `-exitstatus`: it makes rc the *number of violations*, which would collide with the non-zero-means-failure mapping every other command uses.
