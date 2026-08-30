@@ -588,6 +588,31 @@ def test_every_error_type_the_worker_can_answer_with_has_a_typed_error(
         assert error.exit_code != ExitCode.UNEXPECTED, kind
 
 
+@pytest.mark.parametrize(
+    ("kind", "own_hint"),
+    [("DBUnableOpen", "may read it"), ("BadRequest", "defect in the Gate")],
+)
+def test_a_type_the_worker_named_is_never_re_read_from_its_message(
+    stub_upython: StubUpython, command_log: FakeCommandLog, kind: str, own_hint: str
+) -> None:
+    # `DBEmpty` is recovered from the message for the catch-all `UnderstandError` and for
+    # nothing else. The envelopes below are deliberately contradictory — a type the worker
+    # classified, over a message whose prose spells the text the catch-all is recognised by —
+    # because that is the only way to say which of the two wins. Reading the message over a
+    # named type would make every hint hostage to whatever the message quotes (a database
+    # path, the request, a chained exception) and would answer a database that cannot be
+    # opened at all, or a request the Gate itself built wrong, with "rebuild the analysis".
+    error = refusal(
+        stub_upython,
+        command_log,
+        {"type": kind, "message": f"{kind}: DBEmpty is not what went wrong here"},
+    )
+
+    assert isinstance(error, AnalysisFailedError)
+    assert own_hint in (error.hint or "")
+    assert "db rebuild" not in (error.hint or "")
+
+
 def test_an_unknown_error_type_is_still_typed(
     stub_upython: StubUpython, command_log: FakeCommandLog
 ) -> None:
@@ -601,6 +626,20 @@ def test_an_answer_without_an_error_key_is_not_a_refusal(
 ) -> None:
     # `impact` answers with a `warnings` list; nothing but `error` may raise.
     document = {"impact": {}, "warnings": ["the routine 'nope' is not in this database"]}
+    stub_upython.answers("impact", document)
+
+    assert a_runner(stub_upython, command_log).run("impact", {}) == document
+
+
+def test_an_error_key_that_is_not_an_envelope_is_not_a_refusal(
+    stub_upython: StubUpython, command_log: FakeCommandLog
+) -> None:
+    # A refusal is an envelope — a mapping carrying a type — and the guard that says so is
+    # what keeps a document from being read as one. A bare string has no `type` and no
+    # `message` to read: taking it for an envelope calls `.get` on a `str` and ends the run
+    # with an `AttributeError` no caller can map to an exit code, in the one module whose
+    # whole purpose is to turn every foreseeable failure into a typed error.
+    document = {"error": "the routine 'nope' is not in this database"}
     stub_upython.answers("impact", document)
 
     assert a_runner(stub_upython, command_log).run("impact", {}) == document

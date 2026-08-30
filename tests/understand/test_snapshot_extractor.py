@@ -15,6 +15,9 @@ databases.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Final
 
@@ -121,7 +124,7 @@ def test_the_synthetic_metrics_are_declared_so_the_worker_computes_them() -> Non
     # the native metric, finds nothing, and every parameter-count threshold stops firing.
     request = an_extractor({}).request()
 
-    assert set(request.synthetic) == {"CountParams", "CountDeclMethodNonStub"}
+    assert request.synthetic == ["CountDeclMethodNonStub", "CountParams"]
     assert "CountParams" in request.metrics_by_scope["routine"]
 
 
@@ -138,6 +141,7 @@ def test_population_metrics_keep_their_stats_prefixes() -> None:
 
     assert "AVG:CyclomaticStrict" in request.population_metrics["project"]
     assert "MaxCyclomaticStrict" in request.population_metrics["project"]
+    assert request.population_metrics["project"] == sorted(request.population_metrics["project"])
 
 
 def test_a_stats_prefixed_element_threshold_asks_for_a_population_not_for_entities() -> None:
@@ -247,6 +251,57 @@ def test_the_files_travel_sorted_so_two_runs_send_the_same_request() -> None:
     wire = an_extractor({}).wire_request(a_target(files=frozenset({"b.py", "a.py", "c.py"})))
 
     assert wire["files"] == ["a.py", "b.py", "c.py"]
+
+
+_WIRE_SCRIPT: Final = """\
+import json
+from pathlib import Path
+
+from fakes.api import FakeApiRunner
+
+from scitools_hook.config.defaults import default_settings
+from scitools_hook.understand.snapshot import SnapshotExtractor, SnapshotTarget
+
+extractor = SnapshotExtractor(FakeApiRunner(), default_settings())
+target = SnapshotTarget(
+    db=Path("/cache/after.und"),
+    root=Path("/cache/after"),
+    side="after",
+    files=frozenset({"cli/app.py", "analysis/engine.py"}),
+)
+print(json.dumps(extractor.wire_request(target)))
+"""
+"""The default wire request, built by a fresh interpreter and printed as the worker gets it."""
+
+
+def wire_request_in_subprocess(seed: str) -> str:
+    """The wire request built by an interpreter whose strings hash under ``seed``."""
+    completed = subprocess.run(
+        [sys.executable, "-c", _WIRE_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
+            "PYTHONHASHSEED": seed,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    return completed.stdout.strip()
+
+
+def test_the_wire_request_is_the_same_bytes_in_every_process() -> None:
+    # Every list in the request is reduced from a set, and a set of strings iterates in an
+    # order that changes with the interpreter's hash seed. An order that is stable in *this*
+    # process is exactly the bug: two Gate runs would send the worker different bytes for the
+    # same configuration, so the same request would no longer be diffable, cacheable or
+    # reproducible from a bug report. The seeds are fixed rather than left to chance because
+    # a test that only sometimes disagrees with itself pins nothing.
+    built = {wire_request_in_subprocess(seed) for seed in ("0", "1", "2", "random")}
+
+    assert len(built) == 1
+    assert built == {json.dumps(an_extractor({}).wire_request(a_target()))}
 
 
 def test_the_parse_errors_of_the_analysis_travel_into_the_snapshot() -> None:
