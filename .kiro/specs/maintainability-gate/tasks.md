@@ -365,3 +365,29 @@
 - 6.5 MEASURED analyze facts: real parse-error shape is `Error: <message>` then `  File: <path>[ Line: N][ Col: C]`, closing with `Analyze Completed (Errors:N Warnings:M)`. **Understand's Python analyzer reports each error in BOTH Pass1 and Pass2**, so 2 distinct errors give `Errors:4` — the wrapper de-duplicates on (path, line, message). The C parser adds `Col:`, which `ParseError` has nowhere to store, so the column is parsed and discarded. `-files @list.txt` requires the `@` (a bare path is read as a source file); an empty list exits 0 doing nothing and prints no summary, so `analyze(db, [])` starts no process. `add -exclude` takes ONE comma-separated argument. `und remove -file @list` exits 1 when a listed path is not in the project — 8.1 must only pass files the database still holds, or tolerate that status.
 - 6.4 handoff for 6.6: in-process mode calls `worker.dispatch` in the HOST process, so a `draw` abort (rc 127) would kill the Gate itself rather than failing one operation. Either route `graphs` through `upython` even when `api_mode == "inprocess"`, or exercise `draw` in the in-process probe — an import-only probe certifies a mode that dies later.
 - 6.4 handoff for 8.2 (`doctor`): `discover()` returns an UNVERIFIED `UnderstandEnv` (`version=""`, `api_mode` a layout guess) because the approved design fixes `verify(env: UnderstandEnv, ...) -> UnderstandEnv` and the model has no unverified state. Only `Locator.resolve` is public and it always verifies — but `DoctorReport` must not present a discovered-but-unverified `api_mode` as decided.
+
+## PRODUCT-LEVEL FINDING — parse errors cause ENTITY LOSS, not just noise
+
+Measured on Understand 6.5.1204 (controller, 2026-08-30). **Understand's Python parser cannot parse PEP 448 unpacking in a list/dict literal.** A single `return ["k", *xs]` on line 2 of a file produces:
+
+```
+Error: expected token ']' at token *          File: unpack.py Line: 2
+Error: expected newline at token dedent       File: unpack.py Line: 5
+Error: expected identifier at token indent    File: unpack.py Line: 6
+... cascading to the end of the file
+```
+
+and the consequence is not a warning — it is **silent entity loss**. Identical files, one using `["k", *xs]` and one using `["k"] + list(xs)`:
+
+| file | routines Understand reports | truth |
+|---|---|---|
+| `plain.py`  | `head`, `after_one`, `after_two` | 3 |
+| `unpack.py` | **`head` only**, and at 5 lines instead of 2 | 3 |
+
+Every routine after the unparsed construct **vanishes from the database**. The gate would then evaluate almost nothing in that file and report no violations — the same silent-green failure this project has been fighting, but produced by the analysis engine rather than our code. Modern Python uses `*`/`**` unpacking widely, so this is not an edge case.
+
+**Consequences and required handling:**
+- Requirement 2.6 already says parse errors must be listed and rules still evaluated on what parsed — that is the right design and it is what saves us. But 2.6's rendering must be **loud**: a parse error means *missing entities*, not a cosmetic note. Task 5.1's human renderer and 5.2's JSON must present parse errors as a coverage warning, not a footnote, and the summary should say how many files failed to parse.
+- 8.3 (CheckPipeline) must carry `parse_errors` into `RunResult` on every run, and should consider making a parse error in a STAGED file a blocking finding — a commit whose changed file cannot be parsed has not been checked.
+- 10.4 (self-gate): the tool's own source must avoid PEP 448 unpacking in list/dict literals, or its self-check silently skips routines. A false `CountLineCode 72` was already observed on `und_cli.py` for a routine whose real size is 14.
+- 10.1 (contract tests): add a fixture with an unparsable construct and assert the parse error is reported AND that the surviving entities are still evaluated.
