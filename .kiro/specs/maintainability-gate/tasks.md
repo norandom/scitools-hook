@@ -153,7 +153,7 @@
   - _Requirements: 1.1, 1.2, 1.3_
   - _Boundary: understand/locator_
 
-- [ ] 6.5 (P) Implement the `und` command wrapper and its fake
+- [x] 6.5 (P) Implement the `und` command wrapper and its fake
   - Subprocess calls with timeouts and `-quiet` for `version`, `license`, `create` (`-local`, languages), `add` (root with excludes), `remove`, `analyze` (`-files @list` / `-all`) parsing errors and warnings, `list -metrics settings`, `codecheck -files`; non-zero exit → `AnalysisFailedError(command, stderr)`; license text → `LicenseError`; every call recorded in `CommandLog` with timing; `tests/fakes/FakeUndCli` recording calls and returning configured `AnalyzeResult`s
   - Done when tests with a stubbed executable verify argument construction, timeout handling and error mapping for each command
   - _Requirements: 1.2, 1.4, 2.6, 12.8_
@@ -391,3 +391,4 @@ Every routine after the unparsed construct **vanishes from the database**. The g
 - 8.3 (CheckPipeline) must carry `parse_errors` into `RunResult` on every run, and should consider making a parse error in a STAGED file a blocking finding — a commit whose changed file cannot be parsed has not been checked.
 - 10.4 (self-gate): the tool's own source must avoid PEP 448 unpacking in list/dict literals, or its self-check silently skips routines. A false `CountLineCode 72` was already observed on `und_cli.py` for a routine whose real size is 14.
 - 10.1 (contract tests): add a fixture with an unparsable construct and assert the parse error is reported AND that the surviving entities are still evaluated.
+- 6.5: `und license` is only reached when `-isundlicensed` FAILS -- a `0` reply is answered first. A test that plans `-isundlicensed: "0"` alongside a `license` entry leaves that entry dead and the fallback verdict untested. Force the fallback with `{"stderr": ..., "rc": 1}`, and isolate the `rc` disjunct with healthy-looking output at rc 1 (error text alone is caught by `_has_error_line`, so it cannot distinguish them).
