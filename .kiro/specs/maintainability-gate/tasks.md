@@ -126,13 +126,14 @@
   - _Requirements: 10.1, 10.2, 10.3_
   - _Boundary: report/agent_rules_
 
-- [ ] 5.5 Render parse errors in the human and JSON output (ESCAPED DEFECT from 5.1/5.2)
-  - `RunResult.parse_errors` is carried in the model but **no renderer emits it**: `report/human.py`, `report/json_out.py`, `report/markdown.py` and the SARIF renderer contain no reference to it. Requirement 2.6 says the Gate "shall list those files and errors in its output"; requirement 5.4 says the JSON document shall contain "the parse errors". Both are unmet.
+- [ ] 5.5 Render parse errors in the human output (ESCAPED DEFECT from 5.1)
+  - `RunResult.parse_errors` reaches the JSON output already -- `render_json` is `result.model_dump_json(...)`, which serialises the model whole by deliberate design, so **requirement 5.4 is satisfied and `json_out.py` must NOT be changed**. (A grep for `parse_errors` in `report/` finds nothing, which is misleading: JSON selects no field by name.)
+  - The defect is in `report/human.py`, which never mentions parse errors, leaving requirement 2.6's "shall list those files and errors in its output" unmet for the human view.
   - This is a correctness defect, not cosmetics: see the parse-error entity-loss finding below -- an unparsed file loses every entity after the failure, so a run can check almost nothing and print a clean bill of health.
   - Human output must name the affected files and say plainly that entities in them were not checked; JSON must carry them in the documented schema.
   - Done when a run whose analysis reported parse errors shows them in human output and in the JSON document, and a test fails if either renderer drops them
   - _Requirements: 2.6, 5.4_
-  - _Boundary: report/human, report/json_out_
+  - _Boundary: report/human_
 
 - [ ] 6. Understand adapter: API worker, location, `und` wrapper, database lifecycle
 - [x] 6.1 Implement the stdlib-only API worker skeleton with `ping`, `catalogue` and `archs`
@@ -409,3 +410,4 @@ So the rule to encode is specific: **`*` inside `[...]`**. Not "PEP 448", not un
 - 6.7 (measured on the licensed machine, controller): **CodeCheck is NOT licensed here.** `und -db X codecheck` exits **rc 1** printing exactly `Licensing Error: No license for CodeCheck. \nStopping CodeCheck. ` (already the `CODECHECK_NO_LICENSE` fixture). The wrapper maps this to `LicenseError` via `LICENSE_TEXT`. The contract test therefore MUST skip -- but skip on a *probe* (run it, detect the licensing text), never unconditionally, so it starts passing by itself on a machine that does have the licence.
 - 6.7 `und help codecheck` facts: the command takes two positional arguments, `<configuration> <outputDir>`, and **all switches must appear before them**. CSV is the DEFAULT output (`-html` adds HTML "in addition to the .csv output"). `-files <listfile>` takes a plain list file that does NOT need a leading `@` (unlike `analyze -files @list`). Do NOT pass `-exitstatus`: it makes rc the *number of violations*, which would collide with the non-zero-means-failure mapping every other command uses.
 - 6.7 CSV schema: it cannot be measured here (unlicensed), and the column-name tokens in the binary (`Violation,File,Directory,Entity,CheckID,Check Name,Line,Column,Snippet,Ignored,Note,Root,Severity`) do not settle the exact header. So parse **by the header row**: map column names to fields, tolerate unknown columns and differing order, and fail with a clear error naming the header actually seen if a required column is absent. Do not hard-code column indices against a guessed schema.
+- report/: `render_json` serialises `RunResult` whole (`model_dump_json`), so **every model field is in the JSON automatically** and grepping `report/` for a field name proves nothing about JSON coverage. Only ask which fields the HUMAN renderer omits. As of 5.5 the human renderer does not show: `understand_version`, `selection`, `started_at`, `seconds`, `effective_thresholds`, `ignored_counts`, `unavailable_metrics`, `tightened`, `highest`, `analyzed_files` -- each needs checking against a requirement before being called a defect.
