@@ -44,6 +44,7 @@ from scitools_hook.config.models_validation import is_number, threshold_entries
 from scitools_hook.config.template import CONFIG_FILENAME
 from scitools_hook.config.validate import validate_settings
 from scitools_hook.errors import ConfigError
+from scitools_hook.paths import classify_file
 
 Layer = dict[str, object]
 """One configuration source in TOML shape: nested tables, thresholds still grouped by scope."""
@@ -74,10 +75,57 @@ class _Source:
 
 
 def user_config_path(env: Mapping[str, str]) -> Path:
-    """The user-level configuration file, honouring ``XDG_CONFIG_HOME`` (req 3.2)."""
-    base = env.get("XDG_CONFIG_HOME")
-    root = Path(base) if base else Path.home() / ".config"
-    return root / USER_CONFIG_RELPATH
+    """The user-level configuration file, from ``XDG_CONFIG_HOME`` then ``HOME`` (req 3.2).
+
+    Both are read from ``env``, never from the ambient process environment. Measured:
+    ``Path.home()`` resolves ``~`` from the real ``os.environ`` regardless of the mapping it
+    was handed, so ``user_config_path({"HOME": tmp})`` used to answer the *developer's own*
+    ``~/.config/scitools-hook/config.toml`` -- a real file on this machine, whose settings
+    then merged into runs a test believed were isolated. ``Path.home()`` survives only as the
+    last resort for an environment that names neither variable.
+    """
+    base = env.get("XDG_CONFIG_HOME", "")
+    if base.strip():
+        return Path(base) / USER_CONFIG_RELPATH
+    return _config_home(env) / ".config" / USER_CONFIG_RELPATH
+
+
+def _config_home(env: Mapping[str, str]) -> Path:
+    """The home directory ``env`` names, or this process's own when it names none.
+
+    A blank value counts as unset, which is the convention the rest of the package already
+    uses (``locator._env_home``, ``understand.fake.fake_directory``): an exported-but-empty
+    variable is how a shell says nothing, and reading it as a path would name the current
+    directory. ``HOME`` is checked before ``USERPROFILE``; ``USERPROFILE`` is checked at all
+    because on Windows it is the *only* home variable, so without it the
+    ambient-``Path.home()`` leak this function exists to close would still be wide open there.
+
+    Blankness is tested on the stripped value and the *raw* value becomes the path. The two
+    halves are deliberately different: stripping decides whether the variable says anything,
+    but a caller who exports ``HOME=/h/x `` means that directory, and ``locator._expand_user``
+    -- the other consumer of the same variable, on the same ``ContextOptions.env`` mapping --
+    reads it unstripped. Deciding on one text and returning another is how the two consumers
+    of one promised-to-be-controlled variable came to disagree.
+
+    ``Path.home()`` is documented to raise ``RuntimeError`` where no home can be resolved at
+    all -- an arbitrary-UID container with no passwd entry. That is **not reproduced here**,
+    and the distinction matters: with ``HOME`` unset on this machine it falls back to the
+    passwd entry and answers normally. It is mapped defensively, on the documented behaviour
+    rather than on a measurement, because a ``RuntimeError`` is neither an ``OSError`` nor a
+    ``ValueError`` and would escape every caller's guard the way ``RecursionError`` did.
+    """
+    for name in ("HOME", "USERPROFILE"):
+        value = env.get(name, "")
+        if value.strip():
+            return Path(value)
+    try:
+        return Path.home()
+    except RuntimeError as homeless:
+        raise ConfigError(
+            f"no home directory could be resolved for the user configuration: {homeless}",
+            key="HOME",
+            hint="Set HOME or XDG_CONFIG_HOME.",
+        ) from homeless
 
 
 def repo_config_path(repo_root: Path) -> Path:
@@ -176,7 +224,28 @@ def _repo_config(
 
 
 def _read_toml(path: Path, *, required: bool) -> Layer | None:
-    """Parse ``path``; ``None`` when it is absent and optional (req 3.1)."""
+    """Parse ``path``; ``None`` when it is absent and optional (req 3.1).
+
+    The promise is an outcome -- a layer, ``None``, or a ``ConfigError`` naming the file -- so
+    the named handlers below are joined by a guard on the outcome itself. Enumerating types
+    has failed three times here (``UnicodeDecodeError`` and the NUL-byte ``ValueError`` are
+    not ``OSError``; ``RecursionError`` and ``MemoryError`` are neither), and each escape
+    reached the CLI as an internal defect for what is plainly a bad configuration file.
+    """
+    try:
+        return _parse_toml(path, required=required)
+    except ConfigError:
+        raise
+    except Exception as broken:  # noqa: BLE001 - the outcome is the contract; see above
+        raise ConfigError(
+            f"configuration file {path} could not be read ({type(broken).__name__}): {broken}",
+            file=path,
+        ) from broken
+
+
+def _parse_toml(path: Path, *, required: bool) -> Layer | None:
+    """Read and parse one file, reporting each foreseeable problem in its own words."""
+    _reject_unreadable_kind(path)
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as err:
@@ -185,14 +254,65 @@ def _read_toml(path: Path, *, required: bool) -> Layer | None:
                 f"configuration file {path} does not exist", file=path, hint="check --config"
             ) from err
         return None
+    except UnicodeDecodeError as err:
+        # A UnicodeDecodeError is a ValueError, not an OSError, so it escapes the guard above
+        # and every caller's `except ConfigError`. Left unmapped it reaches the CLI as an
+        # unexpected error (exit 70) for a file any Latin-1 editor can produce, and it makes
+        # `doctor` raise on the one step it exists to report. TOML is UTF-8 by specification,
+        # so this is a configuration fault and is reported as one (req 1.6, 3.8).
+        raise ConfigError(
+            f"configuration file {path} is not valid UTF-8: {err}",
+            file=path,
+            hint="TOML files must be UTF-8; re-save the file in that encoding.",
+        ) from err
     except OSError as err:
         raise ConfigError(f"cannot read configuration file {path}: {err}", file=path) from err
+    except ValueError as err:
+        # `open` raises a plain ValueError ("embedded null byte") for a path holding a NUL.
+        # It is the same shape as the UnicodeDecodeError above -- bad input reported as an
+        # internal defect -- and the sibling reader (runner/baseline_store) already catches
+        # ValueError broadly here, so the two readers now agree. No OS-level route to this
+        # is known (execve rejects NUL in argv and environ); it is reachable through the API.
+        raise ConfigError(
+            f"configuration file {path} is not a usable path: {err}", file=path
+        ) from err
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as err:
         raise ConfigError(
             f"{path} is not valid TOML: {err}", file=path, hint="see https://toml.io"
         ) from err
+    except RecursionError as err:
+        # Measured: `tomllib.loads` raises RecursionError, not TOMLDecodeError, from about
+        # 497 levels of nesting (`value = [[[...]]]`); 450 levels parses. A RecursionError is
+        # neither an OSError nor a ValueError, so it escaped every guard above this function
+        # and reached the CLI as an unexpected error -- and made `doctor` produce no report.
+        raise ConfigError(
+            f"{path} nests values too deeply for the TOML parser",
+            file=path,
+            hint="Flatten the deeply nested value; the parser gives up at ~497 levels.",
+        ) from err
+
+
+def _reject_unreadable_kind(path: Path) -> None:
+    """Refuse a path whose name is taken and which is not a regular file, before opening it.
+
+    Measured: a FIFO answers ``exists()`` True and ``is_file()`` False, and ``read_text`` on
+    one **blocks forever** when no writer arrives -- so the command never printed anything at
+    all, which breaks the same property a raise does. ``stat`` does not block, so the kind is
+    settled first, and absence is decided by ``os.lstat`` rather than ``Path.exists()``, which
+    swallows every ``OSError``: a dangling symlink and a symlink loop both answer ``False``
+    there, so a configuration file that is plainly present was silently skipped as "no
+    repository configuration".
+    """
+    verdict = classify_file(path)
+    if verdict.absent or verdict.usable:
+        return
+    raise ConfigError(
+        f"configuration file {path} {verdict.reason}",
+        file=path,
+        hint="Point --config at a TOML file, not a directory, device, FIFO or broken link.",
+    )
 
 
 def _env_layers(env: Mapping[str, str]) -> list[tuple[_Source, Mapping[str, object]]]:
@@ -221,9 +341,27 @@ def _env_path(name: str) -> list[str] | None:
 
 def _env_value(name: str, raw: str, key: str) -> object:
     """Read one environment value as a TOML scalar, falling back to the plain string."""
+    try:
+        return _parse_env_value(name, raw, key)
+    except ConfigError:
+        raise
+    except Exception as broken:  # noqa: BLE001 - the outcome is the contract, as above
+        raise ConfigError(
+            f"{name}: the value could not be read ({type(broken).__name__}): {broken}", key=key
+        ) from broken
+
+
+def _parse_env_value(name: str, raw: str, key: str) -> object:
+    """Parse one environment value, reporting each foreseeable problem in its own words."""
     text = raw.strip()
     try:
         return tomllib.loads(f"value = {text}")["value"]
+    except RecursionError as err:
+        raise ConfigError(
+            f"{name}: the value nests too deeply for the TOML parser",
+            key=key,
+            hint="Flatten the deeply nested value; the parser gives up at ~497 levels.",
+        ) from err
     except tomllib.TOMLDecodeError as err:
         if text.startswith(_TOML_LITERALS):
             raise ConfigError(
@@ -231,7 +369,7 @@ def _env_value(name: str, raw: str, key: str) -> object:
                 key=key,
                 hint='quote strings as "text" and write lists as ["a", "b"]',
             ) from err
-        return raw
+        return text
 
 
 def _cli_layers(

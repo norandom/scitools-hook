@@ -19,6 +19,7 @@ class ExitCode(IntEnum):
     LICENSE_UNAVAILABLE = 4
     ANALYSIS_FAILED = 5
     NOT_A_GIT_REPO = 6
+    REPORT_UNDELIVERABLE = 7
     UNEXPECTED = 70
 
 
@@ -30,6 +31,7 @@ _DESCRIPTIONS: dict[ExitCode, str] = {
     ExitCode.LICENSE_UNAVAILABLE: "Understand reported no valid license",
     ExitCode.ANALYSIS_FAILED: "analysis failed (und error, timeout or unusable database)",
     ExitCode.NOT_A_GIT_REPO: "not inside a git repository",
+    ExitCode.REPORT_UNDELIVERABLE: "the analysis ran but its report could not be delivered",
     ExitCode.UNEXPECTED: "unexpected internal error",
 }
 

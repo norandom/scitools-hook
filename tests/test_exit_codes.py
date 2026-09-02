@@ -19,6 +19,7 @@ from scitools_hook.errors import (
     GateError,
     LicenseError,
     NotAGitRepositoryError,
+    ReportUndeliverableError,
     UnderstandNotFoundError,
 )
 from scitools_hook.exit_codes import ExitCode, describe
@@ -31,6 +32,7 @@ DOCUMENTED_CODES: dict[str, int] = {
     "LICENSE_UNAVAILABLE": 4,
     "ANALYSIS_FAILED": 5,
     "NOT_A_GIT_REPO": 6,
+    "REPORT_UNDELIVERABLE": 7,
     "UNEXPECTED": 70,
 }
 
@@ -42,6 +44,7 @@ ERROR_CODES: list[tuple[type[GateError], ExitCode]] = [
     (LicenseError, ExitCode.LICENSE_UNAVAILABLE),
     (AnalysisFailedError, ExitCode.ANALYSIS_FAILED),
     (NotAGitRepositoryError, ExitCode.NOT_A_GIT_REPO),
+    (ReportUndeliverableError, ExitCode.REPORT_UNDELIVERABLE),
     (ArchitectureNotFoundError, ExitCode.CONFIG_ERROR),
 ]
 

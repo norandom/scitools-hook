@@ -38,6 +38,7 @@ the injected :class:`~scitools_hook.models.progress.CommandLog` with its timing 
 from __future__ import annotations
 
 import re
+import stat
 import subprocess
 import tempfile
 import time
@@ -83,6 +84,33 @@ ANALYZE_SUMMARY: Final = re.compile(
     r"Analyze Completed \(Errors:(?P<errors>\d+) Warnings:(?P<warnings>\d+)\)"
 )
 """``und``'s own closing tally; absent when the analysis had nothing to do."""
+
+CONFIG_HINT: Final = (
+    "This is what und's CodeCheck wrote. Unset codecheck.config to stop running it — that "
+    "is the lever that always works, and it is opt-in and unset by default. Naming a "
+    "different configuration helps only where the report itself is the problem, not where "
+    "a file name is."
+)
+"""The one lever an operator has: ``codecheck.config`` is opt-in and defaults to unset.
+
+Worded identically to ``codecheck._CONFIG_HINT``: they name the same lever, and a reader who
+meets both should not have to work out whether the difference means anything.
+"""
+
+EXPORT_PREFIX: Final = "CodeCheckResult"
+"""Every CSV ``codecheck`` exports starts with this; anything else is not its output."""
+
+VIOLATIONS_EXPORT: Final = "CodeCheckResultByViolation"
+"""The CodeCheck export that lists one row per violation, chosen by name and never by luck.
+
+``codecheck`` writes up to three CSVs — ``CodeCheckResultByFile``,
+``CodeCheckResultByTable`` and ``CodeCheckResultByViolation`` (all three names are compiled
+into the executable). Taking the alphabetically first of them picks ``…ByFile``, the
+directory-*tree* export: it groups violations under file rows whose check id is empty, its
+header repeats the ``CheckID`` column, and ``-flattentree`` exists precisely because its
+files are "presented in a directory tree format". The per-violation export is the one whose
+every row is a violation, so it is asked for by name.
+"""
 
 METRIC_LIST_HEADER: Final = "Metrics (+ if selected):"
 """``list -metrics settings`` prints a settings table first and the metric names after this."""
@@ -232,16 +260,21 @@ class UndCli:
         """Run CodeCheck over ``files`` and return the violations CSV it wrote (req 6.9).
 
         ``config`` is a configuration name held in the project or the path of an exported
-        one, and the two positional arguments follow every switch. The CSV's name is not
-        documented and could not be measured here — this machine's license excludes
-        CodeCheck — so the file is *found* in the output directory rather than assumed, and
-        an output directory with no CSV in it is a failure rather than "no violations".
+        one, and the two positional arguments follow every switch. Which CSV comes back is
+        decided by name — :data:`VIOLATIONS_EXPORT` — because ``codecheck`` writes several
+        and they are not interchangeable; ``-violations``, ``-coverage`` and ``-ignores``
+        each add more. An output directory holding no CSV at all is a failure rather than
+        "no violations".
+
+        ``out_dir`` must be empty. ``codecheck`` can exit 0 having written nothing, so a
+        directory reused between runs would hand back the previous run's export as this
+        run's results — green on stale data, with nothing to see it by.
         """
-        out_dir.mkdir(parents=True, exist_ok=True)
+        _require_empty(out_dir)
         with _list_file(files) as listing:
             result = self._run(["codecheck", "-files", str(listing), config, str(out_dir)], db=db)
         self._reject_failure(result)
-        found = sorted(out_dir.glob("*.csv"))
+        found = _csv_files(out_dir)
         if not found:
             raise AnalysisFailedError(
                 f"und codecheck wrote no csv file into {out_dir}",
@@ -249,7 +282,7 @@ class UndCli:
                 stderr=result.stderr,
                 hint=f"Check that {config!r} names a CodeCheck configuration in the project.",
             )
-        return found[0]
+        return _violations_export(found, result, out_dir)
 
     # --- running and mapping ----------------------------------------------------
 
@@ -338,6 +371,104 @@ def _unrunnable(argv: list[str], broken: OSError) -> AnalysisFailedError:
     )
 
 
+def _require_empty(out_dir: Path) -> None:
+    """Make ``out_dir`` exist and insist it is empty before ``codecheck`` writes into it.
+
+    Listing the directory is inside the guard with the ``mkdir``: an existing directory the
+    process cannot read raises ``PermissionError`` out of ``iterdir`` just as readily as a
+    file in the way raises ``FileExistsError`` out of ``mkdir``, and both are ``OSError``s
+    that no caught-error tuple in the package expects.
+
+    *Every* entry counts, not only the CSVs: an HTML report or a compliance PDF left by an
+    earlier run is the same evidence that this directory has been used before, and the run
+    that follows might write nothing at all. The names are listed in sorted order so the
+    same directory always produces the same message.
+    """
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(path.name for path in out_dir.iterdir())
+    except OSError as unusable:
+        raise AnalysisFailedError(
+            f"the CodeCheck output directory {out_dir} could not be used: {unusable}",
+            hint=CONFIG_HINT,
+        ) from unusable
+    if existing:
+        raise AnalysisFailedError(
+            f"the CodeCheck output directory {out_dir} already holds {', '.join(existing)}",
+            hint="Give every codecheck run its own empty directory: a run that writes "
+            "nothing would otherwise return the file an earlier run left behind.",
+        )
+
+
+def _csv_files(out_dir: Path) -> list[Path]:
+    """Every CSV in ``out_dir``, sorted, matching the extension without regard to case.
+
+    ``glob("*.csv")`` is case-sensitive on Linux, so an export written as ``.CSV`` would not
+    merely be ranked wrongly — it would be invisible, and the directory would read as "no
+    results" when it holds them. Directories are skipped because one named ``x.csv`` is not
+    a report, and dotfiles because ``und`` writes none — a hidden file is something else's.
+    The result is sorted, so the message that lists it is the same every run.
+    """
+    return sorted(
+        path
+        for path in out_dir.iterdir()
+        if not path.name.startswith(".")
+        and path.suffix.casefold() == ".csv"
+        and _is_regular_file(path)
+    )
+
+
+def _is_regular_file(path: Path) -> bool:
+    """Whether ``path`` is a regular file, letting the reason it cannot be told through.
+
+    ``Path.is_file`` swallows every ``OSError`` and answers ``False``, which turns "I could
+    not find out" into "it is not there". Measured: a symlink loop named
+    ``CodeCheckResultByViolation.csv`` makes ``is_file()`` answer ``False`` while ``stat``
+    raises ``ELOOP`` — so the per-violation export vanishes from the listing, the lone-export
+    fallback hands back the by-table schema instead, and nothing says a word. This is the
+    same reason :func:`_require_empty` wraps its ``iterdir`` two functions above.
+
+    One shape it diagnoses imprecisely: a *dangling* symlink makes ``stat`` raise
+    ``FileNotFoundError``, so the entry is reported as unexaminable rather than as a link to
+    nothing. Loud and typed either way, and deliberately not fixed here — settling absence
+    with ``lstat`` before asking about kind belongs in the shared classifier this is to be
+    replaced by, not in a fourth private copy of it.
+    """
+    try:
+        return stat.S_ISREG(path.stat().st_mode)
+    except OSError as unreadable:
+        raise AnalysisFailedError(
+            f"the CodeCheck output directory holds {path.name}, which could not be "
+            f"examined: {unreadable}",
+            hint=CONFIG_HINT,
+        ) from unreadable
+
+
+def _violations_export(found: list[Path], result: CommandResult, out_dir: Path) -> Path:
+    """The per-violation CSV among the exports ``codecheck`` wrote.
+
+    The per-violation export is taken by name. A *single* CSV is accepted only when its name
+    still marks it as one of CodeCheck's own exports (:data:`EXPORT_PREFIX`): with one file
+    there is no choice to get wrong, but there is still exactly one wrong outcome, and
+    handing back some unrelated CSV that happened to be there would take it silently.
+    Anything else fails, naming the directory and every file in it, because that is the case
+    where picking one hands the caller a schema it did not ask for.
+    """
+    for candidate in found:
+        if candidate.stem.casefold() == VIOLATIONS_EXPORT.casefold():
+            return candidate
+    lone = found[0] if len(found) == 1 else None
+    if lone is not None and lone.stem.casefold().startswith(EXPORT_PREFIX.casefold()):
+        return lone
+    raise AnalysisFailedError(
+        f"und codecheck wrote no {VIOLATIONS_EXPORT}.csv into {out_dir}; it wrote "
+        f"{', '.join(path.name for path in found)}",
+        command=result.argv,
+        stderr=result.stderr,
+        hint=CONFIG_HINT,
+    )
+
+
 def _has_error_line(text: str) -> bool:
     """True when any line carries Understand's ``Error: …`` shape."""
     return any(ERROR_LINE.match(line) for line in text.splitlines())
@@ -349,10 +480,23 @@ def _list_file(paths: Sequence[Path]) -> Iterator[Path]:
 
     The file lives in the system temporary directory, never in the repository working tree
     (requirement 2.2), and only exists while ``und`` is reading it.
+
+    Writing it is the one step that can fail on the *name* rather than on the filesystem:
+    ``git`` decodes paths with ``surrogateescape``, so a latin-1 file name arrives holding
+    surrogates and ``write_text`` raises ``UnicodeEncodeError`` — a ``ValueError``, which is
+    neither a ``GateError`` nor an ``OSError`` and so is caught nowhere. Every caller of
+    this helper is given a typed error instead, not just the CodeCheck one.
     """
     with tempfile.TemporaryDirectory(prefix="scitools-hook-") as scratch:
         listing = Path(scratch) / "files.txt"
-        listing.write_text("".join(f"{path}\n" for path in paths), encoding="utf-8")
+        try:
+            listing.write_text("".join(f"{path}\n" for path in paths), encoding="utf-8")
+        except UnicodeEncodeError as unwritable:
+            raise AnalysisFailedError(
+                f"a file name could not be written to und's list file: {unwritable}",
+                hint="git decodes names with surrogateescape, so a name that is not valid "
+                "UTF-8 arrives holding surrogates that no encoder will take.",
+            ) from unwritable
         yield listing
 
 

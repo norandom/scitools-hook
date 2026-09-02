@@ -195,7 +195,7 @@
   - _Boundary: understand/api_runner, understand/snapshot, understand/impact, understand/graphs, understand/catalogue_
   - _Depends: 6.2, 6.3_
 
-- [ ] 6.7 (P) Implement the CodeCheck runner
+- [x] 6.7 (P) Implement the CodeCheck runner
   - Run a named or exported CodeCheck configuration over a file list into a temp output directory and parse the violations CSV into `RawViolation` records
   - Done when a fixture CSV parses into records with check id, path, line and message, and a contract test runs a bundled configuration on the sample project
   - _Requirements: 6.9_
@@ -212,7 +212,7 @@
   - _Boundary: understand/api_runner, understand/snapshot_
 
 - [ ] 7. Git adapter: plumbing, shadow synchronisation, hook installation
-- [ ] 7.1 Implement the git repository wrapper
+- [x] 7.1 Implement the git repository wrapper
   - Discovery of root/git-dir/common-dir (raising `NotAGitRepositoryError`), `HEAD` (unborn-safe), staged changes via `diff --cached --name-status -z -M` with rename pairs, index tree id via `write-tree`, name-status between refs, index export via `checkout-index` (`-a` or `-z --stdin` with paths, trailing-slash prefix), commit export via a **throwaway index** (`GIT_INDEX_FILE=<temp> git read-tree <commit>` + `checkout-index`; the design's `archive | tar` was replaced -- see the reassignment note below, `design.md:231` already permits either), tracked files, hooks directory honouring `core.hooksPath` and the global hooks path; all calls logged with timing
   - Done when tests in a temporary repo verify staged-vs-unstaged content export, rename detection and hooks-path resolution with and without `core.hooksPath`
   - _Requirements: 4.1, 4.3, 12.5, 12.8_
@@ -240,7 +240,7 @@
   - _Boundary: understand/database_
   - _Depends: 6.5, 7.2_
 
-- [ ] 8.2 Implement the run context, baseline store and doctor pipeline
+- [x] 8.2 Implement the run context, baseline store and doctor pipeline
   - `RunContext` assembling settings with provenance, repository (optional), Understand environment via locator + real probes, adapters and command log; documented test seam `SCITOOLS_HOOK_FAKE_UNDERSTAND=<dir>` substituting the fixture-backed `FixtureUndCli`/`FixtureApiRunner` shipped in `understand/fake.py` (reading `analyze.json` and `<op>.<side>.json` from the directory; `tests/fakes` reuse them); `BaselineStore` reading/writing the baseline file at the configured path (missing file → none, unreadable → issue); `DoctorReport` with install directory, versions, both API probes and chosen mode, license status, git status, cache paths and sync state, effective configuration with sources, problems list
   - Done when doctor runs with fakes inside and outside a repository and with Understand missing, producing problems entries instead of raising, and `BaselineStore` round-trips a baseline file
   - _Requirements: 1.5, 8.1, 8.6, 12.5_
@@ -262,7 +262,7 @@
   - _Depends: 8.3_
 
 - [ ] 9. Command-line interface
-- [ ] 9.1 Implement the typer application, shared options, command registration and error handling
+- [x] 9.1 Implement the typer application, shared options, command registration and error handling
   - Global options (`--scitools-home`, `--config`, `--api-mode`, `--verbose`, `--color/--no-color`, `--quiet`), selection option group (`--staged | --worktree | --all | --files`, mutually exclusive, hook-aware default), `--format`/`--output`, exit-code mapping for every `GateError`, unexpected-error one-liner with traceback under verbose, findings to stdout and diagnostics/progress/command log to stderr, no prompts anywhere; all ten subcommand modules registered as stubs so later tasks touch only their own module
   - Done when CLI tests confirm each error class yields its exit code, conflicting selection flags are rejected on a stub command, and `--help` lists all subcommands with exit codes documented
   - _Requirements: 1.6, 7.6, 7.7, 12.1, 12.3, 12.4, 12.6, 12.7, 12.8_
@@ -306,6 +306,74 @@
   - Done when the tool reports zero blocking findings on itself (or documented exceptions) and the recorded warm staged run is under 30 seconds
   - _Requirements: 4.11_
   - _Depends: 10.1, 10.3_
+
+## 11. Recorded quality debt (accepted at the round-10 triage, not forgotten)
+
+Tasks 6.7, 7.1, 8.2 and 9.1 were committed with the two *behavioural* defects fixed and the
+*test-quality* defects written down. The rule applied was: does this hurt someone running the
+hook? The two that did were fixed and pinned; these did not, and blocking on them while the
+gate could not run end-to-end was the wrong trade. Each entry names the measurement, so none
+of them has to be rediscovered.
+
+- [ ] 11.1 Pin requirement 12.8's timing and the two status sentinels in the git wrapper
+  - `log.record(argv, seconds, rc)` -> `0.0` survives 113/113 at three sites, because the only
+    assertions on a duration are `assert seconds >= 0.0` and a `time.monotonic()` delta is
+    non-negative by construction. A build logging `0.0` for every git call would print
+    `--verbose` lines claiming every command took no time and pass the suite. Assert
+    `seconds > 0.0` everywhere, and pin against a stand-in `git` sleeping ~0.3 s (measured:
+    recorded as 0.3216 s, against 0.0018 s for a real call).
+  - `TIMEOUT_RC 124 -> 0` and `MISSING_RC 127 -> 0` both survive 113/113, because the tests
+    compare against the constants imported from the module under test. Assert the literals
+    with their conventions named. A second consumer is coming (11.2), so the naming must carry.
+  - Done when all seven named mutants die.
+  - _Boundary: git/repo_
+
+- [ ] 11.2 Record probe commands that time out or cannot start
+  - `runner.context.RealProbes._ping` calls `log.record` only after `subprocess.run` returns,
+    while `und_cli.UndCli._execute` records on `TimeoutExpired` and `OSError` for exactly this
+    reason. Measured: a `upython` sleeping 30 s at `timeout_s=2` leaves the log empty; a
+    missing executable leaves the log empty; `UndCli.version()` on the same missing executable
+    records `(argv, 127)`. Under `--verbose` the probe that hung and the interpreter that could
+    not start are both invisible.
+  - Reuse `und_cli`'s two sentinels rather than inventing new ones, so the `--verbose` log has
+    one convention. Add tests for timeout, cannot-start **and** the success path -- none of the
+    three is covered today; the only command-log assertion in the whole 8.2 suite is `rev-parse`.
+  - _Boundary: runner/context_ _Depends: 11.1_
+
+- [ ] 11.3 Sweep the typed errors' structured context in the git wrapper
+  - One class, 16 surviving mutants: `key="core.hooksPath"` (repo.py:413, :467), `key="HOME"`
+    (:650), `command=argv` (:705, :714), `stderr=str(broken)` (:715) and ten `hint=` strings.
+    Only `_failed`'s `command=`/`stderr=` are pinned. `cli/common.py::_context_lines` renders
+    all of them, so they are user-visible, not dead metadata. Sweep by field x site.
+  - Also: `discover`'s `timeout_s=` propagation is unpinned (removing the kwarg survives
+    113/113) while `git=` and `log=` are pinned -- the module's recurring sibling-unverified
+    shape; and `_status_letter`'s `len(token) > 1` -> `> 2` survives although pristine accepts
+    `R9` as a rename with score 9 and the mutant refuses it.
+  - _Boundary: git/repo_
+
+- [ ] 11.4 Add the CI matrix that would have caught the pathlib floor defect
+  - There is **no CI in this repository at all** -- no `.github/`, no workflow. That is why a
+    module built on 3.14-only `pathlib` behaviour passed every gate while failing two of its
+    own tests on 3.12 and 3.13, the interpreters `requires-python = ">=3.12"` promises.
+  - `tests/test_paths.py` now carries a source-level proxy that catches a regression on any
+    interpreter, and it is labelled a proxy: it cannot tell a correct use of those predicates
+    from an incorrect one, only that none is present. The real check is running the suite on
+    the declared floor.
+  - Done when the suite runs on 3.12, 3.13 and the current pin, and the typer floor test
+    (9.1's) and the pathlib guard are both exercised there.
+  - _Boundary: CI configuration_ _Depends: 10.3_
+
+- [ ] 11.5 Decide whether `_write_stdout`'s unpinnable `_detach` call stays
+  - Removing `_detach(sys.stdout)` from the `except Exception:` arm leaves `tests/cli` green,
+    and the docstring's supporting measurement (`--version > /dev/full` -> 120 / 2872 B)
+    belongs to the **`OSError`** arm, not this one -- a justification transplanted from a
+    sibling. The project's own rule is that an unpinnable guard is a claim, not a test: either
+    pin it or keep it and say plainly that it is unpinnable and why.
+  - Smaller, same family: `--version >&-` reports `AttributeError: 'NoneType' object has no
+    attribute 'write'` at exit 70, naming a Gate internal rather than the condition; and
+    `in_hook` treats `GIT_INDEX_FILE=` (empty) as in-hook while every other env reader here
+    treats blank as unset.
+  - _Boundary: cli/common_
 
 ## Implementation Notes
 - 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
@@ -712,3 +780,7 @@ Raised during 9.1 round 3, deliberately NOT decided inside the task because it c
 - **7.1: two tests named for requirement 12.8 assert nothing.** (a) The only assertions on a recorded duration anywhere in the suite are `assert seconds >= 0.0` -- and a `time.monotonic()` delta is non-negative **by construction**, so `log.record(argv, 0.0, rc)` survives all 113 tests at three sites. A build logging `0.0` for every git call would print `--verbose` lines claiming every command took zero time and pass the whole suite. Non-equivalence is measurable and was measured: a stand-in `git` sleeping 0.30 s records 0.3216 s, a real call 0.0018 s. (b) The same two tests assert the recorded status against `TIMEOUT_RC`/`MISSING_RC` **imported from the module under test**, so `124 -> 0` and `127 -> 0` both survive 113/113: a build recording rc 0 for a git that never ran passes. **Two independent no-op assertions on one requirement in two tests named for it -- the tautology shape and the by-construction shape are different defects and need separate fixes.**
 - **TWELFTH false-green route: a mutation harness whose workspaces are bound to the TASK INDEX rather than the WORKER.** Self-reported by 7.1's reviewer, who nearly shipped it: assigning workspace `i % 4` inside a 4-thread pool lets task *i* reset a workspace while task *i-4* is still running pytest in it. It produced **three phantom survivors** that were in fact killed. **Bind the workspace to the worker, never to the task index, and checksum before each apply as well as after each restore.** One level down from the four instrument blind spots already recorded -- the instrument's *concurrency* rather than its selection or its restore.
 - **SPEC DECISION TAKEN (was OPEN above): a distinct exit code for "the report could not be delivered" is ADOPTED, and the value is 7.** The controller's own question presented `3` as the free number; **that was wrong -- 3 is `UNDERSTAND_NOT_FOUND`.** The table is 0 OK, 1 VIOLATIONS, 2 CONFIG_ERROR, 3 UNDERSTAND_NOT_FOUND, 4 LICENSE_UNAVAILABLE, 5 ANALYSIS_FAILED, 6 NOT_A_GIT_REPO, 70 UNEXPECTED, so the next free value is **7 = REPORT_UNDELIVERABLE**. Everything rounds 3 and 4 established stays: one located error on both destinations, the errno-chosen hint (`{ENOSPC, EDQUOT}` -> `NO_SPACE_HINT`; `BAD_PATH_HINT` when an option named the destination, `REDIRECTION_HINT` when none did), and `key`/`option` set only when an option actually named it. `tests/test_exit_codes.py`'s two census tests are what will catch a half-done job.
+- **ROUND-10 TRIAGE, and why the loop was stopped.** Tasks 6.7, 7.1, 8.2 and 9.1 had run to rounds 12, 7, 10 and 5 of adversarial review. The `kiro-impl` protocol's own bound is **two remediation rounds, then a debug subagent; two debug rounds, then block and stop for human review** -- so 6.7 was roughly nine rounds past the point where the process says to stop and ask. Every round did find something real, which is exactly what made it hard to see: *"each round finds a defect"* is not *"this is converging"*, and the controller kept sharpening the reviewer prompts, which reliably produces more findings. Meanwhile `scitools-hook check` exited 70 with "`check` has no pipeline yet" -- **the gate had never run end to end**, and eleven tasks including every integration point were untouched. Four modules were being polished to a mutation-complete standard while a third of the feature did not exist. The triage rule was one question -- *does this hurt someone running the hook?* -- which fixed two defects (the pathlib floor and the `--output` hang), recorded five as tasks 11.1-11.5, and released the frontier. **The generalisable part: an adversarial loop has no natural stopping point, because the supply of true statements about any codebase is unbounded. The bound has to come from outside it -- from what the work is for.**
+- **The `--output` fix introduced a regression that only measurement caught, and it is a good example of the class.** Making the write atomic meant copying `baseline_store.save`'s scratch-and-rename, and `mkdir(parents=True, exist_ok=True)` came along with it. That is right for a baseline -- the tool owns the path and creating it is a service -- and **wrong for `--output`, which is a path the operator typed**: building a tree for a mistyped one hides the typo and leaves the report where nobody will look. Caught because the probe asserted the missing-parent case still refused, not because the tests failed (they would have, but the probe ran first). **When you copy a mechanism between two sites, copy the mechanism and re-derive the policy; the policy is the half that was fitted to the other site.**
+- **A patch aimed at a call the code no longer makes is a test that has quietly stopped testing.** Two CLI tests injected failures via `monkeypatch.setattr(Path, "write_text", ...)`; when the branch moved to a scratch-file write they intercepted nothing. They failed loudly with `DID NOT RAISE`, which was luck -- the same edit could as easily have left them green, since a patch that never fires is invisible to a test asserting a *success* path. The injection now targets the writer the branch actually opens. **Whenever an implementation seam moves, grep for every `monkeypatch.setattr` naming the old seam; nothing else will tell you.**
+- **A source-level proxy needs a detector test, and the first version of this one was wrong.** The guard asserting that `paths.py` calls no version-sensitive `pathlib` predicate was first written as a regex, which matched the module's own docstrings -- the prose explaining *why it does not use them*. It now parses with `ast` (comments do not survive `ast.parse` and a docstring is a `Constant`, so only real calls remain) and carries a companion test driving the same search over source that does call them **and** over prose that only mentions them. **An assertion that something is ABSENT passes just as happily when the search is broken; it needs a positive case or it is a test that can only succeed.**
