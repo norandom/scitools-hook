@@ -315,7 +315,7 @@ hook? The two that did were fixed and pinned; these did not, and blocking on the
 gate could not run end-to-end was the wrong trade. Each entry names the measurement, so none
 of them has to be rediscovered.
 
-- [ ] 11.1 Pin requirement 12.8's timing and the two status sentinels in the git wrapper
+- [x] 11.1 Pin requirement 12.8's timing and the two status sentinels in the git wrapper
   - `log.record(argv, seconds, rc)` -> `0.0` survives 113/113 at three sites, because the only
     assertions on a duration are `assert seconds >= 0.0` and a `time.monotonic()` delta is
     non-negative by construction. A build logging `0.0` for every git call would print
@@ -338,7 +338,17 @@ of them has to be rediscovered.
   - Reuse `und_cli`'s two sentinels rather than inventing new ones, so the `--verbose` log has
     one convention. Add tests for timeout, cannot-start **and** the success path -- none of the
     three is covered today; the only command-log assertion in the whole 8.2 suite is `rev-parse`.
-  - _Boundary: runner/context_ _Depends: 11.1_
+  - **Also close the SAME tautology in the two modules that share these sentinels.** Measured
+    twice, by the 11.1 agent and again by the controller: mutating `und_cli.TIMEOUT_RC 124 -> 0`
+    and `MISSING_RC 127 -> 0` each survives the **entire 2894-test suite**, as do both of its
+    `record(..., time.monotonic() - started, ...)` -> `0.0` mutants and `api_runner`'s two
+    sentinels. So an `und` that hung can be logged as 0.0 s and one that never started as rc 0,
+    with everything green. Fix shape is 11.1's: assert the literals from the test module with
+    the convention named (`TIMEOUT_KILLED_STATUS = 124`, `SHELL_COMMAND_NOT_FOUND_STATUS = 127`).
+  - **Decide on the three independent copies.** `git/repo.py`, `understand/und_cli.py` and
+    `understand/api_runner.py` each define their own `TIMEOUT_RC`/`MISSING_RC`; 11.2 adds a
+    fourth consumer. Three copies of one convention is a decision nobody has taken.
+  - _Boundary: runner/context, understand/und_cli, understand/api_runner_ _Depends: 11.1_
 
 - [ ] 11.3 Sweep the typed errors' structured context in the git wrapper
   - One class, 16 surviving mutants: `key="core.hooksPath"` (repo.py:413, :467), `key="HOME"`
@@ -830,3 +840,8 @@ Raised during 9.1 round 3, deliberately NOT decided inside the task because it c
 - **8.4: `resolve_commit`'s `^{commit}` suffix is load-bearing, measured on git 2.43.0.** A bare **tree** hash resolves at rc 0 without it, and an **annotated tag** resolves to the *tag object* rather than the commit -- either would then be written into `state.json` as "the commit this shadow holds", and the next run would diff against something that is not a commit. Recorded honestly alongside it: `--end-of-options` is this project's standing rule but is **not** what blocks the hostile single-token case here, because concatenating `^{commit}` already de-optionizes the argument. **Saying which of two guards is actually doing the work is worth more than a test that passes under either.**
 - **8.4 handoff for 9.3, an operator-visible consequence worth documenting rather than hiding:** `explain --range` leaves `SyncState.after_target == "commit"`, which is the design's instruction and correct -- but the next `check --staged` then sees a changed target kind and performs a **full re-sync of the after shadow**. `doctor` should render that state as ordinary rather than as damage, and it deserves one line of user-facing documentation, because "why was my next commit slow?" has a real answer here.
 - **8.4 open, stated as open:** graph targets are capped by `output.graphs_max` per group and chosen in **token order, not by risk**. Requirement 9.4 only asks for "up to a configurable count", and the 9.3 ranking is computed downstream of this point, so choosing the riskiest would mean building the summary twice. `runner/explain.py` declares exactly 3 classes against `file.CountDeclClass: 3`, so the next addition there must merge rather than append (10.4 self-gate debt, alongside 8.3's `CheckPipeline.__init__` 6-parameter entry).
+- **11.1 closed the seven unfalsifiable assertions WITHOUT touching the source: `git/repo.py` is byte-identical to `HEAD`.** Both findings were test-quality; the code was already right. Verified independently by the controller -- `TIMEOUT_RC 124 -> 0` now fails 2 tests, and all three `log.record(..., 0.0, ...)` mutants fail 1-3 tests each, where before every one of them survived not just `tests/git` but the whole 2830-test suite. **Worth stating plainly because it is the ordinary case and it is easy to mistake for nothing having been wrong: a test that cannot fail is a defect in its own right.** The gap it left was real -- a build recording every git call as taking 0.0 s, or recording rc 0 for a git that never ran, would have shipped.
+- **THE SAME TAUTOLOGY IS LIVE IN TWO MORE MODULES, measured twice.** `understand/und_cli.py` and `understand/api_runner.py` each define their own `TIMEOUT_RC = 124` / `MISSING_RC = 127` and each compares the recorded log against the constant imported from the module under test. The 11.1 agent ran six mutants; the controller re-ran two of them against the **entire 2894-passed suite** and both survived: `und_cli.TIMEOUT_RC -> 0` and `MISSING_RC -> 0`. **So an `und` that hung is loggable as 0.0 s and one that never started as rc 0, with every gate green.** Rolled into task 11.2, which reuses exactly these sentinels. **A defect class fixed at the site where it was noticed is fixed at one site; this project's own rule -- sweep by fault class across every site of its shape -- has now been broken and re-learned five times, and the recurrence here is instructive because 11.1 was itself a sweep task.**
+- **Three independent copies of `TIMEOUT_RC`/`MISSING_RC` exist** (`git/repo`, `understand/und_cli`, `understand/api_runner`), and 11.2 adds a fourth consumer. Nobody has decided whether that is one convention or three; the decision is now recorded as part of 11.2 rather than left to the next person who trips over it.
+- **HARNESS DISCIPLINE, learned by collision: name a mutation harness and its workspace after the TASK, not generically.** 11.1's `scratchpad/mutate.py` was overwritten mid-task by the parallel 8.4 agent's file of the same name. It was caught by an import failure rather than by a wrong result -- which is luck, since the failure mode of a silently-swapped harness is a campaign that reports on the wrong code. Every campaign was re-run afterwards under `mutate_task_11_1.py` with its own `ws_11_1`/`pristine_11_1`. This is the second scratchpad collision on this project.
+- **11.1 added two SELF-CHECK mutants, which is the right answer to "are the new assertions themselves no-ops?"** `seconds = time.monotonic() - started` -> `time.monotonic()` is killed only by the new ceiling assertion, and a doubled `log.record` only by the new "recorded once" assertion; both survived before the fix. **When a round's whole purpose is replacing assertions that could not fail, the replacements need their own falsifiability evidence** -- otherwise the fix is one generation of no-ops replacing another.

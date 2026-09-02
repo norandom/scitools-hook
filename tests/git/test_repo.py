@@ -83,6 +83,45 @@ from scitools_hook.git.repo import (
 FIVE_LINES = "one\ntwo\nthree\nfour\nfive\n"
 """Long enough that git scores a rename at 100% similarity rather than ignoring it."""
 
+TIMEOUT_KILLED_STATUS = 124
+"""GNU ``timeout(1)``'s status for a command it had to kill (requirement 12.8).
+
+Written here as a literal and **deliberately not** taken from
+:data:`~scitools_hook.git.repo.TIMEOUT_RC`: a test that reads a constant back out of the
+module under test asserts nothing about its value. Measured under exactly that spelling,
+``124 -> 125`` and ``124 -> 0`` both survived all 118 tests in this file and the whole
+2830-test suite besides. The number matters because it is the one an operator already
+associates with "this was killed at its limit"; recording 0 would report a git that never
+finished as a success.
+"""
+
+SHELL_COMMAND_NOT_FOUND_STATUS = 127
+"""The shell's status for an executable that could not be started (requirement 12.8).
+
+The counterpart of :data:`TIMEOUT_KILLED_STATUS`, held to the same rule for the same measured
+reason: ``127 -> 128`` and ``127 -> 0`` both survived this file while it compared the log
+against :data:`~scitools_hook.git.repo.MISSING_RC`.
+"""
+
+SLOW_GIT_SLEEP_S = 0.3
+"""How long the stand-in ``git`` sleeps when a test needs a duration it knows independently.
+
+Measured on this module: a stand-in sleeping 0.30 s is recorded as 0.335 s, against 0.0014 s
+for a real call, 0.00069 s for the timeout path and 0.00028 s for one that never started.
+Every path records a strictly positive duration, which is what makes ``seconds > 0.0``
+assertable everywhere rather than only where something is deliberately slow.
+"""
+
+SLOW_GIT_FLOOR_S = 0.25
+"""The floor asserted against :data:`SLOW_GIT_SLEEP_S`, leaving room for a coarse clock."""
+
+SLOW_GIT_CEILING_S = 10.0
+"""The ceiling asserted against it: 30x the sleep, so only a wrong *quantity* can exceed it.
+
+Recording :func:`time.monotonic` itself rather than the delta would log the machine's uptime,
+which passes any floor and fails this.
+"""
+
 LEAKED_GIT_VARS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -243,10 +282,16 @@ def test_discover_in_a_bare_repository_raises_not_a_git_repository(
     assert "work tree" in str(raised.value)
 
 
-def write_fake_git(path: Path, stdout: str, rc: int, stderr: str = "") -> str:
-    """A stand-in ``git`` that prints exactly ``stdout``/``stderr`` and exits ``rc``."""
+def write_fake_git(path: Path, stdout: str, rc: int, stderr: str = "", sleep_s: float = 0.0) -> str:
+    """A stand-in ``git`` that prints exactly ``stdout``/``stderr`` and exits ``rc``.
+
+    ``sleep_s`` makes the call take a duration the test knows independently of the module
+    under test, which is what turns an assertion about the recorded seconds into one that can
+    fail.
+    """
     path.write_text(
-        "#!/usr/bin/env python3\nimport sys\n"
+        "#!/usr/bin/env python3\nimport sys\nimport time\n"
+        f"time.sleep({sleep_s!r})\n"
         f"sys.stdout.write({stdout!r})\nsys.stderr.write({stderr!r})\nsys.exit({rc})\n",
         encoding="utf-8",
     )
@@ -338,14 +383,69 @@ def test_a_failure_carries_stderr_without_surrounding_whitespace(
 def test_discover_records_the_command_it_ran(
     git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """Requirement 12.8: every external command is logged with its timing and status."""
+    """Requirement 12.8: every external command is logged with its timing and status.
+
+    ``seconds > 0.0``, never ``>= 0.0``: a :func:`time.monotonic` delta is non-negative **by
+    construction**, so the weaker form holds under ``log.record(argv, 0.0, rc)`` and that
+    mutant survived all 118 tests in this file. Running a subprocess takes measurable time on
+    every path, so the strict form is the one that can fail. The recorded value is pinned
+    against an independently known duration in
+    :func:`test_the_recorded_duration_is_the_length_of_the_call_it_timed`.
+    """
     builder = git_repo()
     open_repo(builder, command_log)
     assert any("rev-parse" in line for line in command_log.commands)
     argv, seconds, rc = command_log.calls[-1]
     assert argv[0].endswith("git")
-    assert seconds >= 0.0
+    assert seconds > 0.0
     assert rc == 0
+
+
+SLEEPY_GIT_SOURCE = """#!/usr/bin/env python3
+import os, sys, time
+if {marker!r} in sys.argv:
+    time.sleep({sleep!r})
+os.execv({git!r}, [{git!r}] + sys.argv[1:])
+"""
+"""A ``git`` that is real except for one subcommand, which it makes slow.
+
+Discovery has to stay fast — it is the call that builds the object under test — so the delay
+is attached to a later subcommand instead, which is what makes the *propagated* limit
+observable rather than the one discovery used.
+"""
+
+SLEEPY_GIT_SLEEP_S = 3.0
+"""Long enough that a one-second limit kills the call and its absence is unmistakable."""
+
+
+def test_the_timeout_given_to_discover_bounds_the_calls_that_follow(
+    git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """``timeout_s`` is the operator's ceiling on *every* git call, not just on discovery.
+
+    Dropping ``timeout_s=timeout_s`` from the :class:`GitRepo` that :meth:`GitRepo.discover`
+    builds survived the whole suite: every other test either constructs a :class:`GitRepo`
+    directly, never crossing that call, or uses the default, and the default 300 s is
+    indistinguishable from "whatever the operator asked for" as long as nothing is slow. So a
+    repository discovered with a one-second limit has to be caught refusing to wait three
+    seconds — under the mutant the sleep simply completes and ``ls-files`` succeeds.
+    """
+    real = shutil.which("git")
+    assert real is not None, "this test needs a real git on PATH"
+    sleepy = tmp_path / "sleepy-git"
+    sleepy.write_text(
+        SLEEPY_GIT_SOURCE.format(marker="ls-files", sleep=SLEEPY_GIT_SLEEP_S, git=real),
+        encoding="utf-8",
+    )
+    sleepy.chmod(0o755)
+
+    builder = git_repo()
+    repo = GitRepo.discover(builder.path, command_log, git=str(sleepy), timeout_s=1)
+
+    assert repo.root == builder.path.resolve()
+    with pytest.raises(AnalysisFailedError) as raised:
+        repo.tracked_files()
+    assert "timed out" in str(raised.value)
 
 
 def test_discover_in_a_linked_worktree_separates_git_dir_from_common_dir(
@@ -711,6 +811,20 @@ def test_parse_name_status_refuses_a_single_letter_status_it_does_not_know(token
     with pytest.raises(AnalysisFailedError) as raised:
         parse_name_status(token + b"\0f.txt\0")
     assert token.decode() in str(raised.value)
+
+
+@pytest.mark.parametrize("token", [b"R9", b"R95", b"R100"])
+def test_parse_name_status_accepts_a_similarity_score_of_any_width(token: bytes) -> None:
+    """The score is "digits after the letter", not "three digits after the letter".
+
+    git 2.43.0 pads the score to three (``R100``, ``C085``), so no payload a real git emits
+    separates the two readings — which is why ``len(token) > 1 -> > 2``, refusing ``R9``,
+    survived every test in this file. The wider reading is the one the module's docstring
+    states and the one that keeps working if git ever stops padding, so it is decided here
+    rather than left resting on a mutant nobody can distinguish.
+    """
+    changes = parse_name_status(token + b"\0old.py\0new.py\0")
+    assert [(c.status, c.path, c.old_path) for c in changes] == [("R", "new.py", "old.py")]
 
 
 @pytest.mark.parametrize("token", [b"RX", b"R9X", b"RX9"])
@@ -2118,10 +2232,68 @@ def test_a_path_that_is_not_valid_utf8_survives_the_whole_round_trip(
 # --- logging and failure mapping ------------------------------------------------------
 
 
+def test_the_recorded_duration_is_the_length_of_the_call_it_timed(
+    git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """Requirement 12.8: the seconds in the log are *this command's*, not a plausible number.
+
+    Every other assertion about a duration in this file is a comparison against zero, and no
+    comparison against zero can pin a quantity: ``log.record(argv, 0.0, rc)`` was measured
+    surviving all 118 tests here, which means a build whose ``--verbose`` output claimed every
+    git call took no time at all would ship green. The value needs a duration the test knows
+    **independently of the module under test**, so this stand-in ``git`` sleeps
+    :data:`SLOW_GIT_SLEEP_S` and the recorded number is held between a floor and a ceiling.
+
+    Both bounds are load-bearing and they fail different mistakes. The floor fails a constant
+    (any constant below 0.25, ``0.0`` included) and a duration measured around the wrong span.
+    The ceiling fails a clock *reading* rather than a delta — :func:`time.monotonic` is the
+    machine's uptime on Linux (measured here: 185142 s), so it clears every floor and fails
+    this.
+    """
+    builder = git_repo()
+    repo = open_repo(builder, command_log)
+    slow = repo.__class__(
+        root=repo.root,
+        git_dir=repo.git_dir,
+        common_dir=repo.common_dir,
+        log=command_log,
+        git=write_fake_git(tmp_path / "slow-git", "", 0, sleep_s=SLOW_GIT_SLEEP_S),
+    )
+    command_log.calls.clear()
+
+    slow.head()
+
+    assert len(command_log.calls) == 1, "one call in, one line out"
+    _, seconds, rc = command_log.calls[-1]
+    assert rc == 0
+    assert seconds >= SLOW_GIT_FLOOR_S, f"a call that slept {SLOW_GIT_SLEEP_S}s logged {seconds}s"
+    assert seconds < SLOW_GIT_CEILING_S, f"{seconds}s is a clock reading, not a duration"
+
+
+def test_the_two_recorded_status_sentinels_are_the_conventional_numbers() -> None:
+    """The statuses :mod:`scitools_hook.git.repo` logs for a git that was killed or never ran.
+
+    Pinned as literals in one place because a second consumer is coming (task 11.2 has
+    ``runner.context.RealProbes._ping`` record the same two situations) and the ``--verbose``
+    log is meant to have **one** convention across the tool: an operator who has learnt that
+    124 means "killed" and 127 means "never started" for git must not have to learn different
+    numbers for the Understand probes. The behavioural tests below assert the same two
+    literals at the point where they are recorded; this one is about the exported names, which
+    is what the next consumer will import.
+    """
+    assert TIMEOUT_RC == TIMEOUT_KILLED_STATUS
+    assert MISSING_RC == SHELL_COMMAND_NOT_FOUND_STATUS
+
+
 def test_every_call_is_recorded_with_timing_and_status(
     git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
 ) -> None:
-    """Requirement 12.8: ``--verbose`` prints each external command with its timing."""
+    """Requirement 12.8: ``--verbose`` prints each external command with its timing.
+
+    Seven calls, each of which must carry a duration of its own: ``seconds > 0.0`` here is
+    what makes ``log.record(argv, 0.0, done.returncode)`` fail, and the weaker ``>= 0.0`` it
+    replaces could not (a monotonic delta is never negative).
+    """
     builder = git_repo()
     builder.write("a.py", "a\n")
     builder.stage()
@@ -2137,7 +2309,7 @@ def test_every_call_is_recorded_with_timing_and_status(
     repo.export_index(tmp_path / "idx", None)
     repo.export_commit("HEAD", tmp_path / "cmt", None)
 
-    assert all(seconds >= 0.0 and rc == 0 for _, seconds, rc in command_log.calls)
+    assert all(seconds > 0.0 and rc == 0 for _, seconds, rc in command_log.calls)
     subcommands = {argv[3] for argv, _, _ in command_log.calls}
     assert subcommands == {
         "rev-parse",
@@ -2152,7 +2324,18 @@ def test_every_call_is_recorded_with_timing_and_status(
 def test_a_command_that_never_starts_is_recorded_and_reported(
     git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
 ) -> None:
-    """A missing ``git`` must name itself rather than surface as a bare ``FileNotFoundError``."""
+    """A missing ``git`` must name itself rather than surface as a bare ``FileNotFoundError``.
+
+    The recorded status is asserted as the **literal 127**, not as ``MISSING_RC`` imported
+    from the module under test: comparing the log against the constant the module logs is a
+    tautology, and both ``127 -> 128`` and ``127 -> 0`` survived every test in this file under
+    it. 127 is the shell's "command not found" status, which is what makes it the right number
+    to record for an executable that never started; a build recording 0 here would report a
+    git that never ran as a success.
+
+    The duration is asserted too, because a command that failed to start still took time to
+    fail (measured: 0.00027 s) and ``--verbose`` prints that line like any other.
+    """
     builder = git_repo()
     repo = open_repo(builder, command_log)
     missing = repo.__class__(
@@ -2168,13 +2351,27 @@ def test_a_command_that_never_starts_is_recorded_and_reported(
         missing.head()
 
     assert "no-such-git" in str(raised.value)
-    assert [rc for _, _, rc in command_log.calls] == [MISSING_RC]
+    assert len(command_log.calls) == 1, "the attempt is recorded once, though it never ran"
+    _, seconds, rc = command_log.calls[-1]
+    assert rc == SHELL_COMMAND_NOT_FOUND_STATUS
+    assert seconds > 0.0
 
 
 def test_a_command_that_never_returns_is_recorded_and_reported(
     git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """A hung ``git`` becomes a typed error with the limit in it, and is still logged."""
+    """A hung ``git`` becomes a typed error with the limit in it, and is still logged.
+
+    The recorded status is the **literal 124**, for the reason given in
+    :func:`test_a_command_that_never_starts_is_recorded_and_reported`: ``124 -> 125`` and
+    ``124 -> 0`` both survived this file while it compared the log against ``TIMEOUT_RC``
+    imported from the module under test. 124 is GNU ``timeout(1)``'s status for a command it
+    had to kill, so an operator reading ``--verbose`` sees the number the tool that kills
+    things uses.
+
+    The duration is asserted for the same reason as the status: a command killed at its limit
+    still ran for a measurable time (measured: 0.00067 s at ``timeout_s=0``).
+    """
     builder = git_repo()
     repo = open_repo(builder, command_log)
     impatient = repo.__class__(
@@ -2190,4 +2387,7 @@ def test_a_command_that_never_returns_is_recorded_and_reported(
         impatient.tracked_files()
 
     assert "timed out" in str(raised.value)
-    assert [rc for _, _, rc in command_log.calls] == [TIMEOUT_RC]
+    assert len(command_log.calls) == 1, "the attempt is recorded once, though it was killed"
+    _, seconds, rc = command_log.calls[-1]
+    assert rc == TIMEOUT_KILLED_STATUS
+    assert seconds > 0.0
