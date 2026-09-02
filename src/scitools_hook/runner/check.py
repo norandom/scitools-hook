@@ -4,33 +4,16 @@ This is the module every other one on the project was built for. It owns no rule
 adapter; what it owns is the *order* things happen in, and almost every decision below exists
 because doing it in a different order produces a confident, green, fictional answer.
 
-**Requirement 4.9 is the first decision and the most consequential one.** A run whose
-selection holds nothing Understand can parse stops here, before any shadow is synced and any
-database is touched: ``DatabaseManager.ensure_side`` raises ``AnalysisFailedError`` for a
-repository with no analysable file (exit 5), and requirement 4.9 says that case is "nothing
-was analyzed, exit 0". Getting that wrong turns an innocuous commit -- a README edit, a
-version bump, a rename of a text file -- into a hard failure of the tool. One predicate
-covers four *different* inputs: a change with nothing staged at all, a change of files whose
-extension Understand enrols under no language, a change of files whose language this
-repository's configuration excludes, and a whole-project run in a repository holding nothing
-analysable. A deletions-only change is deliberately **not** one of them: requirement 4.10 asks
-for the structural rules to run on what remains, so the deleted paths count towards "there is
-something to analyse" and the run proceeds with an empty affected set and a live
-neighbourhood.
-
-**The before side exists only when ``HEAD`` does and the mode compares.** ``--all`` never
-builds one (req 4.8), and an unborn branch has none to build, which makes every entity new
-(req 4.5) and skips the ratchet rather than crashing on it. When it is built, it is synced
-from the **resolved commit hash**, never from the word ``HEAD``: a symbolic revision names a
-different commit tomorrow, and the recorded sync state would then force a full re-sync every
-run.
-
-**Extraction happens twice per side, and the two passes ask different questions.** The first
-asks only about the selected files, because that is all the affected-set resolver needs -- the
-entities of the change and the dependency edges around them. The second asks about the
-affected files *plus their neighbourhood*, which is the set the cycle, fan and layer rules
-have to see one step past the change. Bounding the second pass is what keeps the cost
-proportional to the change rather than to the repository (req 4.11).
+**What to analyse, and how it is read, is now :mod:`scitools_hook.runner.pipeline`.** Task 8.4
+promoted the planning and observation steps there so ``explain`` could stand on the same ones
+rather than grow a second, drifting copy; the reasons they are shaped the way they are --
+requirement 4.9's empty-selection short circuit, the resolved-hash rule for the before side,
+and the two bounded extraction passes -- are documented in that module. What stays here is
+requirement 4.9's *answer*: a run with nothing to analyse returns an empty ``RunResult``
+rather than raising, because ``DatabaseManager.ensure_side`` raises ``AnalysisFailedError``
+(exit 5) for a repository with no analysable file and requirement 4.9 says that case is
+"nothing was analyzed, exit 0". Getting it wrong turns an innocuous commit -- a README edit, a
+version bump, a rename of a text file -- into a hard failure of the tool.
 
 **The evaluator order is part of the contract**: thresholds, then ``attach_before``, then the
 ratchet, then structure, then CodeCheck, then ``classify``. Without ``attach_before`` between
@@ -52,16 +35,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Final, Literal
-
-from pydantic import Field
+from typing import Final
 
 from scitools_hook import __version__
 from scitools_hook.analysis import baseline as baseline_rules
-from scitools_hook.analysis.affected import resolve
 from scitools_hook.analysis.classify import classify
 from scitools_hook.analysis.codecheck import map_violations
 from scitools_hook.analysis.ratchet import attach_before, evaluate_ratchet
@@ -71,8 +50,6 @@ from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
 from scitools_hook.analysis.thresholds import ThresholdOutcome, evaluate_thresholds
 from scitools_hook.config.models import SeverityMap, ThresholdSpec
-from scitools_hook.errors import ConfigError
-from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.baseline import Baseline
 from scitools_hook.models.change import AffectedSet
 from scitools_hook.models.findings import (
@@ -82,25 +59,28 @@ from scitools_hook.models.findings import (
     TightenedLimit,
     structure_rule,
 )
-from scitools_hook.models.git import (
-    CommitTarget,
-    IndexTarget,
-    StagedChange,
-    SyncTarget,
-    WorktreeTarget,
-)
-from scitools_hook.models.snapshot import DataModel, ParseError, ProjectSnapshot, Side
+from scitools_hook.models.snapshot import ParseError, ProjectSnapshot, Side
 from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.report.hints import HintCatalogue
 from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.context import RunContext
+from scitools_hook.runner.pipeline import (
+    AnalysisPlan,
+    Engine,
+    PlanMode,
+    Selection,
+    SelectionMode,
+    plan_selection,
+)
 from scitools_hook.understand.codecheck import CodeCheckRunner
 from scitools_hook.understand.codecheck import _unusable_name as unusable_list_file_name
-from scitools_hook.understand.database import LANGUAGE_BY_SUFFIX, DatabaseManager
-from scitools_hook.understand.snapshot import SnapshotExtractor, SnapshotTarget
+from scitools_hook.understand.database import DatabaseManager
+from scitools_hook.understand.snapshot import SnapshotExtractor
 
-SelectionMode = Literal["staged", "worktree", "all", "files"]
-"""The four mutually exclusive things ``check`` can be pointed at (req 12.3)."""
+__all__ = ["CheckPipeline", "Selection", "SelectionMode"]
+"""``Selection`` is re-exported: it is the runner's entry vocabulary, and task 8.4 moved it
+to :mod:`scitools_hook.runner.pipeline` so ``explain`` could share it without importing
+``check``."""
 
 Sides = tuple[ProjectSnapshot, ProjectSnapshot | None]
 """The after snapshot and the before one; whole-project mode has no before side (req 4.8)."""
@@ -110,28 +90,6 @@ PARTIAL_VIEW_NOTE: Final = (
     "so no baseline value was tightened; run `scitools-hook check --all` to tighten limits"
 )
 """Requirement 8.3 needs a project-wide maximum; a bounded run has not seen one (note 4.5)."""
-
-OUTSIDE_HINT: Final = "Name files by their path inside the repository, as git reports them."
-"""What an operator does about a ``--files`` entry that names nothing in the working tree."""
-
-
-class Selection(DataModel):
-    """What one run covers: a mode, and the file list the ``files`` mode carries (req 12.3)."""
-
-    mode: SelectionMode
-    files: list[str] = Field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class _Plan:
-    """What a run will analyse, decided from git alone before any Understand work starts."""
-
-    mode: SelectionMode
-    changes: tuple[StagedChange, ...]
-    files: frozenset[str]
-    target: SyncTarget
-    before: str | None
-    """The resolved commit the before side is synced from, or ``None`` when there is none."""
 
 
 class CheckPipeline:
@@ -147,7 +105,7 @@ class CheckPipeline:
     ) -> None:
         self.ctx = ctx
         self._dbm = dbm
-        self._extractor = extractor
+        self._engine = Engine(dbm, extractor, ctx.progress)
         self._codecheck = codecheck
         self._store = baseline_store
         self._hints = HintCatalogue(ctx.settings.hints)
@@ -156,11 +114,11 @@ class CheckPipeline:
         """Evaluate ``selection`` and return everything the run produced (req 4.1-4.11)."""
         started = time.monotonic()
         repo = self.ctx.require_repo()
-        plan = self._plan(selection, repo)
+        plan = plan_selection(selection, repo, self.ctx.settings.project.languages)
         if not plan.files:
             return self._nothing_analyzed(selection, repo.root, started)
-        analyses = self._analyse(plan)
-        after, before, affected = self._observe(plan, analyses)
+        analyses = self._engine.analyse(plan)
+        after, before, affected = self._engine.observe(plan, analyses)
         specs = list(self.ctx.availability.thresholds)
         stored, unreadable = self._store.load(specs)
         effective, issues = baseline_rules.apply(specs, stored)
@@ -194,116 +152,11 @@ class CheckPipeline:
             preexisting_count=sum(1 for finding in findings if finding.preexisting),
         )
 
-    # --- deciding what to analyse ------------------------------------------------
-
-    def _plan(self, selection: Selection, repo: GitRepo) -> _Plan:
-        """What this selection covers, in git's terms, before Understand is asked anything.
-
-        The file set is the selection filtered to what Understand can parse, and it decides
-        whether the run happens at all. A deleted path stays in it: requirement 4.10 asks for
-        the structural rules to run on what a deletion leaves behind, and the before database
-        still holds the deleted file, so it is the seed that finds the former dependents.
-        """
-        if selection.mode == "all":
-            return _Plan(
-                mode="all",
-                changes=(),
-                files=self._analysable(repo.tracked_files()),
-                target=IndexTarget(),
-                before=None,
-            )
-        changes = tuple(self._changes(selection, repo))
-        target: SyncTarget = WorktreeTarget() if selection.mode == "worktree" else IndexTarget()
-        return _Plan(
-            mode=selection.mode,
-            changes=changes,
-            files=self._analysable(_touched(changes)),
-            target=target,
-            before=repo.head(),
-        )
-
-    def _changes(self, selection: Selection, repo: GitRepo) -> list[StagedChange]:
-        """The change this mode judges, read from git (req 4.1, 10.5, 11.8)."""
-        if selection.mode == "worktree":
-            return repo.worktree_changes()
-        if selection.mode == "files":
-            return [
-                StagedChange(status="M", path=_inside(name, repo.root)) for name in selection.files
-            ]
-        return repo.staged_changes()
-
-    def _analysable(self, paths: Iterable[str]) -> frozenset[str]:
-        """The paths whose extension Understand enrols under an enabled language (req 2.4).
-
-        Configured languages narrow the set, matched case-insensitively: the database manager
-        compares the configured names exactly, and answering "analysable" for a spelling it
-        would reject only costs a run that finds nothing, while the opposite would skip a
-        check the operator asked for.
-        """
-        enabled = {name.casefold() for name in (self.ctx.settings.project.languages or ())}
-        found = {
-            path
-            for path in paths
-            if (language := LANGUAGE_BY_SUFFIX.get(PurePosixPath(path).suffix)) is not None
-            and (not enabled or language.casefold() in enabled)
-        }
-        return frozenset(found)
-
-    # --- Understand ---------------------------------------------------------------
-
-    def _analyse(self, plan: _Plan) -> dict[Side, AnalyzeResult]:
-        """Bring the databases this run compares up to date (req 2.1, 2.3, 2.6, 4.3)."""
-        results: dict[Side, AnalyzeResult] = {"after": self._dbm.ensure_side("after", plan.target)}
-        if plan.before is not None:
-            results["before"] = self._dbm.ensure_side("before", CommitTarget(commit=plan.before))
-        return results
-
-    def _observe(
-        self, plan: _Plan, analyses: Mapping[Side, AnalyzeResult]
-    ) -> tuple[ProjectSnapshot, ProjectSnapshot | None, AffectedSet]:
-        """The two snapshots the rules run on, and what the change affected (req 4.2, 4.8).
-
-        Whole-project mode has one pass and no comparison: every entity is affected, which is
-        what makes the same evaluators answer requirement 4.8 without a second code path.
-        """
-        if plan.mode == "all":
-            whole = self._extract("after", plan.files, analyses)
-            keys = set(whole.entities)
-            return whole, None, AffectedSet(files={key.path for key in keys}, keys=keys)
-        first_after = self._extract("after", plan.files, analyses)
-        first_before = (
-            None if plan.before is None else self._extract("before", plan.files, analyses)
-        )
-        affected = resolve(plan.changes, first_after, first_before)
-        wanted = frozenset(affected.files | affected.neighbourhood)
-        after = self._extract("after", wanted, analyses)
-        before = None if plan.before is None else self._extract("before", wanted, analyses)
-        return after, before, affected
-
-    def _extract(
-        self, side: Side, files: frozenset[str], analyses: Mapping[Side, AnalyzeResult]
-    ) -> ProjectSnapshot:
-        """One side's snapshot, rooted at the shadow tree its database was built from.
-
-        ``root`` is the very object ``und add`` was given, unresolved: the worker makes every
-        entity's long name relative to it, and a root the database never saw answers with a
-        valid, empty, entirely green document (live finding, 6.2).
-        """
-        paths = self._dbm.paths()
-        target = SnapshotTarget(
-            db=paths.before_db if side == "before" else paths.after_db,
-            root=paths.before_tree if side == "before" else paths.after_tree,
-            side=side,
-            files=files,
-            parse_errors=tuple(analyses[side].parse_errors),
-        )
-        return self._phase(f"reading the {side} snapshot", lambda: self._extractor.extract(target))
-
     # --- the rules ----------------------------------------------------------------
 
     def _evaluate(
         self,
-        plan: _Plan,
+        plan: AnalysisPlan,
         sides: Sides,
         affected: AffectedSet,
         effective: Sequence[EffectiveThreshold],
@@ -431,7 +284,7 @@ class CheckPipeline:
 
     def _adapt(
         self,
-        mode: SelectionMode,
+        mode: PlanMode,
         after: ProjectSnapshot,
         specs: Sequence[ThresholdSpec],
         stored: Baseline | None,
@@ -479,46 +332,8 @@ class CheckPipeline:
         for message in messages:
             self.ctx.progress.note(message)
 
-    def _phase[T](self, name: str, work: Callable[[], T]) -> T:
-        """Run one phase, announced and timed, so a slow one can be named (req 4.11)."""
-        self.ctx.progress.start(name)
-        started = time.monotonic()
-        answer = work()
-        self.ctx.progress.finish(name, time.monotonic() - started)
-        return answer
-
 
 # --- helpers ------------------------------------------------------------------------
-
-
-def _touched(changes: Iterable[StagedChange]) -> list[str]:
-    """Every path a change names, the old side of a rename and the deletions included."""
-    paths: list[str] = []
-    for change in changes:
-        paths.append(change.path)
-        if change.old_path is not None:
-            paths.append(change.old_path)
-    return paths
-
-
-def _inside(name: str, root: Path) -> str:
-    """``name`` as a repository-relative path, or the typed refusal it deserves.
-
-    A ``--files`` entry that names nothing inside the working tree matches no entity key, so
-    the run would evaluate nothing and report success -- the exact silent green this project
-    keeps meeting. It is refused instead, naming the path and the repository.
-    """
-    candidate = Path(name)
-    if not candidate.is_absolute():
-        return PurePosixPath(name).as_posix()
-    try:
-        return candidate.relative_to(root).as_posix()
-    except ValueError as outside:
-        raise ConfigError(
-            f"--files names {name}, which is outside the repository {root}",
-            key="files",
-            hint=OUTSIDE_HINT,
-        ) from outside
 
 
 def _node_of(snapshot: ProjectSnapshot) -> Callable[[str], str | None]:
