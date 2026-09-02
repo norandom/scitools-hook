@@ -271,6 +271,24 @@ class GitRepo:
         """
         return parse_name_status(self._checked(_name_status(["diff", "--cached"])).stdout)
 
+    def worktree_changes(self) -> list[StagedChange]:
+        """What the working tree changes against ``HEAD`` (requirement 10.5).
+
+        Staged mode's counterpart, and the reason it cannot be reused: ``--worktree`` exists
+        so that an agent can check edits it has **not** staged, and those are invisible to
+        ``git diff --cached``. One revision is enough here -- ``git diff <commit>`` compares
+        the working tree against it -- so the same fixed argv and the same terminators apply.
+
+        With no ``HEAD`` there is nothing to diff against, and ``git diff HEAD`` would exit
+        128 rather than report the obvious answer. Every tracked path is then an addition,
+        which is exactly what :meth:`staged_changes` reports in the same state, so the two
+        modes agree on an unborn branch instead of one of them failing.
+        """
+        head = self.head()
+        if head is None:
+            return [StagedChange(status="A", path=path) for path in self.tracked_files()]
+        return parse_name_status(self._checked(_name_status(["diff"], head)).stdout)
+
     def diff_names(self, a: str, b: str) -> list[StagedChange]:
         """What changed between two commits, for ``explain --range`` (requirement 9.1)."""
         return parse_name_status(self._checked(_name_status(["diff"], a, b)).stdout)

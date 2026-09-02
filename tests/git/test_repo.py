@@ -475,6 +475,92 @@ def test_staged_changes_ignores_an_unstaged_edit(
     assert open_repo(builder, command_log).staged_changes() == []
 
 
+# --- worktree_changes (requirement 10.5) ----------------------------------------
+
+
+def test_worktree_changes_sees_an_unstaged_edit_that_staged_changes_hides(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The whole reason the method exists: ``--worktree`` checks edits before they are staged.
+
+    Asserted against ``staged_changes`` on the same repository, because the two answers being
+    equal is exactly the defect that would make ``--worktree`` a second name for staged mode.
+    """
+    builder = git_repo()
+    builder.write("a.py", "a\n")
+    builder.stage()
+    builder.commit("init")
+    builder.unstaged_edit("a.py", "edited only on disk\n")
+
+    repo = open_repo(builder, command_log)
+
+    assert repo.staged_changes() == []
+    assert [(c.status, c.path) for c in repo.worktree_changes()] == [("M", "a.py")]
+
+
+def test_worktree_changes_covers_the_staged_edits_as_well(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The working tree holds the staged content too, so both kinds of change are reported."""
+    builder = git_repo()
+    builder.write("a.py", "a\n")
+    builder.write("b.py", "b\n")
+    builder.stage()
+    builder.commit("init")
+    builder.write("a.py", "staged edit\n")
+    builder.stage("a.py")
+    builder.unstaged_edit("b.py", "unstaged edit\n")
+
+    changes = open_repo(builder, command_log).worktree_changes()
+
+    assert sorted((c.status, c.path) for c in changes) == [("M", "a.py"), ("M", "b.py")]
+
+
+def test_worktree_changes_reports_a_deletion_from_the_working_tree(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """A file removed on disk is a deletion against ``HEAD``, staged or not (req 4.10)."""
+    builder = git_repo()
+    builder.write("a.py", "a\n")
+    builder.write("gone.py", "gone\n")
+    builder.stage()
+    builder.commit("init")
+    builder.delete("gone.py", staged=False)
+
+    changes = open_repo(builder, command_log).worktree_changes()
+
+    assert [(c.status, c.path) for c in changes] == [("D", "gone.py")]
+
+
+def test_worktree_changes_on_an_unborn_branch_reports_every_tracked_file_as_added(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """``git diff HEAD`` exits 128 with no commit, so the obvious answer is given directly.
+
+    The answer matches ``staged_changes`` in the same state, which is what keeps the two
+    selection modes from disagreeing about a repository that has never been committed to.
+    """
+    builder = git_repo()
+    builder.write("pkg/first.py", "first\n")
+    builder.stage()
+
+    repo = open_repo(builder, command_log)
+
+    assert [(c.status, c.path) for c in repo.worktree_changes()] == [("A", "pkg/first.py")]
+    assert [(c.status, c.path) for c in repo.staged_changes()] == [("A", "pkg/first.py")]
+
+
+def test_worktree_changes_is_empty_when_the_working_tree_matches_head(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """A clean tree changes nothing, which is what lets requirement 4.9 short-circuit."""
+    builder = git_repo()
+    builder.write("a.py", "a\n")
+    builder.stage()
+    builder.commit("init")
+    assert open_repo(builder, command_log).worktree_changes() == []
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="needs POSIX symlinks to make a typechange")
 def test_staged_changes_treats_a_typechange_as_a_modification(
     git_repo: MakeGitRepo, command_log: FakeCommandLog
