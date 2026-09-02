@@ -15,13 +15,22 @@ from typing import Annotated
 
 import pytest
 import typer
+from fakes.cli import StubAssembler
+from fakes.cli import describe as describe_target
 from typer.main import get_command
 from typer.testing import CliRunner
 
 from scitools_hook import __version__
+from scitools_hook.cli import agent_rules as agent_rules_module
 from scitools_hook.cli import app as app_module
-from scitools_hook.cli import common
+from scitools_hook.cli import baseline as baseline_module
+from scitools_hook.cli import check as check_module
+from scitools_hook.cli import common, pipelines
+from scitools_hook.cli import config_cmd as config_module
 from scitools_hook.cli import db as db_module
+from scitools_hook.cli import doctor as doctor_module
+from scitools_hook.cli import explain as explain_module
+from scitools_hook.cli import hooks as hooks_module
 from scitools_hook.errors import ConfigError, NotAGitRepositoryError
 from scitools_hook.exit_codes import ExitCode, describe
 
@@ -40,6 +49,34 @@ SUBCOMMANDS = (
 """The ten names requirement 12.1 lists, in the order it lists them."""
 
 DB_SUBCOMMANDS = ("path", "rebuild", "analyze")
+
+COMMAND_MODULES = {
+    "check": check_module,
+    "explain": explain_module,
+    "baseline": baseline_module,
+    "init": config_module,
+    "config": config_module,
+    "doctor": doctor_module,
+    "db": db_module,
+    "install-hook": hooks_module,
+    "uninstall-hook": hooks_module,
+    "agent-rules": agent_rules_module,
+}
+"""Which module holds each of requirement 12.1's ten commands."""
+
+
+def is_stub(module: object) -> bool:
+    """Whether ``module``'s commands still raise instead of doing the work.
+
+    Read off the module rather than off a list, so that a task giving a command its body
+    shrinks the stub tests below **without editing them** -- tasks 9.2 and 9.3 land
+    separately and a hand-maintained list would make each one break the other's suite.
+    """
+    return any(name.endswith("NOT_IMPLEMENTED") for name in vars(module))
+
+
+STUBS = tuple(name for name in SUBCOMMANDS if is_stub(COMMAND_MODULES[name]))
+"""The commands that are still stubs; empty once every task in section 9 has landed."""
 
 CLI_SOURCE_DIR = Path(common.__file__).resolve().parent
 
@@ -162,6 +199,7 @@ CLI_MODULES = {
     "doctor.py",
     "explain.py",
     "hooks.py",
+    "pipelines.py",
 }
 """Every module in the package. A scan of nothing passes; this is what makes it a scan."""
 
@@ -182,11 +220,13 @@ def test_a_command_run_with_empty_stdin_never_waits_for_input() -> None:
     """Reaching the body with stdin closed proves nothing on the way asked for input.
 
     A prompt fed no input raises ``EOFError``, which the shared handler would report as an
-    unexpected error naming ``EOFError`` -- so the stub's own message is what says the body
-    was reached. Stub-scoped: 9.3 should re-point this at whatever ``db path`` then prints.
+    unexpected error naming ``EOFError`` -- so an answer on standard output is what says the
+    body was reached. ``db path`` is the cheapest command that has one: it runs in this
+    repository, touches no file and starts no subprocess but ``git`` (task 9.3).
     """
     result = CliRunner().invoke(app_module.app, ["db", "path"], input="")
-    assert "`db path`" in result.stderr
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert result.stdout.strip().endswith("after.und")
     assert "EOFError" not in result.stderr
     assert "Aborted" not in result.stderr
 
@@ -257,7 +297,7 @@ def test_the_root_callback_publishes_the_global_options(tmp_path: Path) -> None:
 # --- the stubs tasks 9.2 and 9.3 replace -----------------------------------------
 
 
-@pytest.mark.parametrize("name", SUBCOMMANDS)
+@pytest.mark.parametrize("name", STUBS)
 def test_every_stub_command_is_reachable_and_reports_it_is_unimplemented(name: str) -> None:
     """Delete this test as 9.2 and 9.3 give each command a body; the help tests stay."""
     argv = [name, "path"] if name == "db" else [name]
@@ -282,27 +322,45 @@ SELECTION_CASES = (
 )
 
 
+@pytest.fixture
+def assembler(monkeypatch: pytest.MonkeyPatch) -> StubAssembler:
+    """Stand in for the whole run assembly, so a command reaches its pipeline and stops.
+
+    Task 9.1 observed the resolved selection through the stub bodies' ``NotImplementedError``
+    message. Those bodies are gone, so the same question is now asked one layer in: the
+    double records what the pipeline was pointed at, and the cases below are unchanged.
+    """
+    stub = StubAssembler()
+    monkeypatch.setattr(pipelines, "assemble", stub)
+    return stub
+
+
 @pytest.mark.parametrize(("flags", "env", "expected"), SELECTION_CASES)
 @pytest.mark.parametrize("name", ("check", "explain"))
 def test_the_selection_group_is_wired_flag_by_flag(
-    name: str, flags: list[str], env: dict[str, str | None], expected: str
+    assembler: StubAssembler,
+    name: str,
+    flags: list[str],
+    env: dict[str, str | None],
+    expected: str,
 ) -> None:
-    """Each flag must reach its own argument: a stub still reports what it resolved."""
+    """Each flag must reach its own argument, and the default must follow the hook env."""
     result = CliRunner().invoke(app_module.app, [name] + flags, env=env)
-    assert result.exit_code == int(ExitCode.UNEXPECTED)
-    assert f"selection={expected}" in result.stderr
+    assert result.exit_code in (int(ExitCode.OK), int(ExitCode.VIOLATIONS)), result.stderr
+    assert [describe_target(target) for target in assembler.assembly.targets] == [expected]
 
 
 @pytest.mark.parametrize("name", ("check", "explain"))
-def test_a_format_is_accepted_whatever_its_case(name: str) -> None:
-    """A usage error would be exit 2; reaching the unimplemented body means it parsed."""
+def test_a_format_is_accepted_whatever_its_case(assembler: StubAssembler, name: str) -> None:
+    """A usage error would be exit 2; running to completion means the value parsed."""
     result = CliRunner().invoke(app_module.app, [name, "--staged", "--format", "JSON"])
-    assert result.exit_code == int(ExitCode.UNEXPECTED)
+    assert result.exit_code == int(ExitCode.OK)
+    assert len(assembler.assembly.targets) == 1
 
 
-def test_an_api_mode_is_accepted_whatever_its_case() -> None:
+def test_an_api_mode_is_accepted_whatever_its_case(assembler: StubAssembler) -> None:
     result = CliRunner().invoke(app_module.app, ["--api-mode", "UPYTHON", "check", "--staged"])
-    assert result.exit_code == int(ExitCode.UNEXPECTED)
+    assert result.exit_code == int(ExitCode.OK)
 
 
 def test_an_unknown_format_is_refused_with_the_configuration_code() -> None:
@@ -420,23 +478,24 @@ def test_the_database_group_with_no_operation_shows_its_operations() -> None:
         assert operation in result.stderr
 
 
-@pytest.mark.parametrize(
-    ("argv", "named"),
-    (
-        (["check"], "`check`"),
-        (["explain"], "`explain`"),
-        (["baseline"], "`baseline`"),
-        (["init"], "`init`"),
-        (["config"], "`config`"),
-        (["doctor"], "`doctor`"),
-        (["install-hook"], "`install-hook`"),
-        (["uninstall-hook"], "`uninstall-hook`"),
-        (["agent-rules"], "`agent-rules`"),
-        (["db", "path"], "`db path`"),
-        (["db", "rebuild"], "`db rebuild`"),
-        (["db", "analyze"], "`db analyze`"),
-    ),
-)
+def stub_invocations() -> list[tuple[list[str], str]]:
+    """One invocation per command still without a body, ``db``'s three operations included.
+
+    Built from :data:`STUBS` rather than written out, for the reason :func:`is_stub` gives:
+    tasks 9.2 and 9.3 implement different commands and neither may break the other's suite.
+    """
+    cases: list[tuple[list[str], str]] = []
+    for name in STUBS:
+        if name == "db":
+            cases.extend(
+                ([name, operation], f"`{name} {operation}`") for operation in DB_SUBCOMMANDS
+            )
+        else:
+            cases.append(([name], f"`{name}`"))
+    return cases
+
+
+@pytest.mark.parametrize(("argv", "named"), stub_invocations())
 def test_each_stub_says_which_command_is_missing(argv: list[str], named: str) -> None:
     """Delete with the stubs; until then the message must name the command it stands for."""
     result = CliRunner().invoke(app_module.app, argv)
@@ -449,21 +508,21 @@ PRE_COMMIT_FILES = ["a.py", "b.py", "c.py"]
 
 
 @pytest.mark.parametrize("name", ("check", "explain"))
-def test_a_pre_commit_file_list_reaches_the_selection(name: str) -> None:
+def test_a_pre_commit_file_list_reaches_the_selection(assembler: StubAssembler, name: str) -> None:
     """``entry: scitools-hook check --files`` with ``pass_filenames`` appends bare paths."""
     argv = [name, "--files"] + PRE_COMMIT_FILES
     result = CliRunner().invoke(app_module.app, argv, env=NO_HOOK)
-    assert result.exit_code == int(ExitCode.UNEXPECTED)
-    assert "selection=files: a.py, b.py, c.py" in result.stderr
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert describe_target(assembler.assembly.targets[0]) == "files: a.py, b.py, c.py"
     assert "unexpected extra argument" not in result.stderr
 
 
 @pytest.mark.parametrize("name", ("check", "explain"))
-def test_bare_paths_without_the_option_select_them_too(name: str) -> None:
+def test_bare_paths_without_the_option_select_them_too(assembler: StubAssembler, name: str) -> None:
     """So ``entry: scitools-hook check`` with ``pass_filenames`` also works (req 12.3)."""
     result = CliRunner().invoke(app_module.app, [name] + PRE_COMMIT_FILES, env=NO_HOOK)
-    assert result.exit_code == int(ExitCode.UNEXPECTED)
-    assert "selection=files: a.py, b.py, c.py" in result.stderr
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert describe_target(assembler.assembly.targets[0]) == "files: a.py, b.py, c.py"
 
 
 @pytest.mark.parametrize("name", ("check", "explain"))

@@ -419,7 +419,7 @@ def emit_findings(text: str, output: Path | None, *, option: str = "--output") -
         _write_stdout(document)
         return
     try:
-        _deliver(output, document)
+        _deliver(output, document, option)
     except OSError as err:
         raise _cannot_write(str(output), option, err) from err
 
@@ -429,7 +429,7 @@ BLOCKING_DESTINATION: Final = (
 )
 
 
-def _deliver(output: Path, document: str) -> None:
+def _deliver(output: Path, document: str, option: str) -> None:
     """Write ``document`` to ``output``, refusing a destination that would never return.
 
     **Opening a FIFO for writing blocks forever when nothing is reading it.** Measured on this
@@ -449,6 +449,13 @@ def _deliver(output: Path, document: str) -> None:
     A symlink is followed to its target, because pointing the report at a shared path is a
     working configuration; ``realpath`` resolves without raising so a dangling link still
     reaches the write and yields the operating system's own errno.
+
+    ``option`` is the spelling that named this destination, and the refusal carries it for the
+    same reason :func:`_cannot_write` does. It was a literal ``"--output"`` until task 9.2
+    added a second file destination and measured the consequence: ``check --sarif <fifo>``
+    was refused with ``key: --output``, naming an option the operator never passed -- the
+    exact defect 9.1 had fixed one branch over, left here because until then no second
+    destination existed to reach it.
     """
     destination = Path(os.path.realpath(output))
     try:
@@ -458,7 +465,7 @@ def _deliver(output: Path, document: str) -> None:
     if mode is not None and (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
         raise ReportUndeliverableError(
             f"cannot write to {_short(str(output))}: it {BLOCKING_DESTINATION}",
-            key="--output",
+            key=option,
             hint=BAD_PATH_HINT,
         )
     if mode is not None and not stat.S_ISREG(mode):

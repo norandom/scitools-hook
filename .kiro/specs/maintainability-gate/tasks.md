@@ -268,14 +268,14 @@
   - _Requirements: 1.6, 7.6, 7.7, 12.1, 12.3, 12.4, 12.6, 12.7, 12.8_
   - _Boundary: cli/app, cli/common_
 
-- [ ] 9.2 (P) Implement `check`, `explain` and `baseline` commands
+- [x] 9.2 (P) Implement `check`, `explain` and `baseline` commands
   - `check` with `--strict`, `--adaptive/--no-adaptive`, `--show-highest`, `--sarif PATH`; `explain` with `--range A..B`, `--graphs`, `--impact`, `--out DIR`; `baseline` with `--file`; each wired to its pipeline and renderer
   - Done when help documents every option, and CLI tests with fake pipelines render human, JSON, SARIF and Markdown outputs to stdout or `--output`, `--format json` writes nothing but the document to stdout, and `check` outside a repository exits with the not-a-git-repository code
   - _Requirements: 4.7, 4.8, 5.6, 7.4, 7.5, 8.1, 9.6, 11.8, 12.1, 12.4, 12.5_
   - _Boundary: cli/check, cli/explain, cli/baseline_
   - _Depends: 8.4_
 
-- [ ] 9.3 (P) Implement `init`, `config`, `db`, `doctor`, `install-hook`, `uninstall-hook` and `agent-rules` commands
+- [x] 9.3 (P) Implement `init`, `config`, `db`, `doctor`, `install-hook`, `uninstall-hook` and `agent-rules` commands
   - `init` (refuses overwrite without `--force`), `config` (effective values with sources), `db path|rebuild|analyze`, `doctor` (works outside a repository), `install-hook --force --global`, `uninstall-hook`, `agent-rules [--write FILE]`
   - Done when CLI tests exercise each command against fakes and a temp repo, including `doctor` and `config` succeeding outside a repository
   - _Requirements: 1.5, 2.7, 2.8, 3.9, 3.10, 10.1, 10.3, 10.5, 11.1, 11.6, 11.9, 12.1, 12.5_
@@ -384,6 +384,27 @@ of them has to be rediscovered.
     `in_hook` treats `GIT_INDEX_FILE=` (empty) as in-hook while every other env reader here
     treats blank as unset.
   - _Boundary: cli/common_
+
+- [ ] 11.6 Decide whether the ratchet should follow a routine whose parameter list changed
+  - **Verified by the controller through the real CLI against Understand 6.5, two runs
+    differing only in the parameter list.** A routine that grows while keeping its parameters
+    produces **9 ratchet findings**, including `routine.CountLineCode m.f worse than before,
+    was 2`. The same growth *plus three new parameters* produces **0 routine-level ratchet
+    findings**. `EntityKey` includes `parameters` "to distinguish overloads", so the routine
+    is a different entity on the two sides and requirement 4.4's "may not get worse than it
+    was" never fires on it.
+  - **This is the shape the ratchet exists for.** "An agent added parameters and grew the
+    function" is the central case this tool is built to catch, and it is exactly the one that
+    slips the before/after comparison. The gate is not blind -- absolute thresholds still
+    blocked both changes above, and `CountParams` fired -- but the ratchet specifically is.
+  - Options: match on `(scope, path, longname)` for languages without overloading; or keep
+    `parameters` and pair a removed entity with an added one by name when exactly one of each
+    shares a longname. Either is a change to `models` and `analysis` together, which is why
+    this is a decision rather than a patch.
+  - Done when the B case above produces routine-level ratchet findings, and an actual overload
+    pair in C++ is still told apart (the reason `parameters` is in the key).
+  - _Boundary: models/snapshot, analysis/ratchet_
+
 
 ## Implementation Notes
 - 1.1: RED-phase runs must use an isolated env (`uv run --isolated` or a scratch venv) — after `uv sync`, `--no-project --with` layers onto `.venv` and no longer fails. `[tool.ruff] extend-exclude = [".kiro", ".claude"]` keeps ruff format out of spec Markdown code fences. Dev deps are a `[dependency-groups] dev` group: plain `uv sync` installs them. Typer `no_args_is_help` exits 2 on bare invocation — CLI tasks must reconcile with ExitCode.CONFIG_ERROR=2.
@@ -851,3 +872,10 @@ Raised during 9.1 round 3, deliberately NOT decided inside the task because it c
 - **9.3 re-attribution: requirement 10.5 is listed on 9.3 but nothing in its boundary implements it.** `--worktree` is declared in `cli/common` (9.1) and consumed by `check`/`explain` (9.2). `db analyze` deliberately syncs the **index**, because the hook's `check --staged` is what a warm cache serves and any other after-target costs the next commit a full re-sync. The requirement belongs to 9.1/9.2.
 - **9.3 open, for 10.2/10.3 to settle: requirement 8.2 says baseline application happens "while adaptive mode is enabled *and* a baseline file exists", but `CheckPipeline` applies unconditionally** and only gates `tighten` on `baseline.adaptive`. `agent-rules` matches the pipeline, so the tool is self-consistent today -- which is the part that matters for an agent reading the rules -- but one of the two is reading 8.2 loosely, and reconciling them changes `runner/check` and `cli/agent_rules` together.
 - **9.3 handoffs for 10.2:** `install-hook --global` resolves through `git config --global core.hooksPath` and falls back to `$XDG_CONFIG_HOME/git/hooks` read from the **ambient** environment -- a child process that does not set `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM=1` **will install into the developer's real `~/.config/git/hooks`**. For a deterministic "Understand is missing" without breaking the harness, narrow `PATH` to a directory holding a single symlink to `git` rather than emptying it -- the project has now hit the empty-`PATH`-disables-the-probe trap four times.
+- **THE TOOL WORKS FROM THE COMMAND LINE.** Verified by the controller, not relayed: `scitools-hook check --staged` in a throwaway repository whose staged change turns a 3-line routine into a branchy 7-parameter one reports **7 errors with a remediation hint on every finding and exits 1**; the same command outside a repository exits **6** with `not inside a git working tree` and the hint `doctor and config work without one`. (First attempt measured nothing, because the probe's `cd` did not persist and the command ran against this repository with nothing staged -- the fifth harness self-inflicted wound of the session, and the reason the run above pins `cwd` and the staged list in its own output.)
+- **9.2 fixed a defect in shared `cli/common.py` that only a SECOND file destination could reach.** `_deliver` took `key="--output"` as a literal, so `check --sarif <fifo>` was refused naming an option the operator never passed -- measured, `exit 7`, `key: --output`. This is the *same* defect 9.1 fixed on the errno branch and left on the blocking-kind branch, because until 9.2 there was no second file destination in existence to expose it. **A parameterised fix applied to one branch of a function is not applied to the function**, and the sibling branch stays wrong until something new reaches it.
+- **9.2 caught a false green in its own `--show-highest` test: an empty `highest` list renders identically whether the flag is honoured or not.** The stub result now carries an entry. Same family as the fourteenth route (a fake that answers more than it was asked) -- here a fixture that answered *less* than the feature needs, so the assertion could not distinguish the two behaviours. **Both directions of fixture inadequacy produce tests that cannot fail.**
+- **9.2's `assemble` requires the repository BEFORE `build_context`,** so requirement 12.5's exit 6 does not depend on Understand being installed -- a machine with no Understand run outside a repository still gets the honest answer. Cost, stated: one extra `git rev-parse` per run, logged twice under `--verbose`. It also re-derives `CachePaths.for_repo` rather than reading `RunContext.cache`, because that property's `None` is precisely the case `require_repo` just refused, and reading it would leave a branch **no input can reach**.
+- **9.2, hazard 14 extends to `--sarif`, measured:** a finding whose path is not valid UTF-8 (git hands it over as surrogates) makes `check` exit **70** with `UnicodeEncodeError` on the primary destination, and the SARIF file is **never created** (`exists() is False`). The primary-first write order at least leaves no half-written second report. `--format json --output PATH` fails earlier still, inside `model_dump_json`. Recorded, not fixed: the fix lives in `cli/common.py`/`report/`, and loosening the encoder is the wrong fix -- `errors="replace"` writes a filename that exists nowhere into a machine-readable report.
+- **9.2 verified the option wiring reaches the SETTINGS, not just the override map:** `check --staged --strict` moves blocking from **3 to 9** on a commit whose violations are pre-existing. An override that is merely recorded and never consulted would pass a test that only inspects the map.
+- **9.2/9.3 self-gate debt for 10.4:** `check.check` and `explain.explain` each declare `routine.CountParams: 12` against a limit of 5 -- one typer parameter per option, exactly what 9.1 predicted. Record as an accepted deviation or add a `cli/` ignore; **do not fragment the command modules to satisfy it.** The same self-gate run reports 24-44 files failing to parse in this repository, almost all the recorded star-in-a-list-literal defect in test files.
