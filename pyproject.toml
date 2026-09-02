@@ -32,6 +32,10 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "jsonschema>=4",
+    # .pre-commit-hooks.yaml is a contract with another tool, so the test parses it as YAML
+    # rather than grepping its text (task 7.3).
+    "pyyaml>=6",
+    "types-pyyaml>=6",
 ]
 
 [tool.ruff]

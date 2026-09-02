@@ -1,0 +1,27 @@
+# The Gate as a pre-commit framework hook (requirements 11.7, 11.8).
+#
+# A repository enables it by referencing this repository in its .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/<owner>/scitools-hook
+#       rev: v0.1.0
+#       hooks:
+#         - id: scitools-hook
+#
+# `require_serial: true` is mandatory rather than tidy. Without it the framework shards the
+# staged file list across parallel invocations, and each one would build and analyse its own
+# Understand database of the same repository.
+#
+# `entry` is the bare `check`, not `check --files`. Both work -- trailing bare paths are the
+# same choice as `--files` -- but `--files` with no value is a usage error, so the bare form
+# is the one that also survives a run where the framework passes no paths at all.
+- id: scitools-hook
+  name: scitools-hook maintainability gate
+  description: >-
+    Analyse the staged change with SciTools Understand and block a commit that breaks a
+    configured limit or makes an affected routine, class or file measurably worse.
+  entry: scitools-hook check
+  language: python
+  types: [file]
+  pass_filenames: true
+  require_serial: true
