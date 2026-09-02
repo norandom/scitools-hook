@@ -41,7 +41,7 @@ from scitools_hook.config.models import ProjectSettings, Settings, UnderstandSet
 from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.git.shadow import ShadowSync
-from scitools_hook.models.cache import CachePaths, SyncState
+from scitools_hook.models.cache import APP_NAME, CachePaths, SyncState
 from scitools_hook.models.git import CommitTarget, IndexTarget, SyncTarget, WorktreeTarget
 from scitools_hook.models.snapshot import ParseError, Side
 from scitools_hook.models.understand import AnalyzeResult
@@ -1059,7 +1059,7 @@ def test_the_cache_lands_under_the_user_cache_directory_by_default(
         cache_dir({"XDG_CACHE_HOME": str(cache)}),
     )
 
-    assert paths.root.parent == cache
+    assert paths.root.parent == cache / APP_NAME
     assert paths.after_db.parent == paths.root
 
 

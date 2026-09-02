@@ -42,10 +42,19 @@ def cache_root(
     """Root of the analysis cache for a repository, per ``understand.db_location``.
 
     ``cache_dir`` overrides the platform user cache directory (tests, future ``--cache-dir``).
+
+    **The ``APP_NAME`` segment is appended to a supplied base too, and that is a fix rather
+    than a flourish.** ``user_cache_dir(APP_NAME)`` carries the name itself, so the two arms
+    used to disagree: on Linux ``runner.context.cache_dir(env)`` returns ``~/.cache`` whenever
+    ``HOME`` is set, so a base was *always* supplied, the ``platformdirs`` arm was effectively
+    dead, and the result was ``~/.cache/<repo_id>`` -- an unlabelled hash directory sitting
+    directly in the user's cache, contradicting this module's own documented layout. Measured:
+    ``/home/mc/.cache/1c23f1c40aae2d9b``. Every test passed an explicit ``tmp_path`` base,
+    which is exactly why nothing noticed: the defect lived only in the arm the tests replaced.
     """
     if db_location == "gitdir":
         return Path(common_dir).resolve() / APP_NAME
-    base = Path(cache_dir) if cache_dir is not None else Path(user_cache_dir(APP_NAME))
+    base = Path(cache_dir) / APP_NAME if cache_dir is not None else Path(user_cache_dir(APP_NAME))
     return base / repo_id(common_dir)
 
 

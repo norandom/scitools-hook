@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from scitools_hook.models.cache import APP_NAME, CachePaths, SyncState, repo_id
+from scitools_hook.models.cache import APP_NAME, CachePaths, SyncState, cache_root, repo_id
 
 # --- repo_id -------------------------------------------------------------------
 
@@ -46,10 +46,16 @@ def test_repo_id_differs_between_repositories(tmp_path: Path) -> None:
 
 
 def test_cache_paths_live_under_the_user_cache_directory(tmp_path: Path) -> None:
+    """Under the application's own directory, not loose in the cache base.
+
+    This assertion used to omit the ``APP_NAME`` segment and so encoded the defect: with
+    ``HOME`` set, a base is always supplied, and the tool was writing bare hash directories
+    straight into ``~/.cache``.
+    """
     common = tmp_path / "repo" / ".git"
     common.mkdir(parents=True)
     paths = CachePaths.for_repo(common, db_location="cache", cache_dir=tmp_path / "cache")
-    assert paths.root == tmp_path / "cache" / repo_id(common)
+    assert paths.root == tmp_path / "cache" / APP_NAME / repo_id(common)
 
 
 def test_cache_paths_live_under_the_git_dir_when_configured(tmp_path: Path) -> None:
@@ -130,3 +136,32 @@ def test_sync_state_round_trips_through_json() -> None:
         created_with="6.5.1204",
     )
     assert SyncState.model_validate(json.loads(state.model_dump_json())) == state
+
+
+def test_a_supplied_cache_base_is_still_namespaced_under_the_application(tmp_path: Path) -> None:
+    """The tool must not scatter unlabelled hash directories into a user's cache.
+
+    This is the defect the whole suite missed, and the reason it missed it is worth keeping:
+    ``user_cache_dir(APP_NAME)`` carries the application name itself, so the fallback arm was
+    correct, while the supplied-base arm was not. On Linux ``runner.context.cache_dir(env)``
+    returns ``~/.cache`` whenever ``HOME`` is set, so a base is *always* supplied and the
+    fallback is effectively dead -- the real result was ``~/.cache/<repo_id>``, measured as
+    ``/home/mc/.cache/1c23f1c40aae2d9b``, against this module's documented
+    ``<user cache dir>/scitools-hook/<repo_id>/``.
+
+    **Every existing test passed an explicit ``tmp_path`` base**, which is precisely why none
+    of them could see it: the defect lived only in the arm the tests were replacing. A fixture
+    that always overrides one branch of a decision cannot test that decision.
+    """
+    root = cache_root(tmp_path / "repo" / ".git", "cache", tmp_path / "xdg")
+    assert root.parent == tmp_path / "xdg" / APP_NAME
+    assert root.name == repo_id(tmp_path / "repo" / ".git")
+
+
+def test_the_gitdir_arm_is_not_double_namespaced(tmp_path: Path) -> None:
+    """``gitdir`` already ends in the application name; it must not gain a second one."""
+    common = tmp_path / "repo" / ".git"
+    common.mkdir(parents=True)
+    root = cache_root(common, "gitdir", tmp_path / "xdg")
+    assert root == common.resolve() / APP_NAME
+    assert str(root).count(APP_NAME) == 1

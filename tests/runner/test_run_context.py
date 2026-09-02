@@ -39,6 +39,7 @@ from scitools_hook.errors import (
 )
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.git.repo import GitRepo
+from scitools_hook.models.cache import APP_NAME
 from scitools_hook.runner import context as context_module
 from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.context import (
@@ -708,5 +709,7 @@ def test_the_cache_root_is_taken_from_the_environment_that_was_passed(
         env["XDG_CACHE_HOME"] = str(expected)
     context = build_context(options(repo.path, env, command_log))
     assert context.cache is not None
-    assert context.cache.root.parent == expected
+    # The cache base, then the application's own segment, then the repository id: the middle
+    # one was missing, so caches landed loose in the base directory.
+    assert context.cache.root.parent == expected / APP_NAME
     assert str(Path.home()) not in str(context.cache.root)
