@@ -25,6 +25,7 @@ from scitools_hook.config.detect import (
     Detection,
     Evidence,
     Region,
+    _pep695_evidence,
     detect,
 )
 from scitools_hook.config.models import ProjectSettings, matching_pattern
@@ -546,11 +547,19 @@ def test_a_type_statement_is_reported_as_the_cheaper_kind(tmp_path: Path, source
     assert evidence.detail.startswith("line 5: type A = ...")
 
 
-def test_the_two_signals_carry_different_reasons() -> None:
-    assert set(PARSE_REASONS) == {"pep695", "pep695-alias"}
-    assert PARSE_REASONS["pep695"] != PARSE_REASONS["pep695-alias"]
+def test_every_signal_carries_its_own_reason() -> None:
+    """Distinct reasons, because they make different promises about what was measured.
+
+    Two of the three truncate and one does not. Writing the truncating reason over an alias
+    would tell an operator a file is unmeasured when it is measured, and the reverse would tell
+    them the opposite -- which is the failure the whole acknowledgement section exists to
+    prevent. The set is asserted exactly so a new signal cannot be added without a reason.
+    """
+    assert set(PARSE_REASONS) == {"pep695", "pep695-alias", "fstring-escape"}
+    assert len(set(PARSE_REASONS.values())) == len(PARSE_REASONS)
     assert "nothing after" in PARSE_REASONS["pep695"]
     assert "still measured" in PARSE_REASONS["pep695-alias"]
+    assert "nothing after it is measured" in PARSE_REASONS["fstring-escape"]
 
 
 def test_a_file_with_both_kinds_is_reported_as_the_truncating_one(tmp_path: Path) -> None:
@@ -674,3 +683,53 @@ def test_a_header_that_cannot_be_tokenised_keeps_the_comments_before_the_break(
     text = "# @generated\n'''" + ("x" * 8000)
     tracked = build(tmp_path, {"pkg/a.py": text, "pkg/b.py": "x = 1\n"})
     assert patterns_for(detect(tmp_path, tracked), "generated") == ["pkg/a.py"]
+
+
+# --- the f-string Understand cannot read -------------------------------------------------
+
+FSTRING_CASES = (
+    pytest.param('X = rf"^ {1}( \\{{)?$"', True, id="the-real-line-from-a-real-repository"),
+    pytest.param('X = f"{1}\\{{"', True, id="minimal-interpolation-then-escaped-open-brace"),
+    pytest.param('X = f"{1}\\}}"', False, id="a-closing-brace-does-not-truncate"),
+    pytest.param('X = f"\\{{{1}"', False, id="the-escape-before-the-interpolation-is-fine"),
+    pytest.param('X = f"{1}\\d"', False, id="a-backslash-that-is-not-before-a-brace"),
+    pytest.param('X = f"{{}}"', False, id="an-escaped-brace-with-no-interpolation"),
+)
+
+
+# The non-raw cases below contain `\{`, which is not a recognised escape, so `ast.parse`
+# warns. That is the construct under test, not a defect in the fixture -- the real line in the
+# repository that produced this detector is a raw f-string and warns about nothing.
+@pytest.mark.filterwarnings("ignore::SyntaxWarning")
+@pytest.mark.parametrize(("source", "fires"), FSTRING_CASES)
+def test_only_the_measured_f_string_shape_is_reported(source: str, fires: bool) -> None:
+    """Each case was run against Understand 6.5.1204 one construct per database.
+
+    The order and the direction of the brace are the whole condition. `f"{1}\\{{"` truncates
+    the file; `f"{1}\\}}"`, `f"\\{{{1}"` and `f"{1}\\d"` are all read cleanly. A rule reading
+    "a backslash near a brace" would report three files that parse, and one reading "an escaped
+    brace anywhere" would report four -- so the negatives here are not padding, they are the
+    difference between a detector and a guess.
+    """
+    evidence = _pep695_evidence("m.py", source)
+    assert (evidence is not None and evidence.signal == "fstring-escape") is fires
+
+
+@pytest.mark.filterwarnings("ignore::SyntaxWarning")
+def test_a_docstring_describing_the_construct_is_not_the_construct() -> None:
+    """Parsed, not searched -- the trap the PEP 695 detector already documents.
+
+    This repository's own hint catalogue quotes these shapes in remediation text. A detector
+    that searched source would report the file that *explains* the hazard.
+    """
+    prose = '"""Documents f\\"{1}\\\\{{\\" as a hazard."""\nX = "or {x}\\\\{ in a plain string"\n'
+    assert _pep695_evidence("m.py", prose) is None
+
+
+@pytest.mark.filterwarnings("ignore::SyntaxWarning")
+def test_the_truncating_f_string_outranks_an_alias_in_the_same_file() -> None:
+    """A file with both is acknowledged for the one that decides how much was measured."""
+    both = 'type Alias = int\nX = f"{1}\\{{"\n'
+    evidence = _pep695_evidence("m.py", both)
+    assert evidence is not None
+    assert evidence.signal == "fstring-escape"

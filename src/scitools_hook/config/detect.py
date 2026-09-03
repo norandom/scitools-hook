@@ -94,6 +94,7 @@ Signal = Literal[
     "excluded",
     "pep695",
     "pep695-alias",
+    "fstring-escape",
 ]
 """Which detector spoke. Every :class:`Evidence` carries one, so a verdict can be traced."""
 
@@ -534,6 +535,11 @@ PARSE_REASONS: Final[dict[str, str]] = {
         "Understand 6.5 rejects a PEP 695 'type' statement: the parse error is reported and "
         "the rest of the file IS still measured. Measured on 6.5.1204."
     ),
+    "fstring-escape": (
+        "Understand 6.5 cannot parse an f-string whose interpolation is followed by a "
+        "backslash-escaped opening brace; the parse error cascades to the end of the file "
+        "and nothing after it is measured. Measured on 6.5.1204."
+    ),
 }
 """Signal -> the reason a proposed ``[parse]`` acknowledgement carries, spelled once each.
 
@@ -588,13 +594,21 @@ def _pep695_evidence(rel: str, text: str) -> Evidence | None:
     return Evidence(signal=signal, source=rel, detail=f"line {line}: {construct}")
 
 
+_TRUNCATING: Final = frozenset({"pep695", "fstring-escape"})
+"""Signals whose construct takes the rest of the file with it, measured one at a time.
+
+`pep695-alias` is deliberately absent: a `type X = ...` statement is reported by Understand and
+the rest of the file IS still measured, so it must not outrank a construct that truncates.
+"""
+
+
 _Declaration = tuple[int, str, Signal]
 """One PEP 695 construct: where it is, how it reads, and which signal it raises."""
 
 
 def _severity_then_line(declaration: _Declaration) -> tuple[int, int]:
     """Order declarations so a truncating one outranks an alias, then by line."""
-    return (0 if declaration[2] == "pep695" else 1, declaration[0])
+    return (0 if declaration[2] in _TRUNCATING else 1, declaration[0])
 
 
 def _type_parameter_nodes(tree: ast.AST) -> list[_Declaration]:
@@ -609,7 +623,40 @@ def _type_parameter_nodes(tree: ast.AST) -> list[_Declaration]:
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.type_params:
             params = _type_params(node.type_params)
             found.append((node.lineno, f"def {node.name}[{params}]", "pep695"))
+        elif isinstance(node, ast.JoinedStr) and _escaped_brace_after_interpolation(node):
+            found.append((node.lineno, "f-string: interpolation then \\{", "fstring-escape"))
     return found
+
+
+def _escaped_brace_after_interpolation(node: ast.JoinedStr) -> bool:
+    """Whether this f-string holds an interpolation followed by a backslash-escaped ``{``.
+
+    **The order is the whole condition, and so is the direction of the brace.** Measured on
+    Understand 6.5.1204, one construct per database:
+
+    ==============================  =========
+    ``f"{1}\\{{"``  interpolation then ``\\{``   TRUNCATED
+    ``f"{1}\\}}"``  interpolation then ``\\}``   intact
+    ``f"\\}}{1}"``  ``\\}`` then interpolation   intact
+    ``f"\\{{{1}"``  ``\\{`` then interpolation   intact
+    ``f"{1}\\d"``   backslash, no brace          intact
+    ==============================  =========
+
+    So a rule reading "a backslash near a brace" would report three files that parse cleanly,
+    and one reading "an escaped brace anywhere" would report four. Narrow enough to be true.
+
+    Parsed rather than searched: after parsing, ``{{`` is one literal ``{`` in a ``Constant``,
+    so the test is a backslash immediately before a brace in the constant's *value*, not in the
+    source text -- which also means a docstring quoting the construct cannot trip it.
+    """
+    seen_interpolation = False
+    for value in node.values:
+        if isinstance(value, ast.FormattedValue):
+            seen_interpolation = True
+        elif seen_interpolation and isinstance(value, ast.Constant):
+            if isinstance(value.value, str) and "\\{" in value.value:
+                return True
+    return False
 
 
 _TYPE_PARAM_KINDS: Final = (ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)
