@@ -99,6 +99,65 @@
 - **Findings**: SARIF 2.1.0 needs `version`, `$schema`, `runs[].tool.driver.{name,version,rules[]}`, `runs[].results[].{ruleId,level(none|note|warning|error),message.text,locations[].physicalLocation.{artifactLocation.uri,region.startLine}}`. Agent instruction files are plain Markdown; begin/end marker comments make idempotent insertion trivial.
 - **Implications**: `Finding` carries everything SARIF needs; the JSON schema is versioned (`schema_version: 1`).
 
+### Contract measurements against the licensed installation (task 10.1)
+- **Context**: Requirements 3.5, 4.4, 5.5, 6.7, 6.9 and 9.4 all describe behaviour only a real Understand can produce. Task 10.1 built a mixed Python/C++ sample repository, analysed it from **two differently named roots over byte-identical sources**, and measured what the installed build actually answers. Everything below is measured on Understand 6.5.1204 (build 1204, `~/scitools`), Linux x86-64, 2026-09-03, and is pinned by `tests/contract/test_*_contract.py`.
+
+#### Entity identity across two roots (req 4.4)
+- **22 entities, 22 matched, 0 unmatched, and the entity *records* are equal, not merely the keys.** Two databases built from `alpha/` and `beta/` over identical sources produce identical `metrics`, `archs`, `kind`, `name` and `line` for every routine, class and file. The file-longname defect (a FILE entity's `longname()` is the absolute path) would show here as 6 unmatched file keys; it does not, because the worker derives a file key from `longname()` made relative to the analysis root.
+- **C++ overloads are separated by `parameters` and by nothing else.** `Shape::area(int) const` and `Shape::area(int,int) const` agree on scope, path, long name, Understand kind (`C Public Member Const Function`) and short name (`area`); only `parameters` and the definition line differ, and a line number moves whenever code above it changes, so it cannot be identity. Same for the free-function pair `scale(int)` / `scale(int,int)`.
+- **`ent.parameters(False)` is the type-only form** (`int` / `int,int` for C++) while `ent.parameters()` is the full declaration (`int width,int height`). For **Python both forms are the parameter *names*** (`self,value`), so a "types only" key would not stop a Python signature edit from changing the key.
+- **Census for task 11.6.** Dropping `parameters` from the key collides on exactly the two C++ overload pairs in the sample project and on **nothing else**: all 13 Python entities stay unique on `(scope, path, longname)`. Measured on a larger corpus -- this repository's own `src/` tree, **941 routines** -- dropping `parameters` produces **0 collisions**. So the field is load-bearing for C++ and, on real Python, buys nothing while costing requirement 4.4 its join whenever a parameter list changes.
+
+#### Unmatched and unseparable entity kinds (the task-10.1 done condition)
+- **A Python lambda is not an entity.** `step = lambda item: item + 1` yields only a `python LambdaParameter` for `item`; there is no routine entity, so a lambda has no key, no metrics of its own, and its complexity is counted into the enclosing routine. Nothing is "unmatched" because nothing arrives.
+- **A C++ function template is ONE entity.** `largest` instantiated with `int`, `double` and `long` is a single `C Function Template` carrying the generic signature `T left,T right`. Correct for a join (one edit, one entity) but a real coverage limit: the metrics are measured once on the template body, so a template that is pathological in one instantiation shows a single set of numbers.
+- **Several Understand entities can share one `EntityKey`, and the extra ones are dropped silently.** Two measured Python constructs do it:
+  - `@typing.overload` -- two stubs plus the implementation are **three** `python Function` entities, all `typed.widen` with `parameters == 'x'`. The worker emits three records; `ProjectSnapshot.entities` is a mapping, so **one survives** (measured: the last in walk order, which on this build is the implementation).
+  - A plain redefinition -- `def same(x)` written twice in one module -- gives two entities with an identical key.
+  Consequence: for such a routine the ratchet compares whichever record survived on each side. Recorded for task 11.6 together with the census above; not fixed here (the models are outside task 10.1's boundary).
+- **Understand cannot tell a `classmethod` from a `staticmethod`**: both are `python Function Attribute Static`, and only the leading `cls` parameter separates them. A rule that branched on the kind string would treat them alike.
+- **A Python property getter/setter pair does NOT collide**: Understand names them `Gauge.value-getter` and `Gauge.value-setter`, so their long names differ.
+- **`__init__.py` is kind `python File`, not `python Module File`** -- both are inside the `file ~unknown ~unresolved` kind string, so nothing is lost, but a rule that matched the kind name would miss every package initialiser.
+- **Kinds no scope ever sees** (measured on this repository's own database): `python Package` (324), `python Variable Global/Local/Attribute`, `python Parameter`, `python LambdaParameter`, `python Unknown *`, `python Unresolved Attribute`, plus `C Macro`, `C Parameter`, `C Namespace`. None of them is an entity a threshold can be written for, and **no entity of a scope Understand does report was dropped for lack of a container file** (0 of 941 routines, 0 of 135 classes, 0 of 79 files).
+
+#### Metric availability, language by language (req 5.5, 3.5)
+Read from `Metric.list` for all twelve languages the extension map can configure:
+
+| metric | languages that have it |
+|---|---|
+| `CountParams` (routine) | **none** |
+| `CountDeclPropertyAuto` (class) | **C# only** |
+| `PercentLackOfCohesion` (class) | Basic, C#, C++, Java, Pascal |
+| any class metric at all | all except Ada, Assembly, Fortran, Jovial, VHDL (which answer an empty list) |
+| any routine metric at all | all except Assembly |
+
+- **`CountParams` is unavailable for every language, C++ included.** The design said "unset for Python"; measured, the synthetic is the *only* source of a parameter count on this build, so a request that omitted it would silently stop evaluating parameter thresholds in every language, not just Python.
+- **`CountDeclMethodNonStub` therefore equals `CountDeclMethod` outside C#**, because the metric it subtracts (`CountDeclPropertyAuto`) exists only there. The "excluding trivial accessors" half of requirement 3.5 never fires for Python or C++.
+- The snapshot reports this as **language -> metrics** (`unavailable == {"Python": ["PercentLackOfCohesion"]}`) while the C++ class in the same snapshot carries a real value for it -- which is what distinguishes the correct orientation from an inverted map carrying the same two strings.
+
+#### Architecture nodes and dependency edges (req 6.7)
+- At **depth 2** on a tree with a root-level file and a package that holds a file beside a subdirectory, the node set is `Directory Structure` (holding `main.py` and `pkg/core.py`), `.../app`, `.../native` and `.../pkg/inner`; at depth 1 it is `.../app`, `.../native`, `.../pkg` and the architecture itself. A branch shallower than the requested depth contributes its own leaf, and a file no node holds is attributed to the architecture, so no file leaves the structural rules.
+- **DEFECT, on the shipped default depth.** `Arch.depends()` reports exactly one edge for this project (`.../app -> .../pkg`, 4 refs). It is published at depth 1 and **dropped at depth 2**: `worker._arch_edges` trims the target to `Directory Structure/pkg` and then requires that path to be a published node, which it is not, because `pkg/core.py` fell back to the architecture itself. The document then contradicts itself -- three file edges marked `crosses_arch` and an empty `arch_edges` -- so the arch-cycle rule (6.2) and the coupling rule (6.6) evaluate an empty edge set on an ordinary layout. Reproduced on a second tree with no root-level file at all. Recorded as `xfail(strict=True)` in `tests/contract/test_structure_contract.py`; the fix belongs to whoever owns `understand/worker.py`.
+- Understand does not report a **parent -> descendant** architecture dependency, so a dependency starting at a file in the walk-root node is visible only as a file edge with `crosses_arch` set. That is Understand's behaviour, not the worker's, and is separate from the defect above.
+- **A Python method called through an instance attribute has an empty blast radius.** `self.leaf.widen(value)` does not resolve back to `Leaf.widen`: the `impact` operation answers `total: 0` for that method, while the *class* `leaf.Leaf` answers 7 and `core.Engine.run` answers 3. Requirement 9.5's coverage for Python is therefore class- and file-shaped rather than method-shaped.
+
+#### Worker parity across the two execution modes
+- `catalogue`, `archs` and `impact` produce **byte-identical answer documents** under `upython` and in-process (whole documents compared, not sampled fields); task 6.6 already showed the same for `snapshot`.
+- `ping` differs by design and only in one field: the Understand version agrees, the reported `python` is the interpreter that answered (3.12.0 under `upython`, the host's version in-process).
+- **`understand.Metric.description(<unknown metric>)` never returns in an ordinary CPython process.** Under `upython` it answers `''` in ~0.1 s; in-process it was still running after 500 s, on both `/usr/bin/python3.12` and the venv's 3.14.4. A *known* metric answers instantly in both. `MetricCatalogue.describe` asks exactly this question about the two synthetic metrics, and the in-process path has no timeout -- so an in-process Gate would stop for good. It is a hazard rather than a live defect only because **no production code path calls `describe` today**.
+
+#### Enrolment, selection and parse errors
+- **`und add <dir>` never enrols a symlink** -- not a symlinked file whose target is inside the tree, not one whose target is outside it, and it does not follow a symlinked directory.
+- **`und analyze -files @list` resolves symlinks before matching.** A link whose target *is* in the project is accepted (exit 0); a link whose target is not is refused -- and the refusal prints `Analyze Completed (Errors:0 Warnings:0)` **on stdout** while exiting **1**. The status is the only signal; the banner and the error count are both clean.
+- **CodeCheck is not licensed on this machine**: `und -db X codecheck Sandbox <out>` answers `Licensing Error: No license for CodeCheck.` at rc 1 and leaves the output directory **empty**, which is why an empty directory must be a failure rather than "no violations". The contract test asserts both admissible outcomes (a parsed CSV, or a `LicenseError` over an empty directory) and refuses the third.
+
+#### CORRECTION: Python parse coverage depends on `PATH`
+- The recorded product-level finding "Understand's Python parser fails on `["k", *xs]` and loses every routine after it" is **conditional, not absolute**. Measured on one database analysed repeatedly, alternating only the environment:
+  - `PATH` holding a bare **`python`** executable -> `Analyze Completed (Errors:0 Warnings:0)`, both routines present, `before_marker` at 2 code lines.
+  - `PATH` holding only **`python3`** (or nothing) -> `Errors:8`, `after_marker` **absent from the database**, `before_marker` at 4 code lines.
+  - Flipped back and forth three times on the same database, deterministic in both directions. The `python` may be any real interpreter (3.12.3 and 3.14.4 both work); a stub that exits 1 or merely prints a version string does **not** work, so Understand executes it.
+- Consequences: the gate's analysis coverage depends on the `PATH` of whoever invoked it -- `uv run`/`uvx` put a venv `python` on `PATH` and hide the problem, a git hook run from a login shell on a distribution that ships only `python3` does not. Two machines, one commit, two entity sets, and nothing in the output naming `PATH`. Whoever owns `understand/und_cli` / `understand/database` should decide whether the gate guarantees a bare `python` in the environment it gives `und`, and `doctor` should report which one `und` will find.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
@@ -160,7 +219,7 @@
 - **Simplification**: no plugin system; no plotting library; one `Finding` type; SVGs only via `Ent.draw`; before/after only in staged/worktree/files modes (no arbitrary two-commit diff beyond `explain --range A..B`, which reuses the same shadow mechanism).
 
 ## Risks & Mitigations
-- Entity identity across DBs verified for functions, methods, classes and files (see live experiment); anonymous/lambda entities and C++ overload edge cases remain to be covered by the contract test; unmatched entities degrade to absolute-threshold-only with a note in the finding.
+- Entity identity across DBs verified for functions, methods, classes and files (see live experiment); **closed by task 10.1's contract suite** -- C++ overloads separate on `parameters` alone, a function template is one entity, a Python lambda is no entity at all, and the residual hole is the opposite of the one feared: several entities can share one key (`@typing.overload`, a plain redefinition) and the extra records are dropped silently. Unmatched entities degrade to absolute-threshold-only with a note in the finding.
 - Licensing: `und` and the API share the GUI's `~/.config/SciTools/License.conf` (Linux) and need HTTPS to `licensing.scitools.com` for heartbeats; a sandboxed shell without network produced "No valid Und license found" here. CLI activation: `und -setlicensecode <code>` / env `UNDERSTAND_LICENSE_CODE`; `und -isundlicensed` for scripts. `doctor` reports `und license` output verbatim; the hook shim's soft-fail variable prevents lock-out.
 - First-run analysis time on large repos — explicit progress messages, `db rebuild` and `db path` commands, cache location documented.
 - Metric availability differs per language (e.g. Python lacks some C++ metrics) — validate configured metrics against `Metric.list(kind)` per language; report "unavailable" once per run (Req 5.5).
