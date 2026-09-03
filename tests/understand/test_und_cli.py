@@ -120,6 +120,57 @@ Option                          Current Setting  Available Settings
 """``list -all settings`` really does put another section under the metric list."""
 
 
+# --- the two recorded statuses, and the timing they are recorded with -------------
+
+TIMEOUT_KILLED_STATUS = 124
+"""GNU ``timeout(1)``'s status for a command it had to kill (requirement 12.8).
+
+Written here as a literal and **deliberately not** taken from
+:data:`~scitools_hook.exit_codes.TIMEOUT_RC`: a test that reads a constant back out of the
+code under test asserts nothing about its value. Measured under exactly the spelling this
+file used before task 11.2 (``assert log.codes == [TIMEOUT_RC]``), ``124 -> 0`` survived the
+**entire 3067-test suite** -- so a build recording an ``und`` that hung at its limit as a
+success passed every gate. 124 is the number an operator already reads as "killed at its
+limit", which is why it is the right one to record.
+"""
+
+SHELL_COMMAND_NOT_FOUND_STATUS = 127
+"""The shell's status for an executable that could not be started (requirement 12.8).
+
+The counterpart of :data:`TIMEOUT_KILLED_STATUS`, held to the same rule for the same measured
+reason: ``127 -> 0`` also survived all 3067 tests while this file compared the log against
+``MISSING_RC`` imported from the module under test.
+"""
+
+SLOW_UND_SLEEP_S = 0.3
+"""How long the stubbed ``und`` sleeps when a test needs a duration it knows independently.
+
+Measured on this module: a stub sleeping 0.30 s is recorded as 0.32 s, against 0.02 s for one
+that does not sleep and 0.00028 s for an executable that never started. The recorded number
+has to be pinned against a quantity the test knows *without* asking the module under test,
+because every assertion here used to be a comparison against zero -- and a
+:func:`time.monotonic` delta is non-negative by construction, so ``seconds >= 0`` cannot fail.
+"""
+
+SLOW_UND_FLOOR_S = 0.25
+"""The floor asserted against :data:`SLOW_UND_SLEEP_S`, leaving room for a coarse clock."""
+
+KILLED_FLOOR_S = 0.5
+"""The floor for a command killed at a one-second limit: it cannot have taken less than this.
+
+Half the limit rather than the limit itself, so a slow machine's rounding cannot make a
+correct implementation fail; still far above the ``0.0`` a constant would record.
+"""
+
+CLOCK_READING_CEILING_S = 10.0
+"""The ceiling every recorded duration is held under, which fails a clock *reading*.
+
+:func:`time.monotonic` is the machine's uptime on Linux (measured here in the hundreds of
+thousands of seconds), so recording it instead of the delta clears every floor and fails this.
+No ``und`` call in this file is allowed anywhere near ten seconds.
+"""
+
+
 # --- the stubbed executable ------------------------------------------------------
 
 STUB_SOURCE = '''#!/usr/bin/env python3
@@ -1201,10 +1252,23 @@ def test_a_command_that_never_returns_becomes_an_analysis_failure(
 def test_a_timeout_is_still_recorded_in_the_command_log(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
+    """The killed command is logged as 124, and with the time it actually spent hanging.
+
+    Both halves are asserted against numbers this test knows on its own. The status is the
+    literal :data:`TIMEOUT_KILLED_STATUS`, not ``TIMEOUT_RC`` imported from the module under
+    test -- that comparison is a tautology and ``124 -> 0`` survived all 3067 tests under it.
+    The duration is held above :data:`KILLED_FLOOR_S`, which is derived from the one-second
+    limit this test sets rather than from anything the module reports: ``record(argv, 0.0,
+    TIMEOUT_RC)`` also survived all 3067 tests, so ``--verbose`` could have claimed a command
+    that hung for its whole limit took no time at all.
+    """
     stub.plan({"analyze": {"sleep": 5}})
     with pytest.raises(AnalysisFailedError):
         cli(stub, log, timeout_s=1).analyze(db_path(tmp_path), None, all=True)
-    assert log.codes == [TIMEOUT_RC]
+    assert log.codes == [TIMEOUT_KILLED_STATUS]
+    (_, seconds, _) = log.entries[-1]
+    assert seconds >= KILLED_FLOOR_S, f"a command killed at a 1s limit logged {seconds}s"
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
 
 
 def test_a_timeout_does_not_leave_the_list_file_behind(
@@ -1221,11 +1285,22 @@ def test_a_timeout_does_not_leave_the_list_file_behind(
 
 
 def test_an_unrunnable_und_becomes_an_analysis_failure(tmp_path: Path, log: RecordingLog) -> None:
+    """An ``und`` that never started is reported, and logged as 127 with the time it took.
+
+    The status is the literal :data:`SHELL_COMMAND_NOT_FOUND_STATUS` for the reason given in
+    :func:`test_a_timeout_is_still_recorded_in_the_command_log`. The duration is asserted
+    because failing to start still takes measurable time (measured: 0.00028 s) and
+    ``--verbose`` prints that line like any other -- ``record(argv, 0.0, MISSING_RC)`` survived
+    all 3067 tests before this assertion existed.
+    """
     missing = UndCli(understand_env(tmp_path / "nowhere" / "und"), log)
     with pytest.raises(AnalysisFailedError) as caught:
         missing.version()
     assert caught.value.command[0].endswith("und")
-    assert log.codes == [MISSING_RC]
+    assert log.codes == [SHELL_COMMAND_NOT_FOUND_STATUS]
+    (_, seconds, _) = log.entries[-1]
+    assert seconds > 0.0, "a command that never started still took time to fail"
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
 
 
 def test_every_command_is_recorded_with_its_argv_timing_and_status(
@@ -1247,7 +1322,49 @@ def test_every_command_is_recorded_with_its_argv_timing_and_status(
         "list",
     ]
     assert log.codes == [0, 0, 0, 0]
-    assert all(seconds >= 0 for _, seconds, _ in log.entries)
+    # `> 0.0`, not `>= 0`: a `time.monotonic()` delta is non-negative by construction, so the
+    # comparison this replaces could not fail, and `record(argv, 0.0, rc)` survived all 3067
+    # tests. The quantity itself is pinned by the sleeping stub in the next test.
+    assert all(seconds > 0.0 for _, seconds, _ in log.entries)
+    assert all(seconds < CLOCK_READING_CEILING_S for _, seconds, _ in log.entries)
+
+
+def test_the_recorded_duration_is_the_length_of_the_call_it_timed(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 12.8: the seconds in the log are *this command's*, not a plausible number.
+
+    Every other duration assertion in this file is a comparison against a bound, and no bound
+    at zero can pin a quantity. This one hands the test a duration it knows independently of
+    the module under test -- the stub sleeps :data:`SLOW_UND_SLEEP_S` -- and holds the
+    recorded number between a floor and a ceiling that fail different mistakes: the floor
+    fails any constant below 0.25 (``0.0`` included) and a span measured around the wrong
+    call; the ceiling fails a clock *reading* recorded in place of a delta.
+    """
+    stub.plan({"list": {"stdout": METRICS_OUTPUT, "sleep": SLOW_UND_SLEEP_S}})
+
+    cli(stub, log).list_metrics(db_path(tmp_path))
+
+    assert len(log.entries) == 1, "one command in, one line out"
+    (_, seconds, rc) = log.entries[-1]
+    assert rc == 0
+    assert seconds >= SLOW_UND_FLOOR_S, f"a call that slept {SLOW_UND_SLEEP_S}s logged {seconds}s"
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
+
+
+def test_the_two_recorded_statuses_are_the_conventional_numbers() -> None:
+    """The statuses this wrapper logs for an ``und`` that was killed or never started.
+
+    Pinned as literals here because the names are now imported from
+    :mod:`scitools_hook.exit_codes` rather than defined in the wrapper (task 11.2): ``git``,
+    the API worker and the installation probes write the same two numbers into the same
+    ``--verbose`` stream, and an operator who has learnt that 124 means "killed" and 127 means
+    "never started" must not have to learn a different pair per adapter. The behavioural tests
+    assert the same two literals where they are recorded; this one is about the values the
+    module exports, which is what the other consumers import.
+    """
+    assert TIMEOUT_RC == TIMEOUT_KILLED_STATUS
+    assert MISSING_RC == SHELL_COMMAND_NOT_FOUND_STATUS
 
 
 def test_a_failing_command_is_recorded_before_the_error_is_raised(
@@ -1257,6 +1374,9 @@ def test_a_failing_command_is_recorded_before_the_error_is_raised(
     with pytest.raises(AnalysisFailedError):
         cli(stub, log).analyze(db_path(tmp_path), None, all=True)
     assert log.codes == [1]
+    (_, seconds, _) = log.entries[-1]
+    assert seconds > 0.0
+    assert seconds < CLOCK_READING_CEILING_S
 
 
 # --- the fake used by the tasks that depend on this one ----------------------------

@@ -22,6 +22,8 @@ import json
 import os
 import re
 import signal
+import stat
+import subprocess
 from collections.abc import Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -40,16 +42,19 @@ from scitools_hook.errors import (
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.cache import APP_NAME
+from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.runner import context as context_module
 from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.context import (
     ContextOptions,
+    RealProbes,
     RunContext,
     build_context,
     find_repository,
 )
 from scitools_hook.understand.catalogue import kind_string
 from scitools_hook.understand.fake import FAKE_VAR, FixtureApiRunner, FixtureUndCli
+from scitools_hook.understand.und_cli import UndCli
 
 PYTHON = "Python"
 """The one configured language of the availability tests; matching is case-insensitive."""
@@ -713,3 +718,148 @@ def test_the_cache_root_is_taken_from_the_environment_that_was_passed(
     # one was missing, so caches landed loose in the base directory.
     assert context.cache.root.parent == expected / APP_NAME
     assert str(Path.home()) not in str(context.cache.root)
+
+
+# --- the installation probes and the ``--verbose`` log (req 12.8) ----------------
+
+PROBE_STUB_SOURCE = '''#!/usr/bin/env python3
+"""Stand-in for a bundled interpreter answering the worker ping."""
+import sys
+import time
+
+time.sleep({sleep})
+sys.stdout.write({answer!r})
+sys.exit({rc})
+'''
+"""The probe's counterpart of the stubs the ``und`` and API suites use.
+
+Written here rather than shared because the probe runs ``[interpreter, worker, "ping"]`` and
+reads only standard output: a stub with a plan file would add a fixture layout to a test whose
+whole subject is what reaches the command log.
+"""
+
+TIMEOUT_KILLED_STATUS = 124
+"""GNU ``timeout(1)``'s status for a probe that had to be killed (requirement 12.8).
+
+The literal, deliberately not :data:`~scitools_hook.exit_codes.TIMEOUT_RC` read back out of
+the code under test: that comparison is a tautology, and it was measured surviving the entire
+3067-test suite in the two sibling modules that used it. The number is the one an operator
+already reads as "killed at its limit", and it is the same one ``git`` and ``und`` record --
+the ``--verbose`` stream mixes all three, so it has one convention or none.
+"""
+
+SHELL_COMMAND_NOT_FOUND_STATUS = 127
+"""The shell's status for an interpreter that could not be started (requirement 12.8)."""
+
+PROBE_SLEEP_S = 0.3
+"""How long the stand-in interpreter sleeps when a test needs a duration it knows itself."""
+
+PROBE_FLOOR_S = 0.25
+"""The floor asserted against :data:`PROBE_SLEEP_S`, leaving room for a coarse clock."""
+
+PROBE_KILLED_FLOOR_S = 0.5
+"""The floor for a probe killed at a one-second limit: it cannot have taken less."""
+
+PROBE_CEILING_S = 30.0
+"""The ceiling every recorded probe duration is held under, which fails a clock *reading*."""
+
+
+def probe_stub(path: Path, answer: str = "", rc: int = 0, sleep: float = 0.0) -> Path:
+    """Write an executable stand-in interpreter that sleeps, prints ``answer`` and exits."""
+    path.write_text(PROBE_STUB_SOURCE.format(sleep=sleep, answer=answer, rc=rc), encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
+def probes(tmp_path: Path, log: FakeCommandLog, timeout_s: int) -> RealProbes:
+    """:class:`RealProbes` with a real (never-run) ``und`` wrapper and a stated limit.
+
+    ``cli`` is only reachable through ``und_version``; every test here goes through
+    ``upython_ping``, which builds its own argv and touches the wrapper not at all.
+    """
+    und = tmp_path / "nowhere" / "und"
+    env = UnderstandEnv(
+        home=und.parent,
+        und=und,
+        upython=None,
+        python_api_dir=und.parent / "Python",
+        version="6.5.1204",
+        source="test",
+        api_mode="upython",
+    )
+    return RealProbes(cli=UndCli(env, log), log=log, env={}, timeout_s=timeout_s)
+
+
+def test_a_probe_that_answers_is_recorded_with_its_argv_timing_and_status(
+    tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """The success path, which had no command-log assertion of any kind before task 11.2.
+
+    The only assertion on this log in the whole task-8.2 suite was that ``rev-parse`` appears
+    in it, so the probes could have recorded anything, or nothing. The duration is pinned
+    against a sleep this test chose, because a bound at zero cannot pin a quantity: a
+    :func:`time.monotonic` delta is non-negative by construction.
+    """
+    worker = tmp_path / "worker.py"
+    stub = probe_stub(tmp_path / "upython", answer='{"version": "6.5.1204"}', sleep=PROBE_SLEEP_S)
+
+    answered = probes(tmp_path, command_log, timeout_s=30).upython_ping(stub, worker)
+
+    assert answered == "6.5.1204"
+    assert len(command_log.calls) == 1, "one probe in, one line out"
+    argv, seconds, rc = command_log.calls[-1]
+    assert argv == [str(stub), str(worker), "ping"]
+    assert rc == 0
+    assert seconds >= PROBE_FLOOR_S, f"a probe that slept {PROBE_SLEEP_S}s logged {seconds}s"
+    assert seconds < PROBE_CEILING_S, f"{seconds}s is a clock reading, not a duration"
+
+
+def test_a_probe_that_never_returns_is_recorded_before_the_timeout_propagates(
+    tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """A hung probe is the one an operator most needs to see, and it was the one not logged.
+
+    Measured on the code before this fix: a stand-in interpreter sleeping 30 s at
+    ``timeout_s=2`` raised ``TimeoutExpired`` and left the log **empty**, so ``--verbose``
+    showed nothing at all for a probe that had just held the run for its whole limit -- while
+    ``UndCli`` recorded the same situation, at the same moment, one module along.
+
+    The exception still propagates unchanged: a hung interpreter is a fault to report, not a
+    mode that answered "no". Only the log entry is new.
+    """
+    worker = tmp_path / "worker.py"
+    stub = probe_stub(tmp_path / "upython", answer='{"version": "x"}', sleep=30)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        probes(tmp_path, command_log, timeout_s=1).upython_ping(stub, worker)
+
+    assert len(command_log.calls) == 1, "the attempt is recorded once, though it was killed"
+    argv, seconds, rc = command_log.calls[-1]
+    assert argv == [str(stub), str(worker), "ping"]
+    assert rc == TIMEOUT_KILLED_STATUS
+    assert seconds >= PROBE_KILLED_FLOOR_S, f"a probe killed at a 1s limit logged {seconds}s"
+    assert seconds < PROBE_CEILING_S, f"{seconds}s is a clock reading, not a duration"
+
+
+def test_a_probe_whose_interpreter_cannot_start_is_recorded_before_the_error_propagates(
+    tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """The other half of the same gap: a missing interpreter also left the log empty.
+
+    Measured on the code before this fix: ``upython_ping`` on a path that does not exist
+    raised ``FileNotFoundError`` with **no** log row, while ``UndCli.version()`` on the same
+    missing executable recorded ``(argv, 127)``. The ``OSError`` still propagates for
+    ``locator._ask`` to turn into a reason; what changes is that the attempt is now visible.
+    """
+    worker = tmp_path / "worker.py"
+    missing = tmp_path / "no-such-upython"
+
+    with pytest.raises(OSError):
+        probes(tmp_path, command_log, timeout_s=30).upython_ping(missing, worker)
+
+    assert len(command_log.calls) == 1, "the attempt is recorded once, though it never ran"
+    argv, seconds, rc = command_log.calls[-1]
+    assert argv == [str(missing), str(worker), "ping"]
+    assert rc == SHELL_COMMAND_NOT_FOUND_STATUS
+    assert seconds > 0.0, "an interpreter that never started still took time to fail"
+    assert seconds < PROBE_CEILING_S, f"{seconds}s is a clock reading, not a duration"

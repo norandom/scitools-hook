@@ -59,6 +59,7 @@ from scitools_hook.errors import (
     LicenseError,
     UnderstandNotFoundError,
 )
+from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand import worker
@@ -83,14 +84,16 @@ UPYTHON_ONLY_OPS: Final[frozenset[str]] = frozenset({"graphs"})
 DEFAULT_TIMEOUT_S: Final = 600
 """Ceiling for one operation: a full snapshot of a large repository still fits."""
 
-TIMEOUT_RC: Final = 124
-"""Status recorded for an operation that had to be killed; GNU ``timeout``'s convention."""
-
-MISSING_RC: Final = 127
-"""Status recorded for an interpreter that never started; the shell's "not found" status."""
-
 WORKER_RC: Final = 1
-"""Status recorded for a worker that raised: what its own script entry point would exit with."""
+"""Status recorded for a worker that raised: what its own script entry point would exit with.
+
+The other two statuses this module records -- :data:`~scitools_hook.exit_codes.TIMEOUT_RC` for
+an operation that had to be killed and :data:`~scitools_hook.exit_codes.MISSING_RC` for an
+interpreter that never started -- are imported from the package leaf, because every adapter
+that writes into the ``--verbose`` log has to use the same two numbers. This one stays here:
+it is specific to *this* module's in-process mode, where the worker raising in the host
+process has no status of its own and 1 is what its script entry point would have exited with.
+"""
 
 IN_PROCESS: Final = "in-process"
 """First word of a logged in-process call, so a trace cannot be read as a subprocess."""

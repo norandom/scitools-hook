@@ -54,6 +54,7 @@ from scitools_hook.config.loader import attach_source, load_settings
 from scitools_hook.config.models import Provenance, Settings
 from scitools_hook.config.validate import AvailabilityReport, validate_settings
 from scitools_hook.errors import ConfigError, NotAGitRepositoryError
+from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.cache import CachePaths
 from scitools_hook.models.progress import CommandLog, NullCommandLog, NullProgress, Progress
@@ -322,17 +323,41 @@ class RealProbes:
         object, an error envelope (``ApiUnavailable`` is exactly this case), or an answer with
         no version in it. ``OSError`` propagates for ``locator._ask`` to turn into a reason,
         and a timeout propagates all the way, because a hung interpreter is a fault.
+
+        **Propagating is not a reason to leave the attempt out of the log**, and this recorded
+        only the call that returned until task 11.2. Measured on the pristine code: a stand-in
+        ``upython`` sleeping 30 s at ``timeout_s=2`` raised ``TimeoutExpired`` and left the log
+        empty, and a missing executable raised ``FileNotFoundError`` and left the log empty,
+        while :meth:`~scitools_hook.understand.und_cli.UndCli.version` on that same missing
+        executable recorded ``(argv, 127)``. So the two probes worth seeing under ``--verbose``
+        -- the one that hung for a whole minute and the interpreter that could not start --
+        were the two that were invisible, and their timing was lost with them.
+
+        ``subprocess.TimeoutExpired`` is not an ``OSError``, so the two are caught separately;
+        both re-raise the exception they recorded, because *what* happens to the caller is
+        unchanged and only the log entry is new. The statuses are
+        :data:`~scitools_hook.exit_codes.TIMEOUT_RC` and
+        :data:`~scitools_hook.exit_codes.MISSING_RC` from the package leaf -- the same two
+        numbers ``git``, ``und`` and the API worker record, so the ``--verbose`` stream reads
+        with one convention rather than one per adapter.
         """
         started = time.monotonic()
-        done = subprocess.run(
-            argv,
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_s,
-            check=False,
-            env=self._child_env(extra),
-        )
+        try:
+            done = subprocess.run(
+                argv,
+                input="",
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_s,
+                check=False,
+                env=self._child_env(extra),
+            )
+        except subprocess.TimeoutExpired:
+            self.log.record(argv, time.monotonic() - started, TIMEOUT_RC)
+            raise
+        except OSError:
+            self.log.record(argv, time.monotonic() - started, MISSING_RC)
+            raise
         self.log.record(argv, time.monotonic() - started, done.returncode)
         if done.returncode != 0:
             return None

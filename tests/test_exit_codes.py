@@ -2,6 +2,11 @@
 
 Every failure kind must map to exactly one distinct, documented exit code, and
 ``ExitCode`` must be the single source of truth for the integers.
+
+The module also holds the two statuses the gate *records* for a child process that had to be
+killed or could never be started (requirement 12.8), so the second half of this file asserts
+the property that put them there: one convention across every adapter that writes the
+``--verbose`` log, and no overlap with the gate's own exit codes.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from scitools_hook.errors import (
     ReportUndeliverableError,
     UnderstandNotFoundError,
 )
-from scitools_hook.exit_codes import ExitCode, describe
+from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC, ExitCode, describe
 
 DOCUMENTED_CODES: dict[str, int] = {
     "OK": 0,
@@ -95,6 +100,71 @@ def test_describe_accepts_a_plain_integer() -> None:
 def test_describe_rejects_an_unknown_code() -> None:
     with pytest.raises(ValueError):
         describe(99)
+
+
+# --- the two statuses recorded for child processes (req 12.8) ----------------
+
+TIMEOUT_KILLED_STATUS = 124
+"""GNU ``timeout(1)``'s status for a command it had to kill.
+
+The literal, written here rather than imported from the module under test: comparing a
+constant against itself asserts nothing about its value, and that exact tautology was measured
+surviving the **entire 3067-test suite** at four sites (``git/repo``, ``understand/und_cli``,
+``understand/api_runner`` and their tests) before task 11.2. A build recording 0 for a command
+that had to be killed would have reported a hang as a success with every gate green.
+"""
+
+SHELL_COMMAND_NOT_FOUND_STATUS = 127
+"""The shell's status for a command that could never be started, held to the same rule."""
+
+
+def test_the_recorded_child_statuses_are_the_conventional_numbers() -> None:
+    """The two numbers the ``--verbose`` log uses for a killed and an unstartable child."""
+    assert TIMEOUT_RC == TIMEOUT_KILLED_STATUS
+    assert MISSING_RC == SHELL_COMMAND_NOT_FOUND_STATUS
+
+
+def test_a_recorded_child_status_is_never_one_of_the_gates_own_exit_codes() -> None:
+    """The two kinds of number in this module must not be confusable.
+
+    :class:`ExitCode` is what *this* process exits with; :data:`TIMEOUT_RC` and
+    :data:`MISSING_RC` are what it *writes down* about a child. Keeping them in one module is
+    a decision about placement, not about meaning, so the sets are asserted disjoint: a member
+    added at 124 or 127 would make ``describe(MISSING_RC)`` answer, and a status meant for the
+    log would start reading like a documented exit code of the gate.
+    """
+    assert {TIMEOUT_RC, MISSING_RC}.isdisjoint({member.value for member in ExitCode})
+    for status in (TIMEOUT_RC, MISSING_RC):
+        with pytest.raises(ValueError):
+            describe(status)
+
+
+def test_every_adapter_records_the_same_two_statuses() -> None:
+    """One convention across the tool, asserted across all four adapters that write the log.
+
+    The ``--verbose`` stream mixes ``git``, ``und``, the API worker and the installation
+    probes, so an operator who has learnt that 124 means "killed" and 127 means "never
+    started" must not have to learn a different pair per adapter. Three of the four now import
+    the pair from this module, which makes divergence impossible rather than merely absent.
+
+    ``git.repo`` is the exception and it is the reason this test exists: task 11.2's boundary
+    excluded that module (task 11.1 had just landed in it), so its two literals are still a
+    separate definition. **Redirecting them to this module is the remaining half of the
+    decision**, and until that happens this assertion is what stops the copy from drifting.
+    """
+    from scitools_hook.git import repo as git_repo
+    from scitools_hook.runner import context as run_context
+    from scitools_hook.understand import api_runner, und_cli
+
+    recorded = {
+        "git.repo": (git_repo.TIMEOUT_RC, git_repo.MISSING_RC),
+        "understand.und_cli": (und_cli.TIMEOUT_RC, und_cli.MISSING_RC),
+        "understand.api_runner": (api_runner.TIMEOUT_RC, api_runner.MISSING_RC),
+        "runner.context": (run_context.TIMEOUT_RC, run_context.MISSING_RC),
+    }
+    assert set(recorded.values()) == {(TIMEOUT_KILLED_STATUS, SHELL_COMMAND_NOT_FOUND_STATUS)}, (
+        f"the adapters disagree about what to record: {recorded}"
+    )
 
 
 # --- error hierarchy -> exit code --------------------------------------------

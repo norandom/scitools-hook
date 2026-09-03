@@ -30,6 +30,7 @@ import json
 import os
 import stat
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,6 +64,71 @@ from scitools_hook.understand.api_runner import (
     Operation,
 )
 from scitools_hook.understand.locator import WORKER_PATH
+
+# --- the two recorded statuses, and the timing they are recorded with -------------
+
+TIMEOUT_KILLED_STATUS: Final = 124
+"""GNU ``timeout(1)``'s status for an operation that had to be killed (requirement 12.8).
+
+Written here as a literal and **deliberately not** taken from
+:data:`~scitools_hook.exit_codes.TIMEOUT_RC`: a test that reads a constant back out of the
+code under test asserts nothing about its value. Measured under exactly the spelling this
+file used before task 11.2 (``command_log.calls[0][2] == TIMEOUT_RC``), ``124 -> 0`` survived
+the **entire 3067-test suite**, so an Understand operation that hung until it was killed could
+have been logged as a success with every gate green.
+"""
+
+SHELL_COMMAND_NOT_FOUND_STATUS: Final = 127
+"""The shell's status for an interpreter that could not be started (requirement 12.8).
+
+The counterpart of :data:`TIMEOUT_KILLED_STATUS`, held to the same rule for the same measured
+reason: ``127 -> 0`` also survived all 3067 tests while this file compared the log against
+``MISSING_RC`` imported from the module under test.
+"""
+
+PYTHON_TRACEBACK_STATUS: Final = 1
+"""CPython's exit status when an unhandled exception reaches the top of a script.
+
+Measured: ``python3 -c "raise RuntimeError('boom')"`` exits 1. That is what makes 1 the right
+number to record for a worker that raised *in this process*, where there is no child status to
+report -- the in-process mode has to log what the subprocess mode would have seen.
+
+The literal, for the reason the two statuses above give: this file compared the log against
+``WORKER_RC`` imported from the module under test, and ``1 -> 0`` was measured surviving all
+48 tests in this file under that spelling. Recording 0 would report a worker that blew up
+mid-operation as a clean run, and the two modes would stop agreeing about what a broken worker
+is -- which is the property the test making this assertion is named for.
+"""
+
+SLOW_ANSWER_SLEEP_S: Final = 0.3
+"""How long a stand-in sleeps when a test needs a duration it knows independently.
+
+Used by both modes: the stubbed ``upython`` sleeps it before answering, and
+:class:`FakeDispatch` sleeps it inside the host process. Measured here: 0.31 s recorded for a
+0.30 s sleep, against 0.02 s for a stub that does not sleep and 0.0004 s for an interpreter
+that never started. A duration has to be pinned against a quantity known *without* asking the
+module under test, because ``seconds >= 0.0`` -- what this file asserted before task 11.2 --
+cannot fail: a :func:`time.monotonic` delta is non-negative by construction.
+"""
+
+SLOW_ANSWER_FLOOR_S: Final = 0.25
+"""The floor asserted against :data:`SLOW_ANSWER_SLEEP_S`, leaving room for a coarse clock."""
+
+KILLED_FLOOR_S: Final = 0.5
+"""The floor for an operation killed at a one-second limit: it cannot have taken less.
+
+Half the limit rather than the limit itself, so a slow machine's rounding cannot fail a
+correct implementation; still far above the ``0.0`` a constant would record.
+"""
+
+CLOCK_READING_CEILING_S: Final = 30.0
+"""The ceiling every recorded duration is held under, which fails a clock *reading*.
+
+:func:`time.monotonic` is the machine's uptime on Linux (hundreds of thousands of seconds
+when this was measured), so recording it in place of the delta clears every floor and fails
+this. No stubbed operation here is allowed anywhere near the runner's 30 s test timeout.
+"""
+
 
 # --- the stubbed upython ---------------------------------------------------------
 
@@ -213,7 +279,54 @@ def test_every_subprocess_run_is_recorded_with_its_argv_and_status(
     argv, seconds, rc = command_log.calls[0]
     assert argv == [str(stub_upython.path), str(WORKER_PATH), "ping"]
     assert rc == 0
-    assert seconds >= 0.0
+    # `> 0.0`, not `>= 0.0`: a `time.monotonic()` delta is non-negative by construction, so
+    # the comparison this replaces could not fail and `record(argv, 0.0, rc)` survived all
+    # 3067 tests. The quantity itself is pinned by the sleeping stub in the next test.
+    assert seconds > 0.0
+    assert seconds < CLOCK_READING_CEILING_S
+
+
+def test_the_recorded_duration_is_the_length_of_the_operation_it_timed(
+    stub_upython: StubUpython, command_log: FakeCommandLog
+) -> None:
+    """Requirement 12.8: the seconds in the log are *this operation's*, not a plausible number.
+
+    The stub sleeps :data:`SLOW_ANSWER_SLEEP_S` before answering, which is a duration this
+    test knows independently of the runner, and the recorded number is held between a floor
+    and a ceiling that fail different mistakes: the floor fails any constant below 0.25
+    (``0.0`` included), the ceiling fails a clock *reading* recorded in place of a delta.
+    """
+    stub_upython.script(
+        "ping", stdout=json.dumps({"version": "6.5.1204"}), sleep=SLOW_ANSWER_SLEEP_S
+    )
+
+    a_runner(stub_upython, command_log).run("ping", {})
+
+    assert len(command_log.calls) == 1, "one operation in, one line out"
+    _, seconds, rc = command_log.calls[-1]
+    assert rc == 0
+    assert seconds >= SLOW_ANSWER_FLOOR_S, (
+        f"a call that slept {SLOW_ANSWER_SLEEP_S}s logged {seconds}s"
+    )
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
+
+
+def test_the_two_recorded_statuses_are_the_conventional_numbers() -> None:
+    """The statuses this runner logs for an operation that was killed or never started.
+
+    Pinned as literals here because the names are imported from
+    :mod:`scitools_hook.exit_codes` rather than defined in the runner (task 11.2): ``git``,
+    the ``und`` wrapper and the installation probes write the same two numbers into the same
+    ``--verbose`` stream, and an operator who has learnt that 124 means "killed" and 127 means
+    "never started" must not have to learn a different pair per adapter. The behavioural tests
+    assert the same two literals where they are recorded; this one is about the values the
+    module exports.
+    """
+    assert TIMEOUT_RC == TIMEOUT_KILLED_STATUS
+    assert MISSING_RC == SHELL_COMMAND_NOT_FOUND_STATUS
+    # The third status is this module's own -- the in-process mode has no child to report --
+    # but it is pinned by the same rule, and by the same measurement: `1 -> 0` survived.
+    assert WORKER_RC == PYTHON_TRACEBACK_STATUS
 
 
 def test_a_worker_that_exits_non_zero_is_a_broken_worker_not_an_answer(
@@ -264,7 +377,14 @@ def test_a_worker_that_never_returns_is_killed_and_reported(
         a_runner(stub_upython, command_log, timeout_s=1).run("snapshot", {})
 
     assert "timed out" in str(failure.value)
-    assert command_log.calls[0][2] == TIMEOUT_RC
+    # The literal 124, not `TIMEOUT_RC` read back out of the module under test: that
+    # comparison is a tautology and `124 -> 0` survived all 3067 tests under it. The duration
+    # is asserted against the one-second limit this test set, because `record(argv, 0.0,
+    # TIMEOUT_RC)` survived too -- `--verbose` could have claimed the hang took no time.
+    _, seconds, rc = command_log.calls[0]
+    assert rc == TIMEOUT_KILLED_STATUS
+    assert seconds >= KILLED_FLOOR_S, f"an operation killed at a 1s limit logged {seconds}s"
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
 
 
 def test_an_interpreter_that_cannot_be_run_is_recorded_and_reported(
@@ -275,7 +395,13 @@ def test_an_interpreter_that_cannot_be_run_is_recorded_and_reported(
     with pytest.raises(AnalysisFailedError) as failure:
         a_runner(missing, command_log).run("ping", {})
 
-    assert command_log.calls[0][2] == MISSING_RC
+    # The literal 127, for the reason given on the timeout above. The duration is asserted
+    # because failing to start still takes measurable time (measured: 0.0004 s) and
+    # `--verbose` prints that line like any other.
+    _, seconds, rc = command_log.calls[0]
+    assert rc == SHELL_COMMAND_NOT_FOUND_STATUS
+    assert seconds > 0.0, "an interpreter that never started still took time to fail"
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
     assert failure.value.command[0] == str(missing.path)
 
 
@@ -293,15 +419,23 @@ def test_an_installation_without_upython_cannot_run_the_upython_mode(
 
 @dataclass
 class FakeDispatch:
-    """Stands in for ``worker.dispatch``: records the call and answers, or raises."""
+    """Stands in for ``worker.dispatch``: records the call and answers, or raises.
+
+    ``sleep_s`` is what lets the in-process mode's recorded duration be pinned against a
+    quantity the test knows on its own. The subprocess mode gets that from its stub's
+    ``sleep``; without it here the in-process branch could only ever be compared against
+    zero, which is the assertion task 11.2 exists to remove.
+    """
 
     answer: dict[str, object]
     raises: Exception | None = None
+    sleep_s: float = 0.0
     calls: list[tuple[str, dict[str, object]]] = field(default_factory=list)
 
     def __call__(self, op: str, request: Mapping[str, object]) -> dict[str, object]:
         self.calls.append((op, dict(request)))
         os.environ["LC_NUMERIC"] = "C"  # what `worker._import_api` does on every call
+        time.sleep(self.sleep_s)
         if self.raises is not None:
             raise self.raises
         return self.answer
@@ -332,9 +466,33 @@ def test_the_in_process_mode_records_the_interpreter_it_ran_in(
 
     a_runner(stub_upython, command_log, mode="inprocess").run("snapshot", {})
 
-    argv, _, rc = command_log.calls[0]
+    argv, seconds, rc = command_log.calls[0]
     assert argv == [IN_PROCESS, sys.executable, str(WORKER_PATH), "snapshot"]
     assert rc == 0
+    assert seconds > 0.0
+    assert seconds < CLOCK_READING_CEILING_S
+
+
+def test_the_in_process_mode_records_the_length_of_the_call_it_timed(
+    stub_upython: StubUpython, command_log: FakeCommandLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-process branch needs its own pinned duration, not only the subprocess one.
+
+    ``--verbose`` prints an in-process line exactly like a subprocess line, and the two are
+    separate ``record`` calls: ``record(argv, 0.0, 0)`` in this branch survived all 3067 tests
+    while the subprocess branch was the only one with a duration assertion on it.
+    """
+    install_dispatch(monkeypatch, FakeDispatch({}, sleep_s=SLOW_ANSWER_SLEEP_S))
+
+    a_runner(stub_upython, command_log, mode="inprocess").run("snapshot", {})
+
+    assert len(command_log.calls) == 1, "one operation in, one line out"
+    _, seconds, rc = command_log.calls[-1]
+    assert rc == 0
+    assert seconds >= SLOW_ANSWER_FLOOR_S, (
+        f"a call that slept {SLOW_ANSWER_SLEEP_S}s logged {seconds}s"
+    )
+    assert seconds < CLOCK_READING_CEILING_S, f"{seconds}s is a clock reading, not a duration"
 
 
 def test_the_in_process_mode_puts_the_api_directory_on_the_path_exactly_once(
@@ -390,7 +548,12 @@ def test_a_worker_that_raises_in_process_is_reported_like_a_non_zero_exit(
         a_runner(stub_upython, command_log, mode="inprocess").run("snapshot", {})
 
     assert "the API blew up" in failure.value.stderr
-    assert command_log.calls[0][2] == WORKER_RC
+    _, seconds, rc = command_log.calls[0]
+    assert rc == PYTHON_TRACEBACK_STATUS
+    # A worker that raised still ran for a measurable time, and the line is printed like any
+    # other: `record(argv, 0.0, WORKER_RC)` survived all 3067 tests before this assertion.
+    assert seconds > 0.0
+    assert seconds < CLOCK_READING_CEILING_S
 
 
 def test_a_worker_that_raises_in_process_still_restores_the_locale(

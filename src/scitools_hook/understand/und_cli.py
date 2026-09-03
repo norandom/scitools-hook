@@ -32,7 +32,11 @@ that never returns becomes an ``AnalysisFailedError`` too — note that
 ``subprocess.TimeoutExpired`` is *not* an ``OSError``, so the two have to be caught
 separately. Every attempt, including the ones that time out or never start, is recorded on
 the injected :class:`~scitools_hook.models.progress.CommandLog` with its timing and status
-(requirement 12.8).
+(requirement 12.8). The two statuses it records for those two failures --
+:data:`~scitools_hook.exit_codes.TIMEOUT_RC` and
+:data:`~scitools_hook.exit_codes.MISSING_RC` -- come from the package leaf rather than being
+defined here, because ``git``, the API worker and the installation probes record the same two
+numbers into the same ``--verbose`` stream and one convention cannot be spelled four times.
 """
 
 from __future__ import annotations
@@ -49,18 +53,13 @@ from pathlib import Path
 from typing import Final
 
 from scitools_hook.errors import AnalysisFailedError, LicenseError
+from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.snapshot import ParseError
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
 
 DEFAULT_TIMEOUT_S: Final = 900
 """Ceiling for one ``und`` call: a full analysis of a large repository still fits."""
-
-TIMEOUT_RC: Final = 124
-"""Status recorded for a command that had to be killed; GNU ``timeout``'s convention."""
-
-MISSING_RC: Final = 127
-"""Status recorded for a command that never started; the shell's "not found" convention."""
 
 LICENSE_TEXT: Final = re.compile(
     r"licensing error|no und license found|no valid und license found|"
