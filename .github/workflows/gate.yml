@@ -1,0 +1,69 @@
+# The project's own gates. One job, one command -- the same command README.md documents and
+# `tests/test_quality_gates.py::test_the_ci_workflow_runs_the_gate_command` pins, so the three
+# cannot drift apart.
+#
+# Nothing here needs a SciTools Understand licence: the tests marked `contract` skip
+# themselves unless SCITOOLS_HOME points at a licensed install, and no other test starts
+# `und`. That is why this workflow can run on a hosted runner at all.
+name: gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: import direction, lint, types, coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # --locked, not --frozen: a lockfile that no longer matches pyproject.toml is itself a
+      # failure here. `typer>=0.27.2` is a measured floor (tasks.md 9.1 round 4), and a stale
+      # lock is how a floor stops being enforced.
+      - name: Sync the environment
+        run: uv sync --locked
+
+      - name: Run the gate
+        run: uv run pytest --cov=src/scitools_hook --cov-branch --cov-report=term-missing --cov-fail-under=85
+
+  # ---------------------------------------------------------------------------------
+  # HOOK FOR TASK 11.4 -- the interpreter matrix. Do not fold this into the job above.
+  #
+  # `pyproject.toml` declares `requires-python = ">=3.12"`, but `src/scitools_hook/paths.py`
+  # was built on `pathlib` behaviour that exists only on 3.14: on 3.12 and 3.13 `pathlib`
+  # filters through `_ignore_error`, so `Path.exists()` does NOT swallow every OSError, which
+  # is the module's founding premise. Two of its own tests fail there while every gate above
+  # passes -- which is precisely why 11.4 exists and why the matrix belongs in a job of its
+  # own rather than as a flag on the job above.
+  #
+  # 11.4's done-condition is that the suite runs on 3.12, 3.13 and the current pin, with the
+  # typer floor test (9.1's) and the pathlib guard both exercised there. The shape that
+  # catches it, measured, is:
+  #
+  #     uv run --python 3.12 --isolated --with pytest pytest tests/test_paths.py
+  #
+  # Sketch, left commented because enabling it today turns this workflow red on a defect
+  # 11.4 owns:
+  #
+  # floor:
+  #   name: declared interpreter floor
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       python-version: ["3.12", "3.13", "3.14"]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: astral-sh/setup-uv@v5
+  #     - run: uv run --python ${{ matrix.python-version }} --isolated --with pytest pytest -q
