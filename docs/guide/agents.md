@@ -5,10 +5,11 @@
 An agent that learns a limit from a rejected commit has already wasted the work. Give it the
 numbers before it writes the code, and a command it can run on its own output.
 
-Three things do that: `agent-rules`, which writes the effective limits into the file your
-agent already reads, and two skills — `scitools-gate` to drive the CLI on a change, and
-`scitools-improve` to work a grown-over repository back down. `install-skills` puts both into
-the repository, so none of it depends on having this project checked out.
+Two things do that: `agent-rules`, which writes the effective limits into the file your agent
+already reads, and three skills — `scitools-gate` to drive the CLI on a change,
+`scitools-improve` to work a grown-over repository back down, and `scitools-adapt` to change
+the rules themselves with evidence. `install-skills` puts all three into the repository, so
+none of it depends on having this project checked out.
 
 ## `agent-rules --write`
 
@@ -240,9 +241,11 @@ scitools-hook install-skills
 ```console
 installed: scitools-gate at /your/repo/.agents/skills/scitools-gate/SKILL.md
 installed: scitools-improve at /your/repo/.agents/skills/scitools-improve/SKILL.md
+installed: scitools-adapt at /your/repo/.agents/skills/scitools-adapt/SKILL.md
 
-Your agent can now run /scitools-gate to check a change and /scitools-improve to lower this
-project's complexity one commit at a time.
+Your agent can now run /scitools-gate to check a change, /scitools-improve to lower this
+project's complexity one commit at a time, and /scitools-adapt to change the rules with the
+measurement behind each decision.
 ```
 
 `.agents/skills` is the vendor-neutral location. For a host that reads somewhere else, name
@@ -256,10 +259,15 @@ Running it twice writes nothing the second time, so it is safe in a setup script
 `SKILL.md` you have edited is refused rather than overwritten; `--force` takes the shipped
 version back.
 
-| Skill | Question it answers |
-| --- | --- |
-| `scitools-gate` | *May this change land?* |
-| `scitools-improve` | *How does this repository get easier to change?* |
+| Skill | Question it answers | May edit the configuration |
+| --- | --- | --- |
+| `scitools-gate` | *May this change land?* | no |
+| `scitools-improve` | *How does this repository get easier to change?* | no |
+| `scitools-adapt` | *Are these rules right for this repository?* | yes, with evidence |
+
+That last column is the design. The first two skills refuse to touch the configuration,
+because an agent that can silence its own findings has no gate; `scitools-adapt` is where
+that decision is made deliberately, and it is a separate invocation on purpose.
 
 ### `scitools-gate`
 
@@ -342,6 +350,50 @@ is out of scope. Without permission to say so, an agent contorts the code until 
 moves — three badly-named helpers that satisfy the metric and leave the repository worse. The
 skill's rule is that a short, honest list of what was not fixed beats a contorted change, and
 its per-session output format has a `NOT FIXED` field to put it in.
+
+### `scitools-adapt`
+
+The other two skills, when they meet a limit they believe is wrong, are required to stop and
+say so. This is what happens next.
+
+Its question is never *how do I make this finding go away*. It is:
+
+> Is this finding wrong about **the code**, or wrong about **what this repository is**?
+
+Only the second is a configuration change. It works down a ladder and stops at the first rung
+that fits:
+
+| # | Rung | The change |
+| ---: | --- | --- |
+| 1 | The analyser could not read the file | Rewrite the construct, or `[[parse.acknowledged]]` **with a reason** |
+| 2 | It is not source | `[project] exclude`, proposed by `init --detect` with evidence |
+| 3 | Another tool owns the question | `severity = "warning"` — demote, keep visible |
+| 4 | The region is different in kind | `[scope.X]`, never `[ignore]` |
+| 5 | A project-scope rule a commit cannot act on | `severity = "warning"` and read it as a trend |
+| 6 | The limit is genuinely wrong | `recommend`, then change it — in its own commit |
+
+Three things it enforces that are easy to get wrong:
+
+**Measure before, measure after.** A configuration edit whose effect nobody counted is
+indistinguishable from turning off whatever was inconvenient. The skill carries the `jq`
+recipes for grouping findings by rule and for seeing *where* a rule clusters — because "almost
+all in `tests/`" means the rule's scope is wrong, not the rule.
+
+**A demotion that made the count go to zero did not demote anything.** It hid it, and that is
+the wrong rung. The output format has a `STILL VISIBLE` field for exactly this check.
+
+**Write the reason down, every time.** A file full of undocumented overrides is
+indistinguishable from one where somebody turned off whatever was inconvenient — so only keys
+that deviate from the defaults, each with its measurement in a comment. Deleting an override
+when re-measurement shows its reason has gone is as much a part of the skill as adding one.
+
+It also pins the traps this project has actually fallen into: `[ignore]` is a hole rather than
+a quieter scope; `max_new_dependencies_per_file = 0` is the *strictest* setting, not "off";
+`Metric = false` works inside a `[scope]` and is a configuration error anywhere else; and
+re-running `baseline` replaces the file with today's values, worse ones included.
+
+The human-readable version of the same ladder, worked end to end on a 770-file repository, is
+[Rescuing a problematic project](rescue.md).
 
 ## The loop
 

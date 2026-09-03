@@ -20,11 +20,16 @@ from typing import Final
 FILENAME: Final = "SKILL.md"
 """The name every skill's document has, fixed by the skill format rather than by us."""
 
-NAMES: Final = ("scitools-gate", "scitools-improve")
-"""The shipped skills, in the order an operator meets them: gate a commit, then improve.
+NAMES: Final = ("scitools-gate", "scitools-improve", "scitools-adapt")
+"""The shipped skills, in the order an operator meets them.
+
+Gate a commit, then work the repository down, then -- last, and deliberately last -- change
+the rules. The ordering is the point: ``scitools-gate`` and ``scitools-improve`` both refuse
+to touch the configuration, because an agent that can silence its own findings has no gate,
+and ``scitools-adapt`` is where that decision is made with evidence instead.
 
 Enumerated rather than discovered by listing the directory. A wheel built without one of
-them would otherwise install "the skills" successfully and silently ship one, which is the
+them would otherwise install "the skills" successfully and silently ship two, which is the
 shape of silent success this project keeps refusing elsewhere.
 """
 

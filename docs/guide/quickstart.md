@@ -70,10 +70,12 @@ scitools-hook install-skills                  # the skills, at .agents/skills
 wrote the rules block into AGENTS.md
 installed: scitools-gate at /tmp/pricing/.agents/skills/scitools-gate/SKILL.md
 installed: scitools-improve at /tmp/pricing/.agents/skills/scitools-improve/SKILL.md
+installed: scitools-adapt at /tmp/pricing/.agents/skills/scitools-adapt/SKILL.md
 ```
 
 `scitools-gate` drives the CLI on a change; `scitools-improve` works an already-complex
-repository back down, one commit at a time. Use `--dir .claude/skills` for Claude Code, or any
+repository back down, one commit at a time; `scitools-adapt` changes the rules themselves,
+with the measurement behind each decision. Use `--dir .claude/skills` for Claude Code, or any
 other path your assistant reads. Both commands are idempotent, so they belong in whatever
 script sets a repository up. See [Working with agents](agents.md).
 

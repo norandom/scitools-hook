@@ -335,6 +335,19 @@ Do the same, and a year from now somebody can tell which of your overrides are s
 6. scitools-hook baseline && install-hook        # the ratchet carries the rest
 ```
 
+## The same ladder, as a skill
+
+Everything on this page is a decision procedure, which is what a skill is for:
+
+```bash
+scitools-hook install-skills
+```
+
+`/scitools-adapt` walks the six rungs below in order and stops at the first that fits, and it
+will not make a change it has not counted — measure by rule, see where the rule clusters,
+propose the TOML with the measurement in a comment, re-measure, and confirm that a demoted
+finding is **still reported**. Use it when the configuration is the thing that needs work.
+
 ## After the rescue: working the number down
 
 Everything above is about stopping the bleeding — the repository is gated, existing debt is

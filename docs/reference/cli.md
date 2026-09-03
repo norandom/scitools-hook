@@ -265,12 +265,13 @@ Options:
   --force    Replace a SKILL.md that differs from the shipped one.
 ```
 
-Writes two documents an agent host can load:
+Writes three documents an agent host can load:
 
 | Skill | Answers |
 | --- | --- |
 | `scitools-gate` | *May this change land?* Preconditions, `check`, `explain`, the exit-code contract. |
 | `scitools-improve` | *How does this repository get easier to change?* The baseline loop, one entity per commit. |
+| `scitools-adapt` | *Are these rules right for this repository?* The six-rung ladder, with a measurement per decision. |
 
 The default location is `.agents/skills`, which is vendor-neutral, and is resolved against
 the **repository root** so the command works from any subdirectory. `--dir` is resolved

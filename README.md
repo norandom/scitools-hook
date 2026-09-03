@@ -51,10 +51,12 @@ scitools-hook agent-rules --write AGENTS.md   # the limits, where your agent alr
 scitools-hook install-skills                  # the skills, at .agents/skills
 ```
 
-The last one writes `scitools-gate` (drive the CLI on a change) and `scitools-improve` (work
-a grown-over repository back down, one commit at a time) as `SKILL.md` documents. They ship
-inside the package, so nothing here needs this project checked out. Use
-`--dir .claude/skills` for Claude Code. Every command above is idempotent.
+The last one writes three `SKILL.md` documents: `scitools-gate` (drive the CLI on a change),
+`scitools-improve` (work a grown-over repository back down, one commit at a time) and
+`scitools-adapt` (change the rules themselves, with the measurement behind each decision).
+The first two deliberately refuse to touch the configuration — an agent that can silence its
+own findings has no gate. They ship inside the package, so nothing here needs this project
+checked out. Use `--dir .claude/skills` for Claude Code. Every command above is idempotent.
 
 > **Note:** the PyPI package named `understand` is unrelated to SciTools Understand.
 > Do not `pip install understand`; this tool uses the API shipped inside your

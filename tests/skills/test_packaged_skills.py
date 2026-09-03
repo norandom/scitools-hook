@@ -24,7 +24,11 @@ INSTALLED_COPIES = (".agents/skills", ".claude/skills")
 def test_both_skills_are_readable_from_the_installed_package() -> None:
     """The documents are package data, not files that happen to sit beside the source."""
     shipped = skills.shipped()
-    assert [skill.name for skill in shipped] == ["scitools-gate", "scitools-improve"]
+    assert [skill.name for skill in shipped] == [
+        "scitools-gate",
+        "scitools-improve",
+        "scitools-adapt",
+    ]
     for skill in shipped:
         assert skill.text.startswith("---\n"), f"{skill.name} has no front matter"
         assert f"name: {skill.name}\n" in skill.text
