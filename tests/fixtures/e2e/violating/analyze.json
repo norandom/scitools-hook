@@ -1,0 +1,11 @@
+{
+  "parse_errors": [
+    {
+      "path": "pkg/unparsable.py",
+      "line": 12,
+      "message": "unexpected indent"
+    }
+  ],
+  "warnings": 1,
+  "seconds": 0.0
+}

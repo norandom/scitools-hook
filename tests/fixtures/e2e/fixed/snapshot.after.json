@@ -1,0 +1,61 @@
+{
+  "side": "after",
+  "languages": [
+    "Python"
+  ],
+  "entities": [
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "pkg/deep.py",
+          "longname": "pkg.deep.walk",
+          "parameters": "rows"
+        },
+        "kind": "Function",
+        "name": "walk",
+        "line": 1
+      },
+      "language": "Python",
+      "metrics": {
+        "MaxNesting": 1,
+        "CyclomaticStrict": 2
+      },
+      "archs": [],
+      "is_new": false
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "pkg/other.py",
+          "longname": "pkg.other.scan",
+          "parameters": "items"
+        },
+        "kind": "Function",
+        "name": "scan",
+        "line": 1
+      },
+      "language": "Python",
+      "metrics": {
+        "MaxNesting": 1,
+        "CyclomaticStrict": 1
+      },
+      "archs": [],
+      "is_new": false
+    }
+  ],
+  "file_edges": [
+    {
+      "src": "pkg/deep.py",
+      "dst": "pkg/other.py",
+      "refs": 1
+    }
+  ],
+  "class_edges": [],
+  "arch_nodes": [],
+  "arch_edges": [],
+  "populations": {},
+  "unavailable": {},
+  "parse_errors": []
+}
