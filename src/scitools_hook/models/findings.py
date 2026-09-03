@@ -43,7 +43,15 @@ LimitSource = Literal["config", "baseline", "rule"]
 """Where the limit in a finding came from; ``rule`` covers structural rules with no number."""
 
 StructureRuleName = Literal[
-    "file_cycle", "arch_cycle", "layer", "fan_in", "fan_out", "new_dependencies", "coupling"
+    "file_cycle",
+    "arch_cycle",
+    "call_cycle",
+    "layer",
+    "fan_in",
+    "fan_out",
+    "reachable_complexity",
+    "new_dependencies",
+    "coupling",
 ]
 STRUCTURE_RULES: Final[tuple[StructureRuleName, ...]] = get_args(StructureRuleName)
 """Every structural rule name, in the order they are documented in the design."""

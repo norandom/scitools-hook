@@ -19,6 +19,15 @@ Three decisions are worth stating:
   **blocks forever** with no report and no exit code, and a dangling symlink is followed to
   wherever it points -- which can be outside the repository, against requirement 2.2. The kind
   is therefore settled by :func:`~scitools_hook.paths.classify_file` before anything is opened.
+* **Detection proposes; it never applies.** The settings are read *before* detection runs,
+  so ``[project] include``/``exclude`` come back as the ``not-analysed`` regions: "what is
+  this run not looking at?" has no other answer, and it is the half of the feature that keeps
+  an exclusion honest. ``init --detect`` and ``config --detect`` read
+  what the repository declares about its own directories (``config.detect``) and write it out
+  *with the evidence beside each line*. ``init --detect --print`` sends the same document to
+  standard output and touches no file, which is how a proposal is read before it is taken.
+  ``config --why PATH`` answers the other half -- why is this path treated the way it is --
+  from the same data, so the report and the generated file can never disagree.
 * **The source is printed for every leaf, and the leaves are the loader's own** (req 3.10).
   ``Provenance`` holds one entry per merged leaf, so the report iterates *that* and looks each
   key up in the effective settings. The alternative -- walking the settings and asking for a
@@ -36,20 +45,24 @@ from typing import Annotated, Final
 import typer
 
 from scitools_hook.cli import common
-from scitools_hook.config.loader import _threshold_tables, load_settings, repo_config_path
-from scitools_hook.config.models import Provenance, Settings
-from scitools_hook.config.template import write_template
-from scitools_hook.errors import ConfigError
+from scitools_hook.config.detect import Detection, detect
+from scitools_hook.config.loader import load_settings, repo_config_path, threshold_tables
+from scitools_hook.config.models import Provenance, ScopeOverride, Settings
+from scitools_hook.config.template import Proposal, propose, render_template, write_template
+from scitools_hook.errors import ConfigError, NotAGitRepositoryError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.paths import classify_file
 from scitools_hook.runner.context import find_repository
 
-# `_threshold_tables` regroups the flattened `ThresholdSpec` list back into the
+# `threshold_tables` regroups the flattened `ThresholdSpec` list back into the
 # `{scope: {metric: {...}}}` shape the loader recorded provenance against. Importing the
 # loader's own function rather than writing a second one is deliberate: a copy that drifted
 # would print keys no provenance entry matches and quietly report every threshold as unset.
-# (Precedent: `understand/database.py` imports `codecheck._unusable_name` for the same
-# reason.) It wants a public name; that is a change to `config/loader`, whose task is closed.
+# It was `_threshold_tables` and this import was the last entry in
+# `tests/test_import_direction.py`'s RECORDED_PRIVATE_IMPORTS; the other one --
+# `understand/codecheck._unusable_name`, which used to be cited here as a precedent -- was
+# given a public name in task 11.7, so the "precedent" was a problem that had been fixed
+# everywhere but here. It now has a public name too and the table is empty.
 
 INIT_HELP = "Write a configuration file for this repository."
 CONFIG_HELP = "Show the effective configuration and where each setting came from."
@@ -82,22 +95,52 @@ def init(
     force: Annotated[
         bool, typer.Option("--force", help="Overwrite an existing configuration file.")
     ] = False,
+    detect_scopes: Annotated[bool, typer.Option("--detect", help=DETECT_HELP)] = False,
+    to_stdout: Annotated[bool, typer.Option("--print", help=PRINT_HELP)] = False,
 ) -> None:
     """Write a configuration file for this repository (req 3.9)."""
     options = common.global_options(ctx)
     repo = GitRepo.discover(options.cwd, options.command_log())
+    proposal = _proposal(options, repo) if detect_scopes else None
+    if to_stdout:
+        common.emit_findings(render_template(proposal=proposal), None)
+        return
     target = repo_config_path(repo.root)
     taken = _reject_unusable(target)
-    write_template(target, force=force)
+    write_template(target, force=force, proposal=proposal)
     common.emit_findings(f"{REPLACED if taken else WROTE} {target}", None)
 
 
-def config(ctx: typer.Context) -> None:
+def _proposal(options: common.GlobalOptions, repo: GitRepo) -> Proposal:
+    """What a detection of ``repo`` suggests, built on the configuration already in force."""
+    settings, _ = effective_configuration(options, repo)
+    return propose(detect(repo.root, repo.tracked_files(), settings.project), settings)
+
+
+def config(
+    ctx: typer.Context,
+    detect_scopes: Annotated[bool, typer.Option("--detect", help=DETECT_HELP)] = False,
+    why: Annotated[str | None, typer.Option("--why", metavar="PATH", help=WHY_HELP)] = None,
+) -> None:
     """Show the effective configuration with the source of every setting (req 3.10, 12.5)."""
     options = common.global_options(ctx)
     repo = find_repository(options.cwd, options.command_log())
+    if detect_scopes or why is not None:
+        common.emit_findings("\n".join(_explain(options, repo, why)), None)
+        return
     settings, provenance = effective_configuration(options, repo)
     common.emit_findings("\n".join([CONFIG_HEADER, *render_settings(settings, provenance)]), None)
+
+
+def _explain(options: common.GlobalOptions, repo: GitRepo | None, why: str | None) -> list[str]:
+    """The detection report, or the explanation of one path; both need a working tree."""
+    if repo is None:
+        raise NotAGitRepositoryError(NEEDS_REPOSITORY, hint="run it inside a git repository")
+    settings, _ = effective_configuration(options, repo)
+    found = detect(repo.root, repo.tracked_files(), settings.project)
+    if why is None:
+        return [DETECT_LEGEND, *render_detection(found, settings)]
+    return [WHY_LEGEND, *render_why(why, found, settings)]
 
 
 def effective_configuration(
@@ -131,7 +174,7 @@ def render_settings(settings: Settings, provenance: Provenance) -> list[str]:
 def _effective_layer(settings: Settings) -> Mapping[str, object]:
     """``settings`` in the nested shape the loader merged and recorded provenance against."""
     layer = dict(settings.model_dump(mode="json"))
-    layer["thresholds"] = _threshold_tables(settings.thresholds)
+    layer["thresholds"] = threshold_tables(settings.thresholds)
     return layer
 
 
@@ -166,6 +209,139 @@ def _walk(value: object, parts: tuple[str, ...]) -> object:
             if found is not _MISSING:
                 return found
     return _MISSING
+
+
+# --- detection: propose a configuration, and explain one path ----------------------
+
+DETECT_HELP = "Classify the repository from what it declares about itself, with the evidence."
+WHY_HELP = "Explain how one path is classified and which scopes apply to it."
+PRINT_HELP = "Write the configuration to standard output instead of to the file."
+
+NEEDS_REPOSITORY: Final = "detection reads the tracked file list, so it needs a working tree"
+
+DETECT_LEGEND: Final = (
+    "# what this repository declares about itself; nothing here is applied -- "
+    "`init --detect` writes it for review"
+)
+"""Printed above the classification, because a report that looks like a verdict invites one."""
+
+WHY_LEGEND: Final = "# classification, evidence, and the path scopes that change its thresholds"
+
+NO_REGION: Final = "no region covers this path; it is product code by default"
+NO_SCOPE: Final = "no path scope matches; the global thresholds apply unchanged"
+
+MULTI_SCOPE: Final = (
+    "two or more scopes match: they are applied in the order listed and the later one wins per rule"
+)
+
+
+def render_detection(found: Detection, settings: Settings) -> list[str]:
+    """One line per region: role, pattern, how much it covers, and what said so."""
+    lines = [
+        f"{region.role:<12} {region.pattern:<36} {_covered(region.covered):<18} "
+        f"{region.evidence.describe()}"
+        for region in found.regions
+    ]
+    return [
+        *(lines or ["(nothing declared)"]),
+        *_render_limitations(found),
+        *_render_stale(found, settings),
+    ]
+
+
+def _render_stale(found: Detection, settings: Settings) -> list[str]:
+    """Acknowledgements that cover nothing here -- the entry an operator forgot to delete.
+
+    An acknowledgement matching no file produces no output of its own anywhere else, so it
+    goes on excusing a file that was fixed or deleted for as long as nobody looks. This is
+    where somebody looks.
+    """
+    stale = settings.parse.unused(found.tracked)
+    if not stale:
+        return []
+    return [
+        "",
+        "# [parse] entries that cover no tracked file; delete them or correct the paths",
+        *(f"{'stale':<12} {', '.join(entry.paths):<36} {entry.reason}" for entry in stale),
+    ]
+
+
+def _render_limitations(found: Detection) -> list[str]:
+    """The files Understand cannot read to the end, which are not a region of their own."""
+    if not found.limitations:
+        return []
+    return [
+        "",
+        "# files the analyser could not read (see [parse] in the `init --detect` output)",
+        *(f"{item.signal:<12} {item.source:<36} {item.detail}" for item in found.limitations),
+    ]
+
+
+def _covered(count: int) -> str:
+    return "1 tracked file" if count == 1 else f"{count} tracked files"
+
+
+def render_why(path: str, found: Detection, settings: Settings) -> list[str]:
+    """Everything that decides how ``path`` is treated, in the order it decides it."""
+    covering = found.covering(path)
+    lines = [f"path: {path}", f"role: {found.role_of(path)}"]
+    lines.extend(
+        f"  {region.role:<12} {region.pattern:<28} {region.evidence.describe()}"
+        for region in covering
+    )
+    if not covering:
+        lines.append(f"  {NO_REGION}")
+    lines.extend(_render_scopes(path, settings))
+    lines.extend(_render_acknowledgement(path, settings))
+    return lines
+
+
+def _render_scopes(path: str, settings: Settings) -> list[str]:
+    """The path scopes that match, in the order they are applied, and what each one says."""
+    matching = [(name, scope) for name, scope in settings.scope.items() if scope.matched_by(path)]
+    if not matching:
+        return ["scopes: none", f"  {NO_SCOPE}"]
+    lines = [f"scopes: {', '.join(name for name, _ in matching)}"]
+    if len(matching) > 1:
+        lines.append(f"  {MULTI_SCOPE}")
+    for name, scope in matching:
+        lines.append(f"  [scope.{name}] matched by {scope.matched_by(path)!r}")
+        lines.extend(
+            f"    {threshold_scope}.{metric} = {_override_text(override)}"
+            for threshold_scope, table in scope.thresholds.items()
+            for metric, override in table.items()
+        )
+    return lines
+
+
+def _override_text(override: ScopeOverride) -> str:
+    """One override as an operator wrote it, so the report and the file read the same."""
+    if override.disabled:
+        return "false (the rule does not apply here)"
+    parts: list[str] = []
+    if override.limit is not None:
+        parts.extend(
+            f"{bound}={value:g}"
+            for bound, value in (("max", override.limit.max), ("min", override.limit.min))
+            if value is not None
+        )
+    if override.severity is not None:
+        parts.append(f"severity={override.severity}")
+    if override.ratchet is not None:
+        parts.append(f"ratchet={str(override.ratchet).lower()}")
+    return ", ".join(parts)
+
+
+def _render_acknowledgement(path: str, settings: Settings) -> list[str]:
+    """Whether an unreadable file here has been acknowledged, and on what grounds."""
+    entry = settings.parse.acknowledgement(path)
+    if entry is None:
+        return ["parse: not acknowledged; an unreadable file here blocks the commit"]
+    return [
+        f"parse: acknowledged -- {entry.reason}",
+        "  it is still reported, and it is measured only up to the construct that stopped "
+        "the parse",
+    ]
 
 
 def _reject_unusable(target: Path) -> bool:

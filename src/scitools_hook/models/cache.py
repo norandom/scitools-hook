@@ -140,8 +140,12 @@ class SyncState(DataModel):
           both lists is one coverage loss, and within a file the first error is the cause and
           the rest are the cascade it set off, which is the order the report prints.
 
-        Paths are made relative to ``tree`` here, and this is the only place that happens: see
-        :func:`_inside` for why there is no ``realpath`` fallback.
+        Paths are made relative to ``tree`` here, and this is the only place that happens; it is
+        also where an error **outside** the shadow is dropped, for the reason :func:`_inside`
+        gives. Both together are why every consumer downstream -- the run's reported parse
+        errors, the blocking ``analysis.parse_error`` finding, the snapshot's
+        ``unparsed_files`` -- sees one already-normalised, already-filtered list and none of
+        them repeats the judgement.
         """
         opened = None if reread is None else {_inside(path, tree) for path in reread}
         kept = (
@@ -149,7 +153,11 @@ class SyncState(DataModel):
             if opened is None
             else [error for error in self.parse_errors.get(side, []) if error.path not in opened]
         )
-        fresh = [error.model_copy(update={"path": _inside(error.path, tree)}) for error in found]
+        fresh = [
+            error.model_copy(update={"path": relative})
+            for error in found
+            if (relative := _inside(error.path, tree)) is not None
+        ]
         errors = _distinct([*kept, *fresh])
         self.parse_errors[side] = errors
         return errors
@@ -164,14 +172,30 @@ class SyncState(DataModel):
         self.parse_errors.clear()
 
 
-def _inside(path: Path, tree: Path) -> Path:
-    """``path`` named relative to the shadow ``tree``, or unchanged when it lies outside it.
+def _inside(path: Path, tree: Path) -> Path | None:
+    """``path`` named relative to the shadow ``tree``, or ``None`` when it lies outside it.
 
-    Both answers are meaningful and the caller has to be able to tell them apart: a path under
-    the shadow is a file of this repository, comparable with an ``EntityKey``'s and with a
-    run's selection, while one outside it is something Understand read on its own account --
-    the interpreter's standard library, where task 10.4 measured four parse errors on a clean
-    run of this project, and which no commit here can fix.
+    A path under the shadow is a file of this repository, comparable with an
+    :class:`~scitools_hook.models.snapshot.EntityKey`'s and with a run's selection. **A path
+    outside it is not the operator's file and is dropped.** Measured on one real run: 63 parse
+    errors under ``~/.local/share/uv/python/cpython-3.14.4/.../typing.py``, ``pdb.py`` and
+    ``_pyrepl`` -- the interpreter's own standard library, enrolled by Understand's
+    ``use_installed_standard`` and surviving task 11.10's interpreter pin, which removes
+    ``site-packages`` and not the stdlib. Nobody can fix ``typing.py`` from this repository, so
+    every line of that is noise in a report whose whole value is that its lines can be acted
+    on.
+
+    Task 11.11 already made such an error non-blocking, and non-blocking turned out not to be
+    enough: it still printed. Dropping it is deliberately **not** extended one step further --
+    an error for a file *inside* the shadow stays, loudly, whether or not this run selected it,
+    because that is the false negative 11.11 exists to prevent: the analysis stops where the
+    parse stops and every rule below it then reports success over code it never read.
+
+    Only an **absolute** path can be outside, and only an absolute path is ever dropped. A
+    relative one is already in the repository-relative form everything downstream speaks, has
+    no shadow root to be measured against, and cannot be the standard library -- Understand
+    names a file it read on its own account by its absolute path. Judging it would silence a
+    real error over a spelling.
 
     There is no ``realpath`` fallback, and that is a decision rather than an omission:
     measured, ``und`` records files under their **resolved** path, so a shadow root reached
@@ -179,7 +203,9 @@ def _inside(path: Path, tree: Path) -> Path:
     under the analysis root``) before anything reaches here. Resolving would only move that
     failure somewhere quieter.
     """
-    return path.relative_to(tree) if path.is_relative_to(tree) else path
+    if not path.is_absolute():
+        return path
+    return path.relative_to(tree) if path.is_relative_to(tree) else None
 
 
 def _distinct(errors: Sequence[ParseError]) -> list[ParseError]:

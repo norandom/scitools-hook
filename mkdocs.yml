@@ -1,0 +1,96 @@
+site_name: scitools-hook
+site_description: >-
+  A maintainability gate for git hooks, CI and coding agents. It measures what a
+  commit does to the shape of the code and refuses the commit that makes it worse.
+site_url: https://norandom.github.io/scitools-hook/
+repo_url: https://github.com/norandom/scitools-hook
+repo_name: norandom/scitools-hook
+edit_uri: edit/main/docs/
+copyright: MIT licensed.
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+# `mkdocs build --strict` turns warnings into failures. These promote the checks that are
+# only INFO by default, so a broken anchor or a page nothing links to fails the build rather
+# than shipping. `not_found` stays a warning: absolute links to the repository are legitimate.
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/norandom/scitools-hook
+
+nav:
+  - The argument:
+      - index.md
+      - argument/working-set.md
+      - argument/ratchet.md
+      - argument/economics.md
+  - Against the alternatives:
+      - compare/linters.md
+      - compare/tools.md
+  - Using it:
+      - guide/install.md
+      - guide/quickstart.md
+      - guide/rescue.md
+      - guide/languages.md
+      - guide/configuration.md
+      - guide/hooks-and-ci.md
+      - guide/review.md
+      - guide/agents.md
+  - Reference:
+      - reference/cli.md
+      - reference/rules.md
+      - reference/operations.md

@@ -452,6 +452,105 @@
       "crosses_arch": true
     }
   ],
+  "call_edges": [
+    {
+      "src": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.evaluate\",\"self,snapshot\"]",
+      "dst": "[\"routine\",\"src/analysis/rules.py\",\"rules.apply_rules\",\"specs,snapshot\"]",
+      "refs": 3,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.run\",\"self,selection\"]",
+      "dst": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.evaluate\",\"self,snapshot\"]",
+      "refs": 2,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.run\",\"self,selection\"]",
+      "dst": "[\"routine\",\"src/understand/adapter.py\",\"adapter.extract\",\"db_path,request\"]",
+      "refs": 1,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.run\",\"self,selection\"]",
+      "dst": "[\"routine\",\"src/util/text.py\",\"text.wrap_lines\",\"text,width\"]",
+      "refs": 1,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/cli/app.py\",\"app.legacy_entry\",\"\"]",
+      "dst": "[\"routine\",\"src/cli/app.py\",\"app.build_parser\",\"\"]",
+      "refs": 1,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/cli/app.py\",\"app.main\",\"argv\"]",
+      "dst": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.run\",\"self,selection\"]",
+      "refs": 2,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/cli/app.py\",\"app.main\",\"argv\"]",
+      "dst": "[\"routine\",\"src/cli/app.py\",\"app.build_parser\",\"\"]",
+      "refs": 1,
+      "crosses_arch": false
+    },
+    {
+      "src": "[\"routine\",\"src/understand/adapter.py\",\"adapter.extract\",\"db_path,request\"]",
+      "dst": "[\"routine\",\"src/util/text.py\",\"text.wrap_lines\",\"text,width\"]",
+      "refs": 1,
+      "crosses_arch": false
+    }
+  ],
+  "call_nodes": [
+    {
+      "node": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.evaluate\",\"self,snapshot\"]",
+      "complexity": 5.0,
+      "unresolved_calls": 0
+    },
+    {
+      "node": "[\"routine\",\"src/analysis/engine.py\",\"engine.Engine.run\",\"self,selection\"]",
+      "complexity": 7.0,
+      "unresolved_calls": 0
+    },
+    {
+      "node": "[\"routine\",\"src/analysis/rules.py\",\"rules.apply_rules\",\"specs,snapshot\"]",
+      "complexity": 8.0,
+      "unresolved_calls": 1
+    },
+    {
+      "node": "[\"routine\",\"src/cli/app.py\",\"app.build_parser\",\"\"]",
+      "complexity": 6.0,
+      "unresolved_calls": 0
+    },
+    {
+      "node": "[\"routine\",\"src/cli/app.py\",\"app.legacy_entry\",\"\"]",
+      "complexity": 4.0,
+      "unresolved_calls": 1
+    },
+    {
+      "node": "[\"routine\",\"src/cli/app.py\",\"app.main\",\"argv\"]",
+      "complexity": 3.0,
+      "unresolved_calls": 0
+    },
+    {
+      "node": "[\"routine\",\"src/understand/adapter.py\",\"adapter.extract\",\"db_path,request\"]",
+      "complexity": 6.0,
+      "unresolved_calls": 0
+    },
+    {
+      "node": "[\"routine\",\"src/util/text.py\",\"text.wrap_lines\",\"text,width\"]",
+      "complexity": 4.0,
+      "unresolved_calls": 0
+    }
+  ],
+  "call_resolution": {
+    "Python": {
+      "resolved": 12,
+      "external": 7,
+      "unresolved": 4
+    }
+  },
   "arch_nodes": [
     {
       "path": "Directory Structure/src/analysis",

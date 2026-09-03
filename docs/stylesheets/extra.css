@@ -1,0 +1,25 @@
+/* Understand renders its graphs with black text and no background fill, so a dark theme
+   would swallow them. Give every exported graph an explicit light card of its own. */
+.und-graph {
+  background: #ffffff;
+  border: 1px solid #d5d9de;
+  border-radius: 4px;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+
+.und-graph img,
+.und-graph svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Wide reference tables scroll on their own rather than pushing the page sideways. */
+.md-typeset table:not([class]) {
+  display: table;
+}
+
+.md-typeset .md-typeset__table {
+  overflow-x: auto;
+}

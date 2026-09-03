@@ -31,6 +31,7 @@ import typer
 from scitools_hook import __version__
 from scitools_hook.cli import agent_rules, baseline, check, common, config_cmd, db, doctor, hooks
 from scitools_hook.cli import explain as explain_cmd
+from scitools_hook.cli import recommend as recommend_cmd
 
 HELP = """Maintainability gate backed by SciTools Understand.
 
@@ -43,13 +44,19 @@ REGISTRARS = (
     check.register,
     explain_cmd.register,
     baseline.register,
+    recommend_cmd.register,
     config_cmd.register,
     doctor.register,
     db.register,
     hooks.register,
     agent_rules.register,
 )
-"""One registrar per module; requirement 12.1's ten subcommands come out of these eight."""
+"""One registrar per module; requirement 12.1's ten subcommands come out of these nine.
+
+``recommend`` is registered directly after ``baseline`` and that ordering is deliberate:
+``--help`` lists commands in registration order, so the two measurements of a repository
+sit next to each other and their contrasting one-line help is read as a pair.
+"""
 
 
 def version_callback(value: bool) -> None:

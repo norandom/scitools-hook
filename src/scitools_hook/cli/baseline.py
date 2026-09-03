@@ -31,6 +31,25 @@ from scitools_hook.runner.baseline_cmd import BaselineCapture
 
 HELP = "Capture the adaptive baseline from the current state of the project."
 
+LONG_HELP = f"""{HELP}
+
+Records WHERE YOU ARE: the worst value this project currently reports for every configured
+threshold, so existing debt reports as pre-existing and nothing gets worse. It is written to
+a file and the ratchet reads it.
+
+This is not `recommend`, which measures the shape of the repository and says WHERE TO AIM.
+A baseline is today's maximum; a recommendation is a ceiling the bulk of the code is already
+inside, with the entities outside it left as work to do.
+"""
+"""The one-line summary, and the paragraph that stops it being read as a recommendation.
+
+The two commands both measure the whole project and both answer with numbers, and using one
+believing it is the other fails silently in both directions: a pasted recommendation read as a
+baseline reports nothing today and blocks the first commit that touches the tail, while a
+baseline read as a recommendation freezes the worst routine in the repository as the limit.
+`--help` is where an operator meets them, so it is where the distinction is drawn.
+"""
+
 NOTHING_WRITTEN: Final = "no baseline was written: nothing in this repository could be analyzed"
 """What an empty capture reports; the runner has already said why on the diagnostics channel."""
 
@@ -44,7 +63,7 @@ FileOption = Annotated[
 
 def register(app: typer.Typer) -> None:
     """Add ``baseline`` to ``app``."""
-    app.command(name="baseline", help=HELP)(baseline)
+    app.command(name="baseline", help=LONG_HELP)(baseline)
 
 
 def baseline(ctx: typer.Context, file: FileOption = None) -> None:

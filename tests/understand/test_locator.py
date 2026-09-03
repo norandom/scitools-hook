@@ -38,6 +38,8 @@ from scitools_hook.errors import AnalysisFailedError, UnderstandNotFoundError
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand.locator import (
+    NO_USER_SITE,
+    PYTHON_ENV_PREFIX,
     WORKER_PATH,
     InstallLayout,
     Locator,
@@ -814,6 +816,88 @@ def test_nothing_inherited_leaves_the_pinned_directory_alone_on_the_path() -> No
     with pinned_python() as pinned:
         assert pinned.search_path({}) == str(pinned.directory)
         assert pinned.search_path({"PATH": ""}) == str(pinned.directory)
+
+
+# --- the rest of the Python decision, not only PATH (task 11.12) -------------------
+
+
+def test_the_three_measured_ways_around_the_pin_are_all_gone_from_the_environment() -> None:
+    """Each name is written out, because each one was measured to defeat the pin on its own.
+
+    ``PYTHONHOME`` killed the pinned interpreter outright and sent the database back to the
+    **Python 2** model; ``PYTHONPATH`` put the analysed project back on ``sys.path`` and took
+    this repository's file dependency edges from 1272 to 66; ``PYTHONUSERBASE`` did the same
+    through the per-user ``site-packages``. They are spelled as literals here rather than
+    derived from :data:`PYTHON_ENV_PREFIX`, so a prefix that stopped matching them would fail
+    this test instead of quietly agreeing with itself.
+    """
+    hostile = {
+        "PYTHONHOME": "/nonexistent",
+        "PYTHONPATH": "/repo/src",
+        "PYTHONUSERBASE": "/home/someone/.local",
+        "PYTHONSTARTUP": "/home/someone/startup.py",
+    }
+    with pinned_python() as pinned:
+        built = pinned.environment({"PATH": "/usr/bin", **hostile})
+
+    assert [name for name in hostile if name in built] == []
+    assert all(name.startswith(PYTHON_ENV_PREFIX) for name in hostile), (
+        "every name this test names must be one the prefix rule is responsible for"
+    )
+
+
+def test_the_per_user_site_packages_is_switched_off_rather_than_merely_unset() -> None:
+    """Clearing ``PYTHONUSERBASE`` is not enough: the default per-user path is still there.
+
+    ``~/.local/lib/python3.x/site-packages`` needs no variable to be on ``sys.path``, and a
+    ``pip install --user -e .`` of the analysed project puts it exactly there. This is the
+    environment spelling of ``python -s``, and it is the one ``PYTHON*`` name the pin adds.
+    """
+    with pinned_python() as pinned:
+        built = pinned.environment({"PATH": "/usr/bin"})
+
+    assert NO_USER_SITE == "PYTHONNOUSERSITE"
+    assert built["PYTHONNOUSERSITE"] == "1"
+
+
+def test_the_environment_still_carries_the_pinned_search_path() -> None:
+    """The ``PATH`` decision is unchanged: this method adds to it rather than replacing it."""
+    ambient = {"PATH": f"/usr/bin{os.pathsep}/bin"}
+    with pinned_python() as pinned:
+        built = pinned.environment(ambient)
+        assert built["PATH"] == pinned.search_path(ambient)
+        assert built["PATH"].split(os.pathsep) == [str(pinned.directory), "/usr/bin", "/bin"]
+
+
+def test_everything_that_is_not_pythons_reaches_und_untouched() -> None:
+    """``und`` reads its licence from ``HOME`` and its configuration from the rest of these.
+
+    A wrapper that handed it a clean environment would be running a different program, which
+    is the same reason :meth:`search_path` keeps the rest of ``PATH``.
+    """
+    ambient = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/someone",
+        "XDG_CONFIG_HOME": "/home/someone/.config",
+        "QT_QPA_PLATFORM": "offscreen",
+        "LC_ALL": "C.UTF-8",
+    }
+    with pinned_python() as pinned:
+        built = pinned.environment(ambient)
+
+    assert {name: built[name] for name in ambient if name != "PATH"} == {
+        name: value for name, value in ambient.items() if name != "PATH"
+    }
+
+
+def test_the_environment_is_a_fresh_mapping_the_caller_may_keep() -> None:
+    """One invocation's environment must not be able to change the next one's ambient state."""
+    ambient = {"PATH": "/usr/bin", "PYTHONPATH": "/repo/src"}
+    with pinned_python() as pinned:
+        built = pinned.environment(ambient)
+    built["PATH"] = "/changed"
+
+    assert ambient == {"PATH": "/usr/bin", "PYTHONPATH": "/repo/src"}
 
 
 def test_an_interpreter_that_is_not_there_is_refused_as_a_link_to_nowhere(

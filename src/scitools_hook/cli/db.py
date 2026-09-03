@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Annotated, Final
 
 import typer
 
@@ -50,8 +50,20 @@ from scitools_hook.understand.database import DatabaseManager
 HELP = "Inspect and maintain the Understand database for this repository."
 
 PATH_HELP = "Print the path of this repository's analysis database."
+PROJECT_HELP = "Build an Understand project over the working tree, for opening in the GUI."
+OUT_HELP = "Where to write the project (default: scitools-hook.worktree.und in the repository)."
 REBUILD_HELP = "Discard the analysis databases and analyse the project again."
 ANALYZE_HELP = "Bring the analysis database up to date with the index."
+EXPORT_ARCH_HELP = (
+    "Print one architecture of this repository as the XML `scitools-hook.arch.xml` holds."
+)
+"""The default architecture is named by ``DatabaseManager``, not repeated here.
+
+``cli`` may not import ``understand.und_cli`` -- the import matrix permits ``cli.db ->
+understand.database`` and nothing else in that layer -- and spelling ``"Directory Structure"``
+a second time in this file is exactly the duplication the matrix exists to stop. So the
+argument defaults to ``None`` and the manager decides.
+"""
 
 REMOVED: Final = "removed"
 NOTHING_REMOVED: Final = "no analysis database was present under"
@@ -64,12 +76,29 @@ def build_db_app() -> typer.Typer:
     db_app.command(name="path", help=PATH_HELP)(path)
     db_app.command(name="rebuild", help=REBUILD_HELP)(rebuild)
     db_app.command(name="analyze", help=ANALYZE_HELP)(analyze)
+    db_app.command(name="export-arch", help=EXPORT_ARCH_HELP)(export_arch)
+    db_app.command(name="project", help=PROJECT_HELP)(project)
     return db_app
 
 
 def register(app: typer.Typer) -> None:
     """Add the ``db`` group to ``app``; it names and describes itself."""
     app.add_typer(build_db_app())
+
+
+SHADOW_NOTICE: Final = (
+    "note: this database analyses a SHADOW COPY exported from the git index, not your "
+    "working tree. Browsing, metrics and graphs are accurate for the change the Gate saw; "
+    "edits made in it are edits to a throwaway copy and are never merged back. For a project "
+    "rooted at your real files, use `scitools-hook db project`."
+)
+
+WORKTREE_NOTICE: Final = (
+    "note: this project is rooted at your working tree, so it holds your files as they are on "
+    "disk -- not the staged change the Gate judges. It is for reading: opening, browsing, "
+    "graphs. It is rebuilt from scratch each time and the Gate never reads it, so a change "
+    "made here reaches nothing until you make the same change in your own editor."
+)
 
 
 def path(ctx: typer.Context) -> None:
@@ -82,7 +111,39 @@ def path(ctx: typer.Context) -> None:
     options = common.global_options(ctx)
     repo = GitRepo.discover(options.cwd, options.command_log())
     settings, _ = effective_configuration(options, repo)
+    common.echo_err(SHADOW_NOTICE)
     common.emit_findings(str(_cache_of(repo, settings, options.env).after_db), None)
+
+
+def project(
+    ctx: typer.Context,
+    out: Annotated[Path | None, typer.Option("--out", help=OUT_HELP)] = None,
+) -> None:
+    """Build an Understand project over the working tree, for opening in the GUI.
+
+    Every other database this tool builds analyses a **shadow tree** exported from the git
+    index, because the Gate judges what is staged rather than what is on disk. That is right
+    for a gate and wrong for reading: the paths point into a cache directory, so the GUI shows
+    a copy, and following a finding back to source lands somewhere you cannot edit.
+
+    This builds the other thing -- a project rooted at the repository itself. **It is for
+    reading.** The Gate never opens it, nothing is synchronised out of it, and a change made
+    inside Understand reaches the repository only if you make the same change yourself. That
+    is deliberate rather than a limitation to fix: this tool exists to keep a codebase within
+    what a coding agent can reason about, and an agent edits files, not databases. Merging an
+    edit made in the GUI is a manual act.
+
+    It is rebuilt from scratch on every run, so it cannot drift into disagreeing with the
+    tree quietly.
+    """
+    options = common.global_options(ctx)
+    repo = GitRepo.discover(options.cwd, options.command_log())
+    settings, _ = effective_configuration(options, repo)
+    manager, _ = _database(ctx)
+    target = (out or repo.root / "scitools-hook.worktree.und").resolve()
+    common.echo_err(WORKTREE_NOTICE)
+    built = manager.build_worktree_project(repo.root, repo.tracked_files(), target)
+    common.emit_findings(str(built), None)
 
 
 def rebuild(ctx: typer.Context) -> None:
@@ -107,6 +168,31 @@ def analyze(ctx: typer.Context) -> None:
     """
     manager, paths = _database(ctx)
     common.emit_findings(_analysed(manager, paths), None)
+
+
+def export_arch(
+    ctx: typer.Context,
+    name: str | None = typer.Argument(
+        None, help="The architecture to export; the directory structure when not given."
+    ),
+) -> None:
+    """Print one architecture as the document ``scitools-hook.arch.xml`` is written in.
+
+    This is the half of the architecture feature that makes the other half usable. Nobody can
+    write ``und``'s architecture XML from nothing, so the workflow is: export the
+    ``Directory Structure`` this repository already has, edit it into the layers that were
+    actually meant -- moving files between nodes, joining what the directory tree separates,
+    separating what it joins -- and commit the result. From then on the gate imports it and
+    ``structure.layers`` judges *declared* layers instead of folders.
+
+    The index is analysed first, because an architecture is read out of a database and there
+    has to be one. That is also the one awkward case: a repository whose committed
+    declaration ``und`` will not take fails here too, and the way out is to move the file
+    aside and export a fresh starting point.
+    """
+    manager, _ = _database(ctx)
+    manager.ensure_side("after", IndexTarget())
+    common.emit_findings(manager.export_architecture("after", name).rstrip("\n"), None)
 
 
 def _discarded(manager: DatabaseManager, paths: CachePaths) -> list[str]:

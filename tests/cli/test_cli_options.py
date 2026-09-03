@@ -79,6 +79,22 @@ def test_the_hook_signal_is_the_measured_one() -> None:
     assert not common.in_hook({"GIT_EXEC_PATH": "/usr/lib/git-core"})
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_a_blank_hook_variable_counts_as_unset(blank: str) -> None:
+    """``GIT_INDEX_FILE=`` is a caller saying "not this one", and is read that way.
+
+    This is the convention the rest of the package already holds to
+    (``config.loader._config_home``, ``understand.locator._env_home``,
+    ``understand.fake.fake_directory``), and ``in_hook`` was the one reader still testing
+    membership. Nothing real is lost: git sets the variable to the path of the index, never to
+    nothing. What a membership test costs is a *different set of files* -- ``GIT_INDEX_FILE=
+    scitools-hook check`` would default to ``--staged`` where the operator would read
+    ``--all``.
+    """
+    assert not common.in_hook({"GIT_INDEX_FILE": blank})
+    assert resolve(env={"GIT_INDEX_FILE": blank}).mode is common.SelectionMode.ALL
+
+
 # --- selection: one flag at a time ----------------------------------------------
 
 
@@ -976,6 +992,71 @@ def test_a_full_disk_during_an_eager_option_gives_the_documented_code() -> None:
     done = run_to_dev_full([sys.executable, "-m", "scitools_hook.cli.app", "--version"])
     assert done.stderr == DISK_FULL_LINE
     assert "Exception ignored" not in done.stderr
+    assert "Traceback" not in done.stderr
+    assert done.returncode == int(ExitCode.REPORT_UNDELIVERABLE)
+
+
+def test_an_absent_standard_output_is_a_delivery_failure_not_an_internal_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``sys.stdout is None`` is what a descriptor closed at exec leaves behind.
+
+    The pair divides the work. This one pins the *type* -- a delivery failure carrying no
+    ``key``, since no option named this destination -- in process, where the exit code is
+    reachable as an attribute. :func:`CLOSED_STDOUT_LINE`'s test below pins the *text* as a
+    literal and proves CPython really produces this state from ``>&-``; the comparisons here
+    read their expectations out of the module and so say nothing about the wording.
+    """
+    monkeypatch.setattr(sys, "stdout", None)
+    with pytest.raises(ReportUndeliverableError) as raised:
+        common.emit_findings("findings", None)
+    assert str(raised.value) == common.CLOSED_STDOUT
+    assert raised.value.hint == common.REDIRECTION_HINT
+    assert raised.value.key is None, "no option named this destination"
+    assert raised.value.exit_code is ExitCode.REPORT_UNDELIVERABLE
+
+
+SHELL = Path("/bin/sh")
+needs_shell = pytest.mark.skipif(not SHELL.exists(), reason="no /bin/sh to close a descriptor")
+
+CLOSED_STDOUT_LINE = (
+    "error: cannot write to standard output: it was closed before this process started\n"
+    "  hint: check where standard output is redirected, or pass --output to name a file\n"
+)
+"""The whole of stderr when descriptor 1 was closed at exec: the condition, and its hint."""
+
+
+@needs_shell
+def test_a_standard_output_closed_at_exec_names_the_condition_not_the_symptom() -> None:
+    """``>&-`` leaves ``sys.stdout`` as ``None``, which is a delivery failure like any other.
+
+    Measured before the guard: ``error: AttributeError: 'NoneType' object has no attribute
+    'write'`` at exit **70**. Both halves were wrong for the same reason exit 70 on a full
+    disk was: the text named an implementation detail of ``_write_stdout`` instead of the
+    thing the operator did, and 70 is documented as an *unexpected internal error*, which
+    invites a bug report about a redirection the operator wrote on purpose.
+
+    The descriptor is closed by a shell rather than by ``preexec_fn`` because ``>&-`` is what
+    an operator actually types, and because CPython decides ``sys.stdout is None`` from the
+    state of the descriptor at interpreter start -- which only a real exec can produce.
+    """
+    done = subprocess.run(
+        [
+            str(SHELL),
+            "-c",
+            'exec "$0" "$@" >&-',
+            sys.executable,
+            "-m",
+            "scitools_hook.cli.app",
+            "--version",
+        ],
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert done.stderr == CLOSED_STDOUT_LINE
+    assert "AttributeError" not in done.stderr, "the message must name the condition"
     assert "Traceback" not in done.stderr
     assert done.returncode == int(ExitCode.REPORT_UNDELIVERABLE)
 

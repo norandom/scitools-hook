@@ -181,12 +181,21 @@ def _defaults_layer() -> Layer:
     """The built-in defaults in TOML shape (thresholds regrouped into their scope tables)."""
     settings = default_settings()
     layer: Layer = settings.model_dump()
-    layer["thresholds"] = _threshold_tables(settings.thresholds)
+    layer["thresholds"] = threshold_tables(settings.thresholds)
     return layer
 
 
-def _threshold_tables(specs: Sequence[ThresholdSpec]) -> dict[str, dict[str, object]]:
-    """Turn flattened specs back into ``{scope: {metric: {max, min, severity, ratchet}}}``."""
+def threshold_tables(specs: Sequence[ThresholdSpec]) -> dict[str, dict[str, object]]:
+    """Turn flattened specs back into ``{scope: {metric: {max, min, severity, ratchet}}}``.
+
+    Public because ``cli.config_cmd`` has to render the effective configuration in exactly
+    the shape this module merged and recorded provenance against, and a second copy of the
+    regrouping would print keys no provenance entry matches. It was private and recorded as
+    an exception in ``tests/test_import_direction.py`` until that table's last other entry --
+    ``understand.codecheck._unusable_name`` -- was given a public name in task 11.7; keeping
+    the exception alive for one caller after that was recording a problem instead of fixing
+    it.
+    """
     tables: dict[str, dict[str, object]] = {}
     for spec in specs:
         entry: dict[str, object] = {"severity": spec.severity, "ratchet": spec.ratchet}

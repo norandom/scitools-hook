@@ -40,6 +40,7 @@ inside the output directory the request names.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -265,6 +266,57 @@ CONTAINER_REFS: Final = "definein, declarein"
 PARAMETER_KIND: Final = "Parameter ~Catch"
 """Entity kind the synthetic ``CountParams`` counts, as ``srccheck`` did."""
 
+PYTHON_LANGUAGE: Final = "Python"
+"""``Ent.language()`` of a Python file; the only language import-time-ness is measured for."""
+
+IMPORT_REFS: Final = "import"
+"""Reference kinds that make one Python file's import execute another's.
+
+Measured against build 1204: this filter matches ``Import``, ``Import From`` and
+``Import Implicit`` and does not match ``Use``, ``Call`` or ``Typed``, which is exactly the
+split wanted -- **in Python a name from another module is only reachable through an import**,
+so if no import between two files runs at load time, no use of that name can run then either.
+It matches nothing a C++ ``#include`` produces (measured: ``Include``, ``Type``, ``Use``,
+``Init``, ``Return``), which is why the language guard is not optional.
+"""
+
+TYPE_CHECKING_NAME: Final = "TYPE_CHECKING"
+"""The guard whose body ``typing`` promises is never executed."""
+
+CALL_REFS: Final = "call"
+"""Reference kinds leading from a routine to what it calls.
+
+Measured on build 1204: this one filter also matches ``Deref Call``, which is what a C++ call
+through a function pointer produces, so no call site of either language is missed by asking
+only for ``call``. It is *not* deduplicated -- three calls to the same routine from one body
+are three references (measured) -- so the count of an edge is a count of call sites, exactly
+as ``refs`` means everywhere else in a snapshot.
+"""
+
+CALLABLE_KINDS: Final = (
+    "function, method, procedure, routine, classmethod, class, interface, struct"
+)
+"""Kinds a call reference may legitimately land on without the graph holding the target.
+
+Deliberately **without** ``~unknown ~unresolved``: the whole point of this filter is to
+separate "bound to something callable that this graph does not hold" -- a library routine, a
+class outside the root, a C++ implicit member the routine scope excludes -- from "bound to
+nothing callable", which is the false negative. A ``python Unknown Ambiguous Attribute`` is
+not callable and must not be counted as though the call had resolved.
+"""
+
+CALL_BUCKETS: Final[tuple[str, ...]] = ("resolved", "external", "unresolved")
+"""The three ways a call site can end, in the order ``CallResolution`` documents them."""
+
+CONSTRUCTOR_NAME: Final = "__init__"
+"""The routine a call on a Python class enters; C++ and Java use the class's own name."""
+
+MEMBER_REFS: Final = "define, declare"
+"""Reference kinds leading from a class to the routines written inside it."""
+
+CALL_METRIC: Final = "CyclomaticStrict"
+"""The complexity a reach rule sums; read for every routine, not only the requested ones."""
+
 
 def _as_float(value: object) -> float | None:
     """Coerce one metric value to a number; ``None`` when Understand has no usable value.
@@ -383,7 +435,15 @@ class _Key:
 
     @property
     def token(self) -> str:
-        """The reversible string form ``EntityKey.token`` produces; class edges use it."""
+        """The reversible string form ``EntityKey.token`` produces; class edges use it.
+
+        Four elements, always. ``EntityKey`` carries a fifth -- an ordinal that separates the
+        entities these four cannot, ``@typing.overload``'s triple above all -- but it is
+        assigned on the model's side of the boundary, where the whole record list is in hand
+        and this walk sees one entity at a time. A zero ordinal is left out of both the token
+        and the key document, so the forms written here are exactly the forms the model
+        writes back for every entity that was never ambiguous.
+        """
         return json.dumps(
             [self.scope, self.path, self.longname, self.parameters], separators=(",", ":")
         )
@@ -625,6 +685,93 @@ def _is_ignored(patterns: Sequence[re.Pattern[str]], key: _Key) -> bool:
     return any(pattern.search(subject) for pattern in patterns for subject in subjects)
 
 
+def _guards_type_checking(test: ast.expr) -> bool:
+    """Whether an ``if`` tests ``TYPE_CHECKING``, written bare or through its module.
+
+    Only the plain positive form. ``if not TYPE_CHECKING:`` guards a body that *does* run, and
+    reading it as erased would drop a real import-time dependency -- the direction of error
+    this whole field exists to avoid.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == TYPE_CHECKING_NAME
+    return isinstance(test, ast.Attribute) and test.attr == TYPE_CHECKING_NAME
+
+
+def _span(nodes: Sequence[ast.stmt]) -> range:
+    """The lines a run of statements occupies, first line to last, inclusive."""
+    first = nodes[0].lineno
+    last = max((node.end_lineno or node.lineno) for node in nodes)
+    return range(first, last + 1)
+
+
+def _deferred_lines(source: str) -> frozenset[int] | None:
+    """The lines of a Python module that importing it does **not** execute.
+
+    Two constructs, both parsed rather than matched: the body of an ``if TYPE_CHECKING:``,
+    which the interpreter erases, and the body of any function, which does not run until the
+    function is called. Parsed and not grepped because a regular expression over source has
+    already produced a false positive in this repository, matching a docstring that *described*
+    the construct it was searching for -- and because only a parse knows where a body ends.
+
+    A decorator is not in a function's span: it sits above ``body[0]`` and it does run at
+    import. Neither is a ``def`` line's own annotations or defaults. An ``else:`` branch of an
+    ``if TYPE_CHECKING:`` is not in the span either, because it is the branch that runs.
+
+    ``None`` -- never an empty set -- when the source will not parse, so that an unparsable
+    module keeps the behaviour it had before this function existed.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.body:
+            lines.update(_span(node.body))
+        elif isinstance(node, ast.If) and node.body and _guards_type_checking(node.test):
+            lines.update(_span(node.body))
+    return frozenset(lines)
+
+
+def _import_time_lines(ent: Any) -> frozenset[int] | None:
+    """The deferred lines of a file entity, or ``None`` when they were not measured.
+
+    ``None`` for every language but Python, for a file whose source the API will not hand over,
+    and for one that will not parse. Each of those is "not measured", and a consumer must read
+    it as the older behaviour rather than as "nothing is deferred".
+    """
+    if str(ent.language()) != PYTHON_LANGUAGE:
+        return None
+    try:
+        source = ent.contents()
+    except Exception:  # noqa: BLE001 - the API's own error class cannot be named here
+        # `understand.UnderstandError` is not importable at this level (the module is loaded
+        # lazily, by design), and a file whose text cannot be read must cost this one edge its
+        # measurement rather than the whole extraction.
+        return None
+    return None if not isinstance(source, str) else _deferred_lines(source)
+
+
+def _import_time_refs(refs: Iterable[Any], deferred: frozenset[int]) -> int:
+    """How many of ``refs`` are imports on a line that importing the module executes."""
+    return sum(1 for ref in refs if ref.kind().check(IMPORT_REFS) and ref.line() not in deferred)
+
+
+def _call_bucket(target: Any, by_id: Mapping[int, str], constructors: Mapping[int, str]) -> str:
+    """Which of :data:`CALL_BUCKETS` one call site falls into, from what it landed on.
+
+    The order matters and is not arbitrary. A target that is a node of the graph is resolved
+    whatever else it also is; a target that is callable but is not a node is external; and
+    only what is neither is unresolved. Asking ``CALLABLE_KINDS`` first would call a project
+    class external even when its constructor is a node, and asking it last would let a
+    ``Variable Attribute Instance`` -- the shape ``self.fn(x)`` produces -- pass as resolved.
+    """
+    ident = target.id()
+    if ident in by_id or ident in constructors:
+        return "resolved"
+    return "external" if target.kind().check(CALLABLE_KINDS) else "unresolved"
+
+
 def _metric_values(ent: Any, names: Sequence[str]) -> dict[str, float]:
     """The metrics of ``names`` Understand can express as a number for this entity."""
     if not names:
@@ -658,6 +805,8 @@ class _Extractor:
         self.arch_of: dict[str, list[str]] = {}
         self.file_ents: dict[str, Any] = {}
         self.class_ents: dict[str, tuple[Any, str]] = {}
+        self.routine_ents: dict[str, tuple[Any, str]] = {}
+        self.deferred: dict[str, frozenset[int] | None] = {}
         self.records: list[dict[str, object]] = []
         self.collected: dict[str, dict[str, list[float]]] = {}
         self.unavailable: dict[str, set[str]] = {}
@@ -864,11 +1013,28 @@ class _Extractor:
         return values
 
     def _remember(self, key: _Key, ent: Any) -> None:
-        """Keep the entities the dependency edges are built from, files and classes alike."""
+        """Keep the entities the edges are built from: files, classes and routines alike.
+
+        Routines are kept for the **whole project**, not only for the requested files, because
+        a reach rule follows calls out of the change and has to be able to name and measure
+        what it arrives at. The walk that fills this already visits every one of them, so the
+        cost is the reference and not a second query.
+
+        Measured cost of keying by token: two routine keys of a real 770-file project name
+        three records each -- ``@typing.overload``-shaped duplicates that only
+        ``EntityKey.ordinal`` can separate, and the ordinal is assigned on the model's side of
+        this boundary -- so four routines collapse onto two nodes, 7 417 nodes for 7 421
+        routines. That is the same limitation the class edges already carry, recorded in
+        ``models.snapshot._index_by_key``, and it is the smaller of the two available errors:
+        the alternative is inventing an ordinal here, from a walk that sees one entity at a
+        time, that would not agree with the one the model assigns.
+        """
         if key.scope == "file":
             self.file_ents[key.path] = ent
         elif key.scope == "class":
             self.class_ents[key.token] = (ent, key.path)
+        elif key.scope == "routine":
+            self.routine_ents[key.token] = (ent, key.path)
 
     def _record(
         self, ent: Any, key: _Key, line: int | None, metrics: Mapping[str, float]
@@ -932,14 +1098,140 @@ class _Extractor:
     # --- dependency edges (req 6.1-6.6, 9.2) --------------------------------------
 
     def _edges(self) -> dict[str, object]:
-        """The three edge lists, or three empty ones when the caller wants no edges."""
+        """The edge lists, or empty ones when the caller wants no edges."""
         if not self.plan.include_edges:
-            return {"file_edges": [], "class_edges": [], "arch_edges": []}
-        return {
+            return {
+                "file_edges": [],
+                "class_edges": [],
+                "arch_edges": [],
+                "call_edges": [],
+                "call_nodes": [],
+                "call_resolution": {},
+            }
+        document: dict[str, object] = {
             "file_edges": self._file_edges(),
             "class_edges": self._class_edges(),
             "arch_edges": self._arch_edges(),
         }
+        document.update(self._call_graph())
+        return document
+
+    # --- the call graph -----------------------------------------------------------
+
+    def _constructors(self) -> dict[int, str]:
+        """Every project class's entity id -> the routine token a call on the class runs.
+
+        ``Widget()`` is a call reference to the **class**, never to a routine, so a call graph
+        that only followed routine targets would lose every construction -- 11 517 of the
+        44 783 call sites of a measured 770-file Python project, a quarter of the whole graph.
+        The class is therefore mapped to the routine that a call on it actually enters: its
+        ``__init__`` on Python, its same-named constructor on C++ and Java.
+
+        Measured limit, stated because it is a false negative and not a rounding error: only
+        94 of 1 343 project classes in that project declare a constructor of their own, so a
+        call on any of the other 1 249 -- a dataclass, a plain container, a subclass that
+        inherits ``__init__`` -- maps to nothing and is counted ``external`` rather than
+        resolved. An inherited constructor is deliberately **not** followed: the base may sit
+        outside the analysis root, and a graph that guessed would be asserting an edge the
+        database never reported.
+        """
+        found: dict[int, str] = {}
+        by_id = {ent.id(): token for token, (ent, _) in self.routine_ents.items()}
+        for ent, _ in self.class_ents.values():
+            token = self._constructor_of(ent, by_id)
+            if token is not None:
+                found[ent.id()] = token
+        return found
+
+    @staticmethod
+    def _constructor_of(cls_ent: Any, by_id: Mapping[int, str]) -> str | None:
+        """The token of ``cls_ent``'s own constructor, or ``None`` when it declares none."""
+        wanted = (CONSTRUCTOR_NAME, str(cls_ent.name()))
+        for ref in cls_ent.refs(MEMBER_REFS):
+            target = ref.ent()
+            token = by_id.get(target.id())
+            if token is not None and str(target.name()) in wanted:
+                return token
+        return None
+
+    def _call_graph(self) -> dict[str, object]:
+        """The routine call graph, its per-routine blind spots and its resolution report.
+
+        One pass over every project routine reads its call references and sorts each one into
+        the bucket :class:`CallResolution` documents; the counts are project-wide, because the
+        rate describes the *substrate* and must not shrink to whatever the change happened to
+        touch. The edges and nodes that are published are then bounded to the routines
+        forward-reachable from the requested files, which keeps the answer proportional to the
+        change (req 4.11) while still holding everything a reach or a cycle rule can need: a
+        routine on a cycle through a seed is reachable from that seed by definition, so the
+        induced subgraph carries the seed's strongly connected component whole.
+
+        A self-call yields no edge, for the same reason a self-dependency is not a cycle, but
+        it is still counted resolved: the call site did bind.
+        """
+        constructors = self._constructors()
+        by_id = {ent.id(): token for token, (ent, _) in self.routine_ents.items()}
+        counts: dict[tuple[str, str], int] = {}
+        blind: dict[str, int] = {}
+        resolution: dict[str, dict[str, int]] = {}
+        for token, (ent, _) in self.routine_ents.items():
+            tally = resolution.setdefault(str(ent.language()), dict.fromkeys(CALL_BUCKETS, 0))
+            for ref in ent.refs(CALL_REFS):
+                target = ref.ent()
+                bucket = _call_bucket(target, by_id, constructors)
+                tally[bucket] += 1
+                if bucket == "unresolved":
+                    blind[token] = blind.get(token, 0) + 1
+                other = by_id.get(target.id()) or constructors.get(target.id())
+                if bucket == "resolved" and other is not None and other != token:
+                    counts[(token, other)] = counts.get((token, other), 0) + 1
+        return self._call_documents(counts, blind, resolution)
+
+    def _call_documents(
+        self,
+        counts: Mapping[tuple[str, str], int],
+        blind: Mapping[str, int],
+        resolution: Mapping[str, Mapping[str, int]],
+    ) -> dict[str, object]:
+        """The three call keys, bounded to the forward closure of the requested routines."""
+        held = self._reachable(counts)
+        return {
+            "call_edges": [
+                {"src": src, "dst": dst, "refs": refs, "crosses_arch": False}
+                for (src, dst), refs in sorted(counts.items())
+                if src in held
+            ],
+            "call_nodes": [self._call_node(name, blind.get(name, 0)) for name in sorted(held)],
+            "call_resolution": {
+                language: dict(tally) for language, tally in sorted(resolution.items())
+            },
+        }
+
+    def _call_node(self, token: str, unresolved: int) -> dict[str, object]:
+        """One graph node: its endpoint, its own complexity, its unbound call sites.
+
+        ``complexity`` is ``None`` and never ``0.0`` where the database has no value, so that
+        a rule summing over a reached set can report how much of it was unmeasured instead of
+        counting an unmeasured routine as free.
+        """
+        ent = self.routine_ents[token][0]
+        value = _as_float(ent.metric([CALL_METRIC]).get(CALL_METRIC))
+        return {"node": token, "complexity": value, "unresolved_calls": unresolved}
+
+    def _reachable(self, counts: Mapping[tuple[str, str], int]) -> set[str]:
+        """The requested routines and everything they transitively call."""
+        successors: dict[str, list[str]] = {}
+        for src, dst in counts:
+            successors.setdefault(src, []).append(dst)
+        seeds = self.routine_ents.items()
+        found = {token for token, (_, path) in seeds if path in self.plan.files}
+        pending = list(found)
+        while pending:
+            for other in successors.get(pending.pop(), ()):
+                if other not in found:
+                    found.add(other)
+                    pending.append(other)
+        return found
 
     def _neighbourhood(
         self, names: Iterable[str], resolve: Callable[[Any], str | None]
@@ -982,32 +1274,72 @@ class _Extractor:
         return token if token in self.class_ents else None
 
     def _file_edges(self) -> list[dict[str, object]]:
-        """File dependencies with reference counts, bounded by the affected neighbourhood."""
+        """File dependencies with reference counts, bounded by the affected neighbourhood.
+
+        These are the only edges whose import-time share is measured, because the constructs
+        that defer an import -- ``if TYPE_CHECKING:`` and a function-local ``import`` -- are
+        properties of a *module*, and a class edge has no import of its own.
+        """
         scope = self._neighbourhood(self.file_ents, self._file_of)
-        return self._collect_edges(scope, self._file_of, crossing=True)
+        return self._collect_edges(scope, self._file_of, crossing=True, timed=True)
 
     def _class_edges(self) -> list[dict[str, object]]:
         """Class dependencies; the endpoints are ``EntityKey.token`` values, as ``fan`` expects."""
         scope = self._neighbourhood(self.class_ents, self._class_of)
         return self._collect_edges(scope, self._class_of, crossing=False)
 
+    def _deferred_of(self, path: str) -> frozenset[int] | None:
+        """The deferred lines of one file, parsed at most once per extraction."""
+        if path not in self.deferred:
+            ent = self.file_ents.get(path)
+            self.deferred[path] = None if ent is None else _import_time_lines(ent)
+        return self.deferred[path]
+
     def _collect_edges(
-        self, scope: set[str], resolve: Callable[[Any], str | None], crossing: bool
+        self,
+        scope: set[str],
+        resolve: Callable[[Any], str | None],
+        crossing: bool,
+        timed: bool = False,
     ) -> list[dict[str, object]]:
-        """Every dependency inside ``scope``, merged by endpoint pair and counted."""
+        """Every dependency inside ``scope``, merged by endpoint pair and counted.
+
+        ``timed`` additionally counts, per edge, how many of its references the import of the
+        source actually executes. It stays ``None`` for a source the parse could not measure,
+        which is every language but Python and every Python file whose text will not parse.
+        """
         counts: dict[tuple[str, str], int] = {}
+        timing: dict[tuple[str, str], int | None] = {}
         for src in sorted(scope):
+            deferred = self._deferred_of(src) if timed else None
+            measured = timed and deferred is not None
             for other, refs in self._entity(src).depends().items():
                 dst = resolve(other)
-                if dst is not None and dst != src and dst in scope:
-                    counts[(src, dst)] = counts.get((src, dst), 0) + len(refs)
-        return [self._edge(pair, count, crossing) for pair, count in sorted(counts.items())]
+                if dst is None or dst == src or dst not in scope:
+                    continue
+                counts[(src, dst)] = counts.get((src, dst), 0) + len(refs)
+                timing[(src, dst)] = (
+                    _import_time_refs(refs, deferred) if measured and deferred is not None else None
+                )
+        return [
+            self._edge(pair, count, crossing, timing.get(pair))
+            for pair, count in sorted(counts.items())
+        ]
 
-    def _edge(self, pair: tuple[str, str], refs: int, crossing: bool) -> dict[str, object]:
-        """One dependency edge; a class edge names entities, so it has no architecture to cross."""
+    def _edge(
+        self, pair: tuple[str, str], refs: int, crossing: bool, import_time: int | None = None
+    ) -> dict[str, object]:
+        """One dependency edge; a class edge names entities, so it has no architecture to cross.
+
+        ``import_time`` is written only when it was measured, so an edge nobody could measure
+        is on the wire exactly as it was before the field existed.
+        """
         src, dst = pair
         crosses = self._crosses(src, dst) if crossing else self._crosses_classes(src, dst)
-        return {"src": src, "dst": dst, "refs": refs, "crosses_arch": crosses}
+        edge: dict[str, object] = {"src": src, "dst": dst, "refs": refs, "crosses_arch": crosses}
+        if import_time is not None:
+            edge["import_time"] = import_time
+        return edge
 
     def _crosses_classes(self, src: str, dst: str) -> bool:
         """Whether two classes are defined in files that sit in different architecture nodes."""

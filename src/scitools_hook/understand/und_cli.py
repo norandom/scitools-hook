@@ -1,7 +1,7 @@
 """Run the ``und`` command-line tool and turn what it prints into typed results.
 
 Everything here is written against a **measured** ``und`` 6.5 (Build 1204), because this
-command line is full of behaviour no manual page implies. Five measurements shape the whole
+command line is full of behaviour no manual page implies. Six measurements shape the whole
 module:
 
 * **Global switches must precede the subcommand.** ``und create -db X -quiet`` answers
@@ -32,6 +32,19 @@ module:
   ``und`` is decided here rather than inherited. :meth:`UndCli._execute` runs every
   invocation under :func:`~scitools_hook.understand.locator.pinned_python`.
 
+**Architectures are the sixth, and they have their own set of measured traps.**
+``und import -arch`` is what turns ``structure.layers`` from a rule about folders into a rule
+about layers, and four things about it decide the shape of :meth:`UndCli.declare_architecture`:
+it must run **after** ``analyze`` (an import into an added-but-unanalysed database produces
+empty nodes and the analysis does not fill them in); it refuses a name the database already
+holds, while an imported architecture *survives* every ``analyze``, so a warm database has to
+be told to forget one before it is given a new one; it takes a document naming files the
+project does not hold with status 0 and silently keeps none of them, so the only proof an
+import worked is reading it back with ``export -arch``; and the paths it reads are resolved
+relative to the directory holding the ``.und`` database, while a *repository*-relative path
+resolves to nothing at all and a bare file name resolves by short name. All four are pinned
+by ``tests/contract/test_architecture_contract.py`` against the installed build.
+
 Failure mapping follows the design: a non-zero status becomes
 :class:`~scitools_hook.errors.AnalysisFailedError` carrying the argv and stderr, licensing
 text becomes :class:`~scitools_hook.errors.LicenseError` (requirement 1.4), and a command
@@ -54,11 +67,13 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape, quoteattr
 
 from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
@@ -126,6 +141,50 @@ METRIC_LIST_HEADER: Final = "Metrics (+ if selected):"
 SELECTED_MARKER: Final = "+"
 """Marks a metric the project has enabled; it is a column, not part of the name."""
 
+ARCH_LIST_HEADER: Final = "Architectures:"
+"""``list arches`` prints this and then one indented architecture name per line."""
+
+DIRECTORY_STRUCTURE: Final = "Directory Structure"
+"""The architecture every database has whether or not anyone declared one.
+
+Derived from the directory layout, so a rule written against it can only ever say what the
+folder tree already says -- which is exactly why a repository that wants to gate on *layers*
+has to declare one of its own. Measured: it is present in a database that has just been
+created and holds no files, and ``und remove -arch "Directory Structure"`` exits 0 and resets
+it to the folders rather than deleting it.
+"""
+
+ARCH_TAG: Final = "arch"
+"""The only element ``und import -arch`` reads; an architecture is a tree of these."""
+
+ARCH_NAME_ATTR: Final = "name"
+"""The attribute naming an architecture or one of its nodes."""
+
+ARCH_DOCTYPE: Final = "<!DOCTYPE arch>"
+"""The first line ``und export -arch`` writes; reproduced so an emitted file matches it."""
+
+ARCH_LONGNAME_PREFIX: Final = "@l"
+"""What ``und export -arch`` puts in front of every member path.
+
+Measured: the prefix is **optional on import** -- a member written without it resolves
+identically -- so it is stripped on the way in and written on the way out, and a
+hand-written file may leave it off.
+"""
+
+ARCH_INDENT: Final = "  "
+"""One level of indentation in an emitted architecture file.
+
+Measured: ``und import -arch`` strips leading and trailing whitespace from a member line, so
+an indented, human-readable file resolves exactly as Understand's own single-line export does.
+"""
+
+ARCH_HINT: Final = (
+    "Export a starting point with `scitools-hook db export-arch`, edit it, and commit it: "
+    "the file `und import -arch` reads is one <arch> element per node, each holding one "
+    "repository-relative file path per line."
+)
+"""The one thing to do about a file ``und`` would not take: start from a real export."""
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -141,6 +200,134 @@ class CommandResult:
     def output(self) -> str:
         """Both streams together, for the checks that do not care which one spoke."""
         return f"{self.stdout}\n{self.stderr}"
+
+
+@dataclass(frozen=True)
+class ArchNode:
+    """One node of an architecture: a name, the files it holds and the nodes under it.
+
+    The root node's :attr:`name` is the architecture's own name, which is what
+    ``structure.architecture`` has to be set to for the layer and arch-cycle rules to read it.
+    Members are file paths in whatever frame the holder is working in -- repository-relative
+    in the checked-in file, absolute while ``und`` is being spoken to -- and :meth:`rebase`
+    is how one frame becomes the other.
+    """
+
+    name: str
+    members: tuple[str, ...] = ()
+    children: tuple[ArchNode, ...] = ()
+
+    def paths(self) -> Iterator[str]:
+        """Every member of this node and of everything below it, in document order."""
+        yield from self.members
+        for child in self.children:
+            yield from child.paths()
+
+    def rebase(self, move: Callable[[str], str | None]) -> ArchNode:
+        """The same tree with every member path put through ``move``.
+
+        A member ``move`` answers ``None`` for is **dropped**, node and shape kept. That is
+        the shape the before side needs: a file added by the change under review is not in
+        the before shadow, so its declaration is not something to fail on -- it is simply not
+        part of that side's architecture.
+        """
+        return ArchNode(
+            name=self.name,
+            members=tuple(moved for member in self.members if (moved := move(member)) is not None),
+            children=tuple(child.rebase(move) for child in self.children),
+        )
+
+
+def read_architecture(text: str, source: str) -> ArchNode:
+    """Parse one ``und`` architecture document, naming ``source`` in every refusal.
+
+    Measured against build 1204's own export: the document is ``<!DOCTYPE arch>`` followed by
+    a single ``<arch name="...">`` element, nested ``<arch>`` elements for the nodes, and the
+    member paths as **text**, one per line, each prefixed ``@l``. A member written after a
+    child element lands in that child's ``tail`` rather than in the parent's ``text``, so both
+    are read.
+
+    ``xml.etree`` is used rather than a regular expression because the failure this has to
+    produce is a *typed* one: a malformed file must be refused here, in the operator's own
+    words, rather than handed to ``und`` -- which answers ``Error: unable to import
+    architecture - malformed XML.`` and exits 1 (measured), a fine outcome but one that names
+    neither the line nor the file. It also declines external entities on its own (measured:
+    ``ParseError: undefined entity``), so a checked-in file cannot reach outside itself.
+    """
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as broken:
+        raise AnalysisFailedError(
+            f"{source} is not well-formed XML: {broken}", hint=ARCH_HINT
+        ) from broken
+    if root.tag != ARCH_TAG:
+        raise AnalysisFailedError(
+            f"{source} has <{root.tag}> at its root, and und import -arch reads <{ARCH_TAG}> there",
+            hint=ARCH_HINT,
+        )
+    return _read_arch_node(root, source)
+
+
+def write_architecture(node: ArchNode) -> str:
+    """Serialise ``node`` into the document ``und import -arch`` reads.
+
+    Indented and one member per line, which Understand's own export is not: measured, an
+    import strips the whitespace around a member, so the readable form and the single-line
+    form resolve to the same architecture and the readable one is what an operator has to
+    keep in version control.
+    """
+    return "\n".join([ARCH_DOCTYPE, *_arch_lines(node, 0), ""])
+
+
+def _read_arch_node(element: ElementTree.Element, source: str) -> ArchNode:
+    """One ``<arch>`` element and everything under it."""
+    name = element.get(ARCH_NAME_ATTR)
+    if not name:
+        raise AnalysisFailedError(
+            f"{source} holds an <{ARCH_TAG}> element with no {ARCH_NAME_ATTR} attribute",
+            hint=ARCH_HINT,
+        )
+    members = _arch_members(element.text)
+    children: list[ArchNode] = []
+    for child in element:
+        if child.tag != ARCH_TAG:
+            raise AnalysisFailedError(
+                f"{source} holds a <{child.tag}> element inside {name!r}, and und "
+                f"import -arch reads only <{ARCH_TAG}>",
+                hint=ARCH_HINT,
+            )
+        children.append(_read_arch_node(child, source))
+        members += _arch_members(child.tail)
+    return ArchNode(name=name, members=tuple(members), children=tuple(children))
+
+
+def _arch_members(text: str | None) -> list[str]:
+    """The member paths in one run of element text: one per line, ``@l`` optional."""
+    if not text:
+        return []
+    found: list[str] = []
+    for line in text.splitlines():
+        path = line.strip()
+        if path.startswith(ARCH_LONGNAME_PREFIX):
+            path = path[len(ARCH_LONGNAME_PREFIX) :].strip()
+        if path:
+            found.append(path)
+    return found
+
+
+def _arch_lines(node: ArchNode, depth: int) -> Iterator[str]:
+    """One node as indented lines, members before children, exactly as ``und`` writes them."""
+    pad = ARCH_INDENT * depth
+    opening = f"{pad}<{ARCH_TAG} {ARCH_NAME_ATTR}={quoteattr(node.name)}>"
+    if not node.members and not node.children:
+        yield f"{opening}</{ARCH_TAG}>"
+        return
+    yield opening
+    for member in node.members:
+        yield f"{pad}{ARCH_INDENT}{ARCH_LONGNAME_PREFIX}{escape(member)}"
+    for child in node.children:
+        yield from _arch_lines(child, depth + 1)
+    yield f"{pad}</{ARCH_TAG}>"
 
 
 class UndCli:
@@ -264,6 +451,102 @@ class UndCli:
         self._reject_error_shape(result)
         return _read_metric_names(result.stdout)
 
+    # --- architectures (und import -arch / export -arch) --------------------------
+
+    def list_arches(self, db: Path) -> list[str]:
+        """Every architecture ``db`` holds, from ``und -db <db> list arches``.
+
+        Never under ``-quiet``: measured, ``und -quiet list arches`` prints *nothing at all*
+        and still exits 0, which is the module's standing silent-answer trap. An empty answer
+        is refused for the same reason -- a database always holds ``Directory Structure``,
+        even one freshly created with no files in it (measured), so "no architectures" is not
+        a state this command has.
+        """
+        result = self._run(["list", "arches"], db=db)
+        self._reject_failure(result)
+        self._reject_error_shape(result)
+        names = _read_arch_names(result.stdout)
+        if not names:
+            raise AnalysisFailedError(
+                f"und list arches named no architecture in {db}, and every database holds "
+                f"at least {DIRECTORY_STRUCTURE!r}",
+                command=result.argv,
+                stderr=result.stderr,
+                hint="Run the command by hand: a silent und usually means a broken install.",
+            )
+        return names
+
+    def import_arch(self, db: Path, document: Path) -> None:
+        """Run ``und import -arch``; the caller must check what actually resolved.
+
+        **This command cannot tell you it worked, and that is measured rather than feared.**
+        A document naming files the project does not hold imports with ``Architecture
+        imported.`` and status 0, and the members it could not resolve are simply gone --
+        a document whose every path is wrong produces an architecture of empty nodes,
+        silently. So every caller here goes through :meth:`declare_architecture`, which reads
+        the architecture back out and answers what survived.
+        """
+        result = self._run(["import", "-arch", str(document)], db=db)
+        self._reject_failure(result)
+        self._reject_error_shape(result)
+
+    def remove_arch(self, db: Path, name: str) -> None:
+        """Delete one architecture from ``db``.
+
+        Measured: an architecture the database does not hold answers ``Error: <name> is not a
+        valid architecture. Architecture skipped.`` and exits 1, ``-quiet`` or not, so this
+        may only be called for a name :meth:`list_arches` has just reported. ``Directory
+        Structure`` is built in: removing it exits 0 and leaves it in place.
+        """
+        self._reject_failure(self._run(["remove", "-arch", name], db=db, quiet=True))
+
+    def export_arch(self, db: Path, name: str, out: Path) -> ArchNode:
+        """Write ``name`` to ``out`` and answer it with every member path made absolute.
+
+        Measured: the paths ``und export -arch`` writes are relative to the directory holding
+        the ``.und`` database -- ``./after/pkg/core.py`` for a database at ``<root>/after.und``
+        over a tree at ``<root>/after`` -- so they are resolved against ``db.parent`` before
+        anyone outside this module sees them. An architecture the database does not hold, and
+        a file that cannot be written, both exit 1 having written nothing (measured).
+        """
+        self._reject_failure(self._run(["export", "-arch", name, str(out)], db=db))
+        try:
+            document = out.read_text(encoding="utf-8")
+        except OSError as unreadable:
+            raise AnalysisFailedError(
+                f"und export -arch wrote no readable file at {out}: {unreadable}",
+                hint=ARCH_HINT,
+            ) from unreadable
+        node = read_architecture(document, f"the {name!r} architecture exported from {db}")
+        return node.rebase(lambda member: os.path.realpath(db.parent / member))
+
+    def declare_architecture(self, db: Path, root: ArchNode) -> frozenset[str]:
+        """Put ``root`` into ``db``, replacing any architecture of the same name.
+
+        Answers **the member paths that actually resolved**, absolute, so the caller can hold
+        the import to what it claimed. Two measurements decide the shape:
+
+        * ``und import -arch`` refuses a name the database already holds -- ``Error: unable to
+          import architecture - duplicate name.``, status 1 -- so a warm database, which keeps
+          the architecture across ``analyze -changed`` and ``analyze -all`` alike, has to have
+          it removed first. Removing and re-importing every run is also what makes the file in
+          the repository authoritative: an edited declaration takes effect on the next run
+          rather than on the next rebuild.
+        * The import must run **after** ``und analyze``. Importing into a database that has
+          had ``und add`` but no analysis produces an architecture whose nodes are empty, and
+          the analysis that follows does *not* fill them in (measured, both directions). That
+          is the single worst failure this feature has: it exits 0, it lists the architecture,
+          and every layer rule then evaluates an empty node set.
+        """
+        if root.name in self.list_arches(db):
+            self.remove_arch(db, root.name)
+        with tempfile.TemporaryDirectory(prefix="scitools-hook-arch-") as scratch:
+            document = Path(scratch) / "architecture.xml"
+            document.write_text(write_architecture(root), encoding="utf-8")
+            self.import_arch(db, document)
+            imported = self.export_arch(db, root.name, Path(scratch) / "read-back.xml")
+            return frozenset(imported.paths())
+
     def codecheck(self, db: Path, config: str, files: list[Path], out_dir: Path) -> Path:
         """Run CodeCheck over ``files`` and return the violations CSV it wrote (req 6.9).
 
@@ -311,12 +594,14 @@ class UndCli:
         is remembered in the database, and a wrapper that pinned some calls and not others
         would be a wrapper whose answer depends on which call did the parsing.
 
-        ``env`` is this process's own environment with ``PATH`` rewritten and nothing else
-        touched, which is the same environment ``und`` inherited before -- passing no ``env``
-        at all *is* ``os.environ``, so the ambient read is unchanged and only ``PATH`` is now
-        decided rather than accepted. That matters: ``und`` reads its licence from ``HOME``
-        and its Qt configuration from the rest, and a probe that handed it a clean
-        environment would be measuring a different program.
+        ``env`` is this process's own environment with every *Python* decision taken by
+        :meth:`~scitools_hook.understand.locator.PinnedPython.environment` and nothing else
+        touched. ``PATH`` alone was not enough: ``PYTHONHOME`` sent a pinned run back to the
+        **Python 2** model, and ``PYTHONPATH`` put the analysed project back on the
+        interpreter's ``sys.path`` and took 1272 file dependency edges down to 66 -- both
+        measured, both recorded there. What is not Python's still arrives untouched, because
+        ``und`` reads its licence from ``HOME`` and its Qt configuration from the rest, and a
+        probe that handed it a clean environment would be measuring a different program.
 
         A pin that cannot be built raises before anything is started, so the command is not
         recorded -- it never ran. That is the same treatment ``_list_file`` gives a list file
@@ -331,7 +616,7 @@ class UndCli:
                     text=True,
                     timeout=self._timeout_s,
                     check=False,
-                    env={**os.environ, "PATH": pinned.search_path(os.environ)},
+                    env=pinned.environment(os.environ),
                 )
         except subprocess.TimeoutExpired as expired:
             self._log.record(argv, time.monotonic() - started, TIMEOUT_RC)
@@ -590,6 +875,25 @@ def _summary_warnings(text: str, counted: int) -> int:
     """Understand's own warning tally, or the lines counted when it printed no summary."""
     summary = ANALYZE_SUMMARY.search(text)
     return int(summary.group("warnings")) if summary else counted
+
+
+def _read_arch_names(text: str) -> list[str]:
+    """The architecture names under ``Architectures:``, one per indented line.
+
+    Measured: the listing ends with a line of two spaces and no newline, so blank lines are
+    skipped rather than trusted to be absent, and a name is taken stripped -- ``Directory
+    Structure`` has a space in it, so splitting on whitespace would produce two names.
+    """
+    names: list[str] = []
+    listing = False
+    for line in text.splitlines():
+        if not listing:
+            listing = line.strip() == ARCH_LIST_HEADER
+            continue
+        name = line.strip()
+        if name:
+            names.append(name)
+    return names
 
 
 def _read_metric_names(text: str) -> list[str]:

@@ -1,11 +1,13 @@
 """Own the analysis cache: the shadows, the two databases and the state between runs (2.1-2.8).
 
-Nothing the Gate analyses lives in the working tree. :class:`~scitools_hook.git.shadow.ShadowSync`
-materialises the index, the working tree or a commit into a shadow under
-:class:`~scitools_hook.models.cache.CachePaths`, and this module turns what that sync moved
-into the smallest set of ``und`` commands that leaves the database equal to the shadow --
-which is what makes a second run cost a fraction of the first (requirement 2.3; measured, a
-selective pass was about 2.5x cheaper than a full one even on 60 files, and the gap widens).
+Nothing the Gate analyses lives in the working tree. A shadow synchroniser -- reached only
+through :class:`~scitools_hook.models.ports.ShadowPort`, because ``understand`` and ``git``
+are siblings and neither may import the other -- materialises the index, the working tree or
+a commit into a shadow under :class:`~scitools_hook.models.cache.CachePaths`, and this module
+turns what that sync moved into the smallest set of ``und`` commands that leaves the database
+equal to the shadow -- which is what makes a second run cost a fraction of the first
+(requirement 2.3; measured, a selective pass was about 2.5x cheaper than a full one even on
+60 files, and the gap widens).
 
 **Everything below was measured against the installed Understand (Build 1204), because the
 command line's failure modes are what decide the shape of this module.** A discriminator
@@ -94,9 +96,9 @@ from typing import Final, NamedTuple, TypeVar
 
 from scitools_hook.config.models import Settings
 from scitools_hook.errors import AnalysisFailedError, LicenseError
-from scitools_hook.git.shadow import ShadowSync
 from scitools_hook.models.cache import CachePaths, SyncState
 from scitools_hook.models.git import SyncDelta, SyncTarget
+from scitools_hook.models.ports import ShadowPort
 from scitools_hook.models.progress import NullProgress, Progress
 from scitools_hook.models.snapshot import Side
 from scitools_hook.models.understand import AnalyzeResult
@@ -105,10 +107,16 @@ from scitools_hook.paths import classify_directory, classify_file
 # The list file `analyze -files` and `remove -file` read is the same format `codecheck
 # -files` reads, and 6.7 measured every way `und` can misread a line in it. One predicate
 # for one format: a second copy here would be a second thing to keep in step with the
-# binary. It wants a public name and a home of its own -- recorded as a handoff rather than
-# taken, because the file it lives in belongs to another task.
-from scitools_hook.understand.codecheck import _unusable_name as unusable_list_file_name
-from scitools_hook.understand.und_cli import UndCli
+# binary.
+from scitools_hook.understand.codecheck import unusable_list_file_name
+from scitools_hook.understand.und_cli import (
+    ARCH_HINT,
+    DIRECTORY_STRUCTURE,
+    ArchNode,
+    UndCli,
+    read_architecture,
+    write_architecture,
+)
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
 # cannot parse a type-parameter list, and one such declaration costs the rest of the file
@@ -206,6 +214,32 @@ NO_LANGUAGE_HINT: Final = (
 CACHE_HINT: Final = "Point understand.db_location or the cache directory somewhere writable."
 """Every failure to create or clear the cache has the same one fix."""
 
+ARCH_FILE: Final = "scitools-hook.arch.xml"
+"""The repository file that *declares* an architecture, beside ``scitools-hook.toml``.
+
+A convention rather than a setting, and the choice is argued rather than assumed:
+
+* It is **configuration**, so it is read from the working tree on both sides of a change,
+  exactly as ``scitools-hook.toml`` is. The rule a run is judged by is the rule as it stands
+  now, not the one that happened to be committed at the before commit.
+* It sits at the repository root beside ``scitools-hook.toml`` and the default
+  ``scitools-hook.baseline.json``, which is where this project already keeps the files an
+  operator commits.
+* It keeps the ``.xml`` extension because it *is* the document ``und import -arch`` reads
+  and ``und export -arch`` writes. The workflow this feature exists for -- export the
+  ``Directory Structure``, edit it into the architecture you mean, commit it -- would need a
+  format conversion in the middle if it were anything else.
+* Absent, it costs nothing: no file, no ``und`` call, and ``structure.architecture`` keeps
+  meaning the directory layout it has always meant.
+
+**The paths inside it are repository-relative, and they have to be rewritten before ``und``
+sees them.** Measured: ``src/main.py`` written literally into an architecture document
+resolves to *nothing* -- import status 0, ``Architecture imported.``, and an empty node --
+while a bare ``main.py`` resolves by short name (so two files of that name are a coin toss)
+and an absolute path resolves exactly. So every member is rewritten to an absolute path under
+the side's shadow tree on the way in, and back to a repository-relative one on the way out.
+"""
+
 
 class _Pass(NamedTuple):
     """One finished ``und analyze``, and which files it actually re-read.
@@ -221,6 +255,31 @@ class _Pass(NamedTuple):
     reanalysed: frozenset[Path] | None
 
 
+def _und_exclusions(patterns: Iterable[str]) -> list[str]:
+    """The configured excludes in the form ``und -exclude`` actually honours.
+
+    Measured in task 8.1 and again here: ``und -exclude 'build/**'`` excludes **nothing**,
+    while ``-exclude build`` drops the whole tree. The shadow path never meets this, because
+    ``ShadowSync`` filters before exporting and ``und`` only ever sees files that survived --
+    but a project rooted at the working tree hands ``und`` the whole directory, so the
+    patterns have to be translated or the virtualenv lands in the project. Before this, a
+    build of this repository enrolled 1535 files, most of them ``.venv/``.
+
+    Only the directory-shaped patterns survive: a trailing ``/**`` is dropped and the leading
+    segment kept. A file glob such as ``*.min.js`` is left alone, and anything with a wildcard
+    inside a path segment is discarded rather than passed through, because ``und`` would
+    silently ignore it and an exclusion that silently does nothing is worse than none.
+    """
+    out: list[str] = []
+    for pattern in patterns:
+        head = pattern.split("/", 1)[0]
+        if "*" in head and head != pattern:
+            continue
+        if head not in out:
+            out.append(head)
+    return out
+
+
 class DatabaseManager:
     """The cache directory's owner: shadows, databases, ``state.json`` (requirements 2.1-2.8).
 
@@ -233,7 +292,7 @@ class DatabaseManager:
         self,
         paths: CachePaths,
         und: UndCli,
-        shadow: ShadowSync,
+        shadow: ShadowPort,
         settings: Settings,
         progress: Progress | None = None,
     ) -> None:
@@ -280,6 +339,41 @@ class DatabaseManager:
             _discard(path)
         self._progress.note(f"discarded the analysis databases under {self._paths.root}")
 
+    def build_worktree_project(self, root: Path, tracked: Sequence[str], target: Path) -> Path:
+        """Build an Understand project over ``root`` itself, for a human to open (req 9.8).
+
+        Every other database this class builds analyses a shadow tree, because the Gate judges
+        the staged change rather than the files on disk. That makes those databases wrong for
+        reading: their paths point into a cache directory, so following a finding to source in
+        the GUI lands on a copy nobody can edit usefully.
+
+        This is the read-only counterpart, and read-only is a design decision rather than a
+        missing feature. Nothing synchronises out of it, the Gate never opens it, and an edit
+        made inside Understand reaches the repository only when someone makes the same edit
+        themselves. This tool exists to keep a codebase inside what a coding agent can reason
+        about, and an agent edits files.
+
+        It is rebuilt from scratch every time. A project that were updated incrementally could
+        disagree with the tree without saying so, and a stale picture of the code is worse than
+        no picture when the whole point is to see the code as it is.
+        """
+        # `tracked` comes from the caller rather than through `self._shadow.repo`: the shadow
+        # port deliberately exposes only `root` (task 11.7 replaced a cross-adapter import with
+        # it), and widening a port to save one argument is how that edge came back last time.
+        languages = self.detect_languages(root / name for name in tracked)
+        if not languages:
+            raise AnalysisFailedError(
+                f"no file under {root} is in a language this Understand can analyse",
+                hint=NO_LANGUAGE_HINT,
+            )
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        self._prepare_root()
+        self._und.create(target, languages, local=False)
+        self._und.add(target, root, _und_exclusions(self._settings.project.exclude))
+        self._und.analyze(target, None, all=True)
+        return target
+
     def detect_languages(self, files: Iterable[Path]) -> list[str]:
         """The project languages ``files`` call for, sorted and unique (requirement 2.4).
 
@@ -315,6 +409,7 @@ class DatabaseManager:
             done = self._build(side, db, tree, state.languages)
         else:
             done = self._update(db, tree, delta, state.languages)
+        self._declare_architecture(side, db, tree)
         errors = state.record_parse_errors(side, tree, done.result.parse_errors, done.reanalysed)
         return done.result.model_copy(update={"parse_errors": errors})
 
@@ -374,6 +469,153 @@ class DatabaseManager:
             )
         return True
 
+    # --- the declared architecture (req 6.3, 6.7) --------------------------------
+
+    def declared_architecture(self) -> ArchNode | None:
+        """The architecture this repository declares, or ``None`` when it declares none.
+
+        Read from the working tree rather than from either shadow: it is configuration, and a
+        run is judged by the rules as they stand. Absence is the ordinary case and costs
+        nothing; anything at that path that is not a readable file is a failure, because an
+        operator who committed a declaration and then cannot have it read must be told rather
+        than silently gated on the directory layout instead.
+        """
+        declaration = self._shadow.repo.root / ARCH_FILE
+        verdict = classify_file(declaration)
+        if verdict.absent:
+            return None
+        if not verdict.usable:
+            raise AnalysisFailedError(
+                f"the architecture declaration {declaration} {verdict.reason}", hint=ARCH_HINT
+            )
+        try:
+            document = declaration.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as unreadable:
+            raise AnalysisFailedError(
+                f"the architecture declaration {declaration} could not be read: {unreadable}",
+                hint=ARCH_HINT,
+            ) from unreadable
+        declared = read_architecture(document, str(declaration))
+        if declared.name == DIRECTORY_STRUCTURE:
+            raise AnalysisFailedError(
+                f"{declaration} declares an architecture called {DIRECTORY_STRUCTURE!r}, "
+                f"which is the one Understand derives from the directory layout",
+                hint="Give the declaration a name of its own and point structure.architecture "
+                "at it. Measured: importing under the built-in name is not refused the way "
+                "every other duplicate is -- the declared nodes are MERGED into the "
+                "folder-derived architecture, and the layout and the declaration stop being "
+                "two things a rule can choose between.",
+            )
+        return declared
+
+    def export_architecture(self, side: Side, name: str | None = None) -> str:
+        """One architecture of a built database, as a document this repository could commit.
+
+        This is the other half of the feature and it is not a convenience: nobody can write
+        the document ``und import -arch`` reads from nothing, so the workflow is to export
+        ``Directory Structure`` from a database that exists, edit it into the architecture
+        that was meant, and commit it. The paths come back repository-relative -- a member
+        Understand reported from outside the shadow, if a build ever produces one, is dropped
+        rather than written as an absolute path no other machine could resolve.
+        """
+        wanted = name or DIRECTORY_STRUCTURE
+        db = self._paths.before_db if side == "before" else self._paths.after_db
+        tree = self._paths.before_tree if side == "before" else self._paths.after_tree
+        if not self._present(db):
+            raise AnalysisFailedError(
+                f"there is no {side} analysis database at {db} to export an architecture from",
+                hint="Run `scitools-hook db analyze` first: an architecture is read out of a "
+                "database, so there has to be one.",
+            )
+        with tempfile.TemporaryDirectory(prefix="scitools-hook-arch-") as scratch:
+            exported = self._und.export_arch(db, wanted, Path(scratch) / "architecture.xml")
+        committable = exported.rebase(lambda member: _repository_relative(tree, member))
+        return write_architecture(committable)
+
+    def _declare_architecture(self, side: Side, db: Path, tree: Path) -> None:
+        """Put the repository's declared architecture into one side's database (req 6.3).
+
+        Runs **after** the analysis and on every run, both of which are measured decisions:
+
+        * an import into a database that has been ``add``-ed but not analysed produces empty
+          nodes, and the analysis that follows does not fill them in -- so the architecture
+          would exist, be listed, and hold nothing, which every layer rule reads as "no
+          finding";
+        * an imported architecture *survives* ``analyze -changed`` and ``analyze -all``
+          (also measured), so a warm run would otherwise keep whatever was declared when the
+          database was last built, and an edited declaration would not take effect until the
+          next ``db rebuild``.
+
+        Three outcomes per declared member, and each is a different thing:
+
+        * **not under the shadow tree at all** -- an absolute path, a ``../`` escape -- is a
+          defect in the declaration whichever side is being analysed, and is refused;
+        * **under the tree but not on disk** is the ordinary state of the *before* side of a
+          change that adds a file, so it is dropped before ``und`` is asked;
+        * **on disk and still not resolved** is the silent failure this whole method exists
+          for: ``und import -arch`` answers ``Architecture imported.`` with status 0 for a
+          document whose every path is wrong, so what came back is compared with what was
+          asked for and the difference is named.
+        """
+        declared = self.declared_architecture()
+        if declared is None:
+            return
+        inside = {member: _in_shadow(tree, member) for member in declared.paths()}
+        self._refuse_outside(inside)
+        present = {
+            member: absolute
+            for member, absolute in inside.items()
+            if absolute is not None and classify_file(Path(absolute)).usable
+        }
+        resolved = self._und.declare_architecture(db, declared.rebase(present.get))
+        self._refuse_unresolved(declared.name, present, resolved)
+        self._progress.note(
+            f"declared the {declared.name!r} architecture over the {side} database: "
+            f"{len(resolved)} of {len(inside)} declared members"
+        )
+        self._note_absent(side, sorted(set(inside) - set(present)))
+
+    def _note_absent(self, side: Side, absent: Sequence[str]) -> None:
+        """Name the declared members this side's shadow does not hold, without failing.
+
+        It cannot be an error: a file the change under review *adds* is not in the before
+        shadow and a file it deletes is not in the after one, and both are ordinary. But it
+        cannot be silence either -- a typo in a declared path is indistinguishable from those,
+        and would quietly take a file out of its layer -- so the names are put on the progress
+        stream where ``--verbose`` shows them.
+        """
+        if absent:
+            self._progress.note(
+                f"the {side} tree holds none of {', '.join(absent)}, so they are not in "
+                f"that side's architecture"
+            )
+
+    def _refuse_outside(self, inside: Mapping[str, str | None]) -> None:
+        """Refuse a declaration naming anything that is not inside the shadow tree."""
+        outside = sorted(member for member, absolute in inside.items() if absolute is None)
+        if outside:
+            raise AnalysisFailedError(
+                f"{self._shadow.repo.root / ARCH_FILE} declares {', '.join(outside)}, which "
+                f"is not a path inside this repository",
+                hint=ARCH_HINT,
+            )
+
+    def _refuse_unresolved(
+        self, name: str, present: Mapping[str, str], resolved: frozenset[str]
+    ) -> None:
+        """Refuse an import that dropped a member whose file was there to be found."""
+        missing = sorted(member for member, absolute in present.items() if absolute not in resolved)
+        if not missing:
+            return
+        raise AnalysisFailedError(
+            f"{self._shadow.repo.root / ARCH_FILE} declares {', '.join(missing)} in "
+            f"{name!r}, and und import -arch resolved "
+            f"{'none of them' if len(missing) == len(present) else 'the rest but not those'}",
+            hint="Understand holds a file only if it enrolled it: a directory, a file of a "
+            "language the project does not analyse, and a path that does not exist all "
+            "import with status 0 and contribute nothing. " + ARCH_HINT,
+        )
+
     # --- the two ways to bring a database up to date -----------------------------
 
     def _build(self, side: Side, db: Path, tree: Path, languages: list[str]) -> _Pass:
@@ -385,13 +627,14 @@ class DatabaseManager:
         longer holds them.
 
         ``und add`` is given no ``-exclude`` argument, and that is a decision rather than an
-        omission: ``ShadowSync`` has already applied ``project.include``/``project.exclude``
-        to the tree being added and re-applies them on every sync, so the shadow *is* the
-        include/exclude decision (requirement 2.5). Handing the same patterns to ``und`` in a
-        different pattern language would make a second, disagreeing filter -- measured, ``und
-        -exclude 'build/**'`` excludes nothing while ``-exclude build`` drops the tree -- and
-        the disagreement that matters is the one where ``und`` holds *fewer* files than the
-        shadow, because those files are then named in a ``-files`` list they cannot be in.
+        omission: the shadow synchroniser has already applied ``project.include`` and
+        ``project.exclude`` to the tree being added and re-applies them on every sync, so the
+        shadow *is* the include/exclude decision (requirement 2.5). Handing the same patterns
+        to ``und`` in a different pattern language would make a second, disagreeing filter --
+        measured, ``und -exclude 'build/**'`` excludes nothing while ``-exclude build`` drops
+        the tree -- and the disagreement that matters is the one where ``und`` holds *fewer*
+        files than the shadow, because those files are then named in a ``-files`` list they
+        cannot be in.
         """
         _discard(db)
         self._und.create(db, languages, local=True)
@@ -589,6 +832,31 @@ class DatabaseManager:
 
 
 # --- helpers ------------------------------------------------------------------------
+
+
+def _in_shadow(tree: Path, member: str) -> str | None:
+    """The absolute path of one declared member inside ``tree``, or ``None`` when it escapes it.
+
+    ``tree / member`` on an *absolute* member answers the member itself (pathlib), and a
+    ``../`` member walks out of the shadow, so containment is checked after resolution rather
+    than assumed from the text. The tree is resolved too: the cache root can sit behind a
+    symlink, and comparing a resolved path with an unresolved prefix would put every member
+    outside a tree they are all inside.
+    """
+    root = os.path.realpath(tree)
+    candidate = os.path.realpath(tree / member)
+    return candidate if candidate.startswith(f"{root}{os.sep}") else None
+
+
+def _repository_relative(tree: Path, member: str) -> str | None:
+    """One absolute shadow path as a repository-relative one, or ``None`` when it is outside.
+
+    The inverse of :func:`_in_shadow`, and the reason the exported document is committable:
+    every path in it names a file of the repository rather than a location in this machine's
+    cache.
+    """
+    prefix = f"{os.path.realpath(tree)}{os.sep}"
+    return member[len(prefix) :] if member.startswith(prefix) else None
 
 
 def _touched(delta: SyncDelta) -> list[str]:

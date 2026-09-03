@@ -9,6 +9,18 @@ A node that depends on itself is deliberately not a cycle. Understand reports su
 for a file that references its own contents, so a self-dependency says nothing about the
 structure a reviewer cares about; only components of two or more nodes are reported.
 
+**A dependency that does not run when the module is loaded cannot close an import cycle**, and
+at the file level the graph is reduced to the ones that do (:func:`at_import_time`). Measured
+on a 770-file Python project: of the two file cycles reported over every reference, one -- nine
+files across two packages -- was closed entirely by four imports inside ``if TYPE_CHECKING:``
+and two inside a function body, the latter carrying a comment saying they were written that way
+to keep the module importable. That is a cycle-breaking mitigation being reported as the cycle
+it breaks, the same shape as task 11.9's ratchet blocking the extraction its own hint
+recommends. The other cycle -- eighteen files, closed by ordinary module-level imports -- is
+unaffected by the reduction, which is what tells the two apart. Coupling, fan, layers and the
+new-dependency limit still count every reference: a deferred import is real coupling, it simply
+cannot deadlock a module load.
+
 Both levels share this module: ``level="file"`` reads a snapshot's ``file_edges`` and emits
 ``structure.file_cycle`` findings, ``level="arch"`` reads its ``arch_edges`` and emits
 ``structure.arch_cycle`` findings naming the architecture nodes. Every finding carries
@@ -26,8 +38,8 @@ configured severity (req 3.7).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Iterable, Sequence
+from typing import Literal, overload
 
 from scitools_hook.analysis.structure.graph import (
     DependencyGraph,
@@ -57,15 +69,51 @@ def find_new_cycles(
     """Report every cycle in ``after_edges`` that ``before_edges`` does not already contain.
 
     ``before_edges`` is ``None`` in whole-project mode, where every cycle is reported
-    (req 4.8). Findings come back sorted by their members, one per cycle.
+    (req 4.8). At the file level both sides are first reduced to the dependencies that
+    actually run when the source is imported (:func:`at_import_time`). Findings come back
+    sorted by their members, one per cycle.
     """
-    after = DependencyGraph.from_edges(after_edges)
-    known = _cycles_of(before_edges)
+    closing = _closing(after_edges, level)
+    after = DependencyGraph.from_edges(closing)
+    known = _cycles_of(_closing(before_edges, level))
     return [
         _finding(after, cycle, severity, level, compared=before_edges is not None)
-        for cycle in _cycles_of(after_edges)
+        for cycle in _cycles_of(closing)
         if not any(cycle <= before for before in known)
     ]
+
+
+def at_import_time(edges: Iterable[DepEdge]) -> list[DepEdge]:
+    """The edges that can actually close an import cycle: everything but the deferred ones.
+
+    An edge whose :attr:`~scitools_hook.models.snapshot.DepEdge.import_time` is ``None`` was
+    never measured -- every language but Python, and any Python file that would not parse --
+    and is kept, because "not measured" must read as the older, louder behaviour and never as
+    "nothing runs". An edge measured at **zero** is dropped: every reference it stands for sits
+    inside an ``if TYPE_CHECKING:`` block or a function body, so importing the source does not
+    import the target and the two files cannot deadlock each other's loading.
+    """
+    return [edge for edge in edges if edge.import_time is None or edge.import_time > 0]
+
+
+@overload
+def _closing(edges: Sequence[DepEdge], level: Level) -> Sequence[DepEdge]: ...
+
+
+@overload
+def _closing(edges: None, level: Level) -> None: ...
+
+
+def _closing(edges: Sequence[DepEdge] | None, level: Level) -> Sequence[DepEdge] | None:
+    """The edges that may close a cycle at this level; only files defer a dependency.
+
+    Architecture edges come from ``Arch.depends()`` and carry no import-time measurement, so
+    they are passed through untouched -- an architecture cycle is still reported exactly as it
+    was, which is what keeps a real one firing while this rule removes a false one below it.
+    """
+    if edges is None or level != "file":
+        return edges
+    return at_import_time(edges)
 
 
 def _cycles_of(edges: Sequence[DepEdge] | None) -> list[frozenset[str]]:

@@ -18,7 +18,12 @@ from typing import Literal
 import pytest
 from fixtures import snapshot_fixture
 
-from scitools_hook.analysis.ratchet import attach_before, evaluate_ratchet
+from scitools_hook.analysis.ratchet import (
+    attach_before,
+    evaluate_ratchet,
+    pair_changed_signatures,
+    within_limit,
+)
 from scitools_hook.analysis.thresholds import evaluate_thresholds
 from scitools_hook.config.metric_names import Scope, parse_metric_name
 from scitools_hook.config.models import Limit, Severity, ThresholdSpec
@@ -602,3 +607,307 @@ def test_attach_before_does_not_modify_the_findings_it_is_given(
     assert original.before is None
     assert attached[0] is not original
     assert attached[0].before == pytest.approx(6.0)
+
+
+# --- the same routine under a new signature (task 11.6) ---------------------------
+
+AREA = "Shape::area"
+NATIVE = "native/shape.cpp"
+LINE_LIMIT = threshold("routine", "CountLineCode", Limit(max=60))
+"""One ratcheted rule, well above every value below, so only the comparison can report."""
+
+
+def routine(longname: str, parameters: str, path: str = DEEP) -> EntityKey:
+    """One routine key; ``parameters`` is what a signature change moves and nothing else."""
+    return EntityKey(scope="routine", path=path, longname=longname, parameters=parameters)
+
+
+def side(name: Side, entities: Mapping[EntityKey, float]) -> ProjectSnapshot:
+    """A snapshot holding exactly the given routines at exactly the given line counts."""
+    return ProjectSnapshot(
+        side=name,
+        entities={
+            key: EntityRecord(
+                ref=EntityRef(
+                    key=key, kind="Function", name=key.longname.rsplit(".", 1)[-1], line=1
+                ),
+                language="Python",
+                metrics={"CountLineCode": lines},
+            )
+            for key, lines in entities.items()
+        },
+    )
+
+
+def affected(was: Mapping[EntityKey, float], now: Mapping[EntityKey, float]) -> list[Finding]:
+    """Ratchet the after side's own keys, exactly the set ``analysis.affected`` hands over."""
+    after, before = side("after", now), side("before", was)
+    return evaluate_ratchet(after, before, set(after.entities), [LINE_LIMIT])
+
+
+WALK_ONE = routine("deep.walk", "rows")
+WALK_FOUR = routine("deep.walk", "rows,skip_none,skip_str,limit")
+"""The measured defect, as two keys: one routine, before and after three parameters arrived."""
+
+
+def test_a_routine_that_grew_and_gained_parameters_is_compared_with_its_old_signature() -> None:
+    """The defect this task exists for, at its smallest (task 11.6, req 4.4).
+
+    Nothing but ``parameters`` differs between the two keys, so before the pairing the after
+    key found no before record, the comparison returned "added" and the run went green on a
+    routine that grew by four lines.
+    """
+    findings = affected({WALK_ONE: 6.0}, {WALK_FOUR: 10.0})
+
+    (finding,) = findings
+    assert finding.kind == "ratchet"
+    assert finding.entity is not None and finding.entity.key == WALK_FOUR
+    assert finding.before == pytest.approx(6.0)
+    assert finding.value == pytest.approx(10.0)
+    assert "rose from 6 to 10" in finding.message
+
+
+def test_the_same_growth_with_the_signature_untouched_reports_the_same_thing() -> None:
+    """The control: identical numbers, one difference -- the after key's parameter list.
+
+    Without it "the pairing works" could be read off a rule that reports every routine that
+    grew whatever its identity, and this pair is what says the two paths agree.
+    """
+    paired = affected({WALK_ONE: 6.0}, {WALK_FOUR: 10.0})
+    direct = affected({WALK_ONE: 6.0}, {WALK_ONE: 10.0})
+
+    assert [finding.before for finding in paired] == [pytest.approx(6.0)]
+    assert [finding.before for finding in direct] == [pytest.approx(6.0)]
+    assert [finding.value for finding in paired] == [finding.value for finding in direct]
+
+
+def test_a_key_that_is_on_both_sides_of_the_affected_set_is_still_reported_once() -> None:
+    """``keys`` may hold the removed key too; the pairing must not report the routine twice."""
+    after, before = side("after", {WALK_FOUR: 10.0}), side("before", {WALK_ONE: 6.0})
+
+    findings = evaluate_ratchet(after, before, {WALK_ONE, WALK_FOUR}, [LINE_LIMIT])
+
+    assert len(findings) == 1
+
+
+def test_pairing_answers_nothing_when_every_signature_stayed_the_same() -> None:
+    """The common case: no key is missing from either side, so there is nothing to pair."""
+    after, before = side("after", {WALK_ONE: 10.0}), side("before", {WALK_ONE: 6.0})
+
+    assert pair_changed_signatures(after, before) == {}
+
+
+# --- what must keep working: a real C++ overload pair (task 10.1's measurement) ----
+
+AREA_ONE = routine(AREA, "int width", NATIVE)
+AREA_TWO = routine(AREA, "int width,int height", NATIVE)
+"""``Shape::area(int) const`` and ``Shape::area(int, int) const``: same scope, path, long name,
+kind and short name; only ``parameters`` tells them apart."""
+
+
+def test_an_overload_pair_that_both_survive_is_compared_member_by_member() -> None:
+    """Two entities in, two entities out: the pairing may not merge a real overload pair.
+
+    Both overloads exist on both sides, so neither is missing and neither is paired. The one
+    that grew is reported against **its own** before value of 20, not against its sibling's 6,
+    which is what a merged pair would have produced.
+    """
+    findings = affected({AREA_ONE: 6.0, AREA_TWO: 20.0}, {AREA_ONE: 6.0, AREA_TWO: 30.0})
+
+    (finding,) = findings
+    assert finding.entity is not None and finding.entity.key == AREA_TWO
+    assert finding.before == pytest.approx(20.0)
+    assert finding.value == pytest.approx(30.0)
+
+
+def test_a_new_overload_beside_an_unchanged_one_is_new_rather_than_paired() -> None:
+    """One added, none removed: requirement 4.5 still applies, so the addition is not judged."""
+    after = side("after", {AREA_ONE: 6.0, AREA_TWO: 40.0})
+    before = side("before", {AREA_ONE: 6.0})
+
+    assert pair_changed_signatures(after, before) == {}
+    assert evaluate_ratchet(after, before, set(after.entities), [LINE_LIMIT]) == []
+
+
+def test_one_overload_changes_its_signature_while_its_sibling_stays_untouched() -> None:
+    """The C++ case this task is really about: an overload pair, one of them re-signed.
+
+    ``Shape::area(int)`` is unchanged and matches itself; ``Shape::area(int, int)`` gained a
+    third parameter, so it is the one key missing from each side of the family and it pairs.
+    The before value proves the pairing picked the right partner: 20 is what
+    ``area(int, int)`` measured, 6 is what its untouched sibling measured, and a pairing that
+    took whichever family member came first would have reported 6.
+    """
+    area_three = routine(AREA, "int width,int height,int depth", NATIVE)
+    after = side("after", {AREA_ONE: 6.0, area_three: 30.0})
+    before = side("before", {AREA_ONE: 6.0, AREA_TWO: 20.0})
+
+    assert pair_changed_signatures(after, before) == {area_three: AREA_TWO}
+    (finding,) = evaluate_ratchet(after, before, set(after.entities), [LINE_LIMIT])
+    assert finding.entity is not None and finding.entity.key == area_three
+    assert finding.before == pytest.approx(20.0)
+
+
+def test_two_signatures_changing_at_once_in_one_family_pair_nothing() -> None:
+    """The ambiguous case, answered with silence rather than with a guess.
+
+    Both overloads changed their parameter lists, so two keys are missing from each side and
+    nothing in the database says which became which. Both read as new, which is the behaviour
+    this module already had -- stated here so a later change that starts guessing has to
+    change a test that says why it must not.
+    """
+    after = side(
+        "after",
+        {
+            routine(AREA, "long width", NATIVE): 40.0,
+            routine(AREA, "long width,long height", NATIVE): 40.0,
+        },
+    )
+    before = side("before", {AREA_ONE: 6.0, AREA_TWO: 6.0})
+
+    assert pair_changed_signatures(after, before) == {}
+    assert evaluate_ratchet(after, before, set(after.entities), [LINE_LIMIT]) == []
+
+
+def test_a_routine_moved_to_another_file_is_not_paired_with_the_one_it_left() -> None:
+    """The family carries the path, so a move is not a signature change."""
+    moved = routine("deep.walk", "rows", "pkg/other.py")
+    after, before = side("after", {moved: 10.0}), side("before", {WALK_ONE: 6.0})
+
+    assert pair_changed_signatures(after, before) == {}
+    assert evaluate_ratchet(after, before, set(after.entities), [LINE_LIMIT]) == []
+
+
+def test_attach_before_does_not_follow_the_signature_pairing() -> None:
+    """The deliberate asymmetry (task 11.6): a guess may add a finding, not excuse one.
+
+    ``analysis.classify`` calls a violation **pre-existing** -- and therefore non-blocking --
+    when ``Finding.before`` already broke the limit. Filling that from a paired entity would
+    let a signature change excuse a violation on the strength of a pairing, so the before
+    value stays unset, which classify reads as "not known" and leaves blocking. The ratchet
+    still reports the growth; the two steps disagree on purpose.
+    """
+    before = side("before", {WALK_ONE: 66.0})
+    finding = Finding(
+        kind="threshold",
+        rule="routine.CountLineCode",
+        metric="CountLineCode",
+        scope="routine",
+        entity=EntityRef(key=WALK_FOUR, kind="Function", name="walk", line=1),
+        path=DEEP,
+        value=70.0,
+        severity="error",
+        blocking=True,
+        message="routine deep.walk CountLineCode is 70, which exceeds the maximum 60",
+    )
+
+    (attached,) = attach_before([finding], before)
+
+    assert attached.before is None
+
+
+# --- inside the limit, and the sentence that says so (task 11.15) -------------------
+
+
+def test_within_limit_reads_the_boundary_off_the_finding(
+    after: ProjectSnapshot, before: ProjectSnapshot
+) -> None:
+    """``app.build_parser`` at 12, judged against three limits: 11, 12 and 13.
+
+    One movement, three thresholds, so the only thing that differs between the answers is the
+    number the limit stands at -- and the three are written as literals, one on each side of
+    the after value and one exactly on it. The middle one is the case a comparison written
+    ``<`` instead of ``<=`` gets wrong, and it is the one that decides whether growth up to a
+    limit is allowed to spend the last unit of headroom.
+    """
+    answers = {}
+    for maximum in (11.0, 12.0, 13.0):
+        (finding,) = ratchet(
+            after, before, threshold("routine", "CyclomaticStrict", Limit(max=maximum))
+        )
+        assert (finding.before, finding.value) == (pytest.approx(6.0), pytest.approx(12.0))
+        answers[maximum] = within_limit(finding)
+
+    assert answers == {11.0: False, 12.0: True, 13.0: True}
+
+
+def test_within_limit_reads_a_minimum_from_the_direction_the_value_moved(
+    after: ProjectSnapshot, before: ProjectSnapshot
+) -> None:
+    """The ``min`` side: ``src/analysis/rules.py``'s comment ratio fell 0.2 -> 0.19.
+
+    A minimum is broken by being *below* it, so the same three-way check runs the other way:
+    a floor of 0.2 is broken by 0.19, a floor of 0.19 is met exactly, and a floor of 0.18
+    leaves headroom. Without this the predicate could compare every value against a maximum
+    and still pass every test above.
+    """
+    answers = {}
+    for minimum in (0.2, 0.19, 0.18):
+        findings = ratchet(
+            after, before, threshold("file", "RatioCommentToCode", Limit(min=minimum))
+        )
+        (finding,) = [item for item in findings if item.path == RULES]
+        assert (finding.before, finding.value) == (pytest.approx(0.2), pytest.approx(0.19))
+        answers[minimum] = within_limit(finding)
+
+    assert answers == {0.2: False, 0.19: True, 0.18: True}
+
+
+def test_within_limit_is_false_for_a_finding_that_is_not_a_ratchet_one() -> None:
+    """Only a ratchet finding carries a before value the predicate can read.
+
+    A threshold finding exists *because* its value broke the limit, so answering "inside"
+    for one would demote the absolute rules as well; and "not known" is the answer that
+    keeps a refusal rather than inventing an exemption.
+    """
+    threshold_finding = Finding(
+        kind="threshold",
+        rule="routine.CountLineCode",
+        metric="CountLineCode",
+        scope="routine",
+        value=70.0,
+        before=40.0,
+        limit=60.0,
+        severity="error",
+        blocking=True,
+        message="routine deep.walk CountLineCode is 70, which exceeds the maximum 60",
+    )
+    no_limit = threshold_finding.model_copy(update={"kind": "ratchet", "limit": None})
+
+    assert within_limit(threshold_finding) is False
+    assert within_limit(no_limit) is False
+
+
+def test_the_message_inside_the_limit_names_the_bound_that_is_still_holding(
+    after: ProjectSnapshot, before: ProjectSnapshot
+) -> None:
+    """What a below-limit growth prints, since it is no longer a refusal (req 7.1).
+
+    The old sentence -- "an affected entity may not get worse than it was" -- is kept for the
+    findings that still block and dropped from the ones that do not, because a warning that
+    states a rule the run will not enforce is worse than no warning at all.
+    """
+    (inside,) = ratchet(after, before, threshold("routine", "CyclomaticStrict", Limit(max=20)))
+    (outside,) = ratchet(after, before, threshold("routine", "CyclomaticStrict", Limit(max=10)))
+
+    assert inside.message == (
+        "routine app.build_parser CyclomaticStrict rose from 6 to 12, still within the maximum 20"
+    )
+    assert outside.message == (
+        "routine app.build_parser CyclomaticStrict rose from 6 to 12; "
+        "an affected entity may not get worse than it was"
+    )
+
+
+def test_the_message_on_a_minimum_names_the_minimum(
+    after: ProjectSnapshot, before: ProjectSnapshot
+) -> None:
+    """The ``min`` wording, so the sentence does not say "maximum" about a floor."""
+    findings = ratchet(after, before, threshold("file", "RatioCommentToCode", Limit(min=0.1)))
+
+    (fell,) = [finding for finding in findings if finding.path == RULES]
+
+    assert fell.message == (
+        "file src/analysis/rules.py RatioCommentToCode fell from 0.2 to 0.19, "
+        "still within the minimum 0.1"
+    )

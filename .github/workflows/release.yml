@@ -1,0 +1,135 @@
+# Build the release artifacts, prove the wheel actually runs, and -- only on a tag -- publish.
+#
+# This sits beside gate.yml rather than repeating it: the `gate` job below *calls* that
+# workflow (`workflow_call`), so there is still exactly one gate command in the repository.
+# A tag push does not match gate.yml's `branches: ["**"]`, so without that call a release
+# would be built from a tree nothing had gated.
+#
+# The licensed contract tests do not run here and cannot: a GitHub-hosted runner has no
+# SciTools Understand installation and no licence, so `tests/conftest.py` skips every
+# `contract`-marked test. That skip is deliberate and is made visible by the
+# `licensed tests NOT run here` step below, which names them. They are run by a developer
+# with SCITOOLS_HOME set, or by a self-hosted runner whose hostname matches the licensed
+# runs the whole suite in a container with no network at all.
+#
+# Nothing here releases on its own: `release` requires a `v*` tag, and it attaches the
+# environment, so cutting a release stays a human decision.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Exactly the gate on every branch: one command, defined in one place.
+  gate:
+    uses: ./.github/workflows/gate.yml
+
+  build:
+    name: build the sdist and wheel, then run the wheel
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # THROUGH DAGGER, deliberately. The gates, the build and the wheel smoke-test are
+      # defined once in .dagger/module/src/scitools_hook_ci/main.py and run identically here
+      # and on a developer machine. A workflow that re-spells the same commands in YAML is a
+      # second definition that drifts from the first, and the drift is only ever discovered
+      # by a release that behaves differently from every local run that preceded it.
+      #
+      # `ci` runs the licence-free gates in order (cheap first), builds the sdist and wheel,
+      # and installs the wheel into a container holding no source tree -- a src/ on sys.path
+      # would hide exactly the breakage that step exists to find. Task 9.1 shipped a wheel
+      # that built cleanly and could not import, because of a typer floor no gate could see.
+      - name: Gate, build and smoke-test the wheel (Dagger)
+        uses: dagger/dagger-for-github@v7
+        with:
+          version: "0.21.9"
+          verb: call
+          module: .dagger
+          args: ci --source=.
+
+      # Same module, so the artifact uploaded is the one the step above verified.
+      - name: Export the built distribution
+        uses: dagger/dagger-for-github@v7
+        with:
+          version: "0.21.9"
+          verb: call
+          module: .dagger
+          args: build-dist --source=. export --path=dist
+
+      - name: List what was built
+        run: ls -l dist
+
+      # A tag that disagrees with pyproject.toml publishes a file whose name says one thing
+      # and whose metadata says another. This cannot live in the Dagger module: it is about
+      # the git ref, which the module never sees.
+      - name: The tag and the packaged version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          packaged=$(python3 -c \
+            "import pathlib, tomllib; \
+             print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          tagged="${GITHUB_REF_NAME#v}"
+          echo "pyproject: $packaged   tag: $tagged"
+          test "$packaged" = "$tagged"
+
+      - name: Licensed tests NOT run here
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          echo "These need a licensed SciTools Understand and are skipped on a hosted runner:"
+          uv run pytest -m contract --collect-only -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: attach the artifacts to a GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # This tool is NOT published to PyPI and will not be. It is distributed as a GitHub
+    # release, which is what the pre-commit shim's `uvx --from git+...` resolves against.
+    # There is therefore no trusted-publisher setup, no API token, and nothing to configure
+    # outside this repository.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Create the release and attach the sdist and wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *a*|*b*|*rc*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $prerelease

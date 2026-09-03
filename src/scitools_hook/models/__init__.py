@@ -2,8 +2,12 @@
 
 One vocabulary for the whole package: adapters produce these models, analysis consumes and
 produces them, report and runner render them. The modules are grouped by subject —
-snapshots, findings, change, understand records, git records, cache state, baseline and the
-progress ports — and every public name is re-exported here.
+snapshots, findings, change, understand records, git records, cache state, baseline, the
+progress ports and the shadow port — and every public name is re-exported here.
+
+Two of those modules hold ``Protocol``s rather than data (``progress``, ``ports``). They are
+here because a port has to sit *below* both the component that calls it and the component
+that satisfies it, and ``models`` is the only layer below both adapters.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from scitools_hook.models.git import (
     SyncTargetKind,
     WorktreeTarget,
 )
+from scitools_hook.models.ports import RepositoryRoot, ShadowPort
 from scitools_hook.models.progress import CommandLog, NullCommandLog, NullProgress, Progress
 from scitools_hook.models.snapshot import (
     ArchNode,
@@ -109,7 +114,9 @@ __all__ = [
     "Progress",
     "ProjectSnapshot",
     "RawViolation",
+    "RepositoryRoot",
     "RunResult",
+    "ShadowPort",
     "Side",
     "StagedChange",
     "StructureRuleName",

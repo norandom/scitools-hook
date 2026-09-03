@@ -63,10 +63,15 @@ TEMPLATE_PATH: Final = Path(__file__).with_name("hook_template.sh")
 """The shipped shim, read at install time rather than embedded as a Python string."""
 
 RESOLVED_PLACEHOLDER: Final = "@SCITOOLS_HOOK_RESOLVED@"
+# This tool is distributed as a GitHub release, never on PyPI, so a bare `uvx scitools-hook`
+# resolves to nothing. The shim needs a `--from` source, and it is substituted at install time
+# rather than written into the template so a fork installs its own.
+SOURCE_PLACEHOLDER: Final = "@SCITOOLS_HOOK_SOURCE@"
+DEFAULT_SOURCE: Final = "git+https://github.com/norandom/scitools-hook"
 """The single substitution point in the template, inside a comment."""
 
 RESOLVED_DIRECT: Final = "scitools-hook, found on PATH"
-RESOLVED_UVX: Final = "uvx scitools-hook (scitools-hook itself was not on PATH)"
+RESOLVED_UVX: Final = "uvx --from the release source (scitools-hook was not on PATH)"
 RESOLVED_MISSING: Final = "neither scitools-hook nor uvx was on PATH at install time"
 """The three things the header can say. Fixed strings, so nothing from the environment --
 a directory name, a user name, a version -- can reach the script's text."""
@@ -373,7 +378,9 @@ def render(resolved: str) -> str:
             "placeholder, so this installation of scitools-hook is incomplete",
             hint="Reinstall scitools-hook.",
         )
-    return template.replace(RESOLVED_PLACEHOLDER, resolved)
+    return template.replace(RESOLVED_PLACEHOLDER, resolved).replace(
+        SOURCE_PLACEHOLDER, DEFAULT_SOURCE
+    )
 
 
 def _template() -> str:

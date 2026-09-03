@@ -115,6 +115,11 @@
   - `@typing.overload` -- two stubs plus the implementation are **three** `python Function` entities, all `typed.widen` with `parameters == 'x'`. The worker emits three records; `ProjectSnapshot.entities` is a mapping, so **one survives** (measured: the last in walk order, which on this build is the implementation).
   - A plain redefinition -- `def same(x)` written twice in one module -- gives two entities with an identical key.
   Consequence: for such a routine the ratchet compares whichever record survived on each side. Recorded for task 11.6 together with the census above; not fixed here (the models are outside task 10.1's boundary).
+
+#### Task 11.6's answer to both findings above
+- **`parameters` stays in the key, and the join is repaired above it.** The census says dropping the field costs nothing on Python and merges a real C++ overload pair, so `EntityKey` keeps it and `analysis.ratchet.pair_changed_signatures` pairs a key present only in `after` with one present only in `before` when **exactly one of each** shares `(scope, path, longname)` -- `EntityKey.family`. That is exactly "the same routine, new signature"; a new overload (one added, none removed), a deleted one (none added) and two signatures changing at once (two and two) are all left unpaired, which is the behaviour requirements 4.5 and 4.10 already had. Measured through the installed CLI: a routine that grows *and* gains three parameters now reports the same routine-scope ratchet rules as the same growth with its signature untouched, `routine.CountParams` excepted; before this it reported none at all.
+- **Only the ratchet pairs.** `attach_before` still matches on the exact key, because the value it supplies is what lets `analysis.classify` call a violation **pre-existing** and stop blocking. A pairing may add a finding; it may not excuse one.
+- **The duplicate key no longer drops a record.** `ProjectSnapshot` numbers the records a single key names, in file order (line, then kind, then short name), through an `EntityKey.ordinal` that is `0` for every key the worker emits and is left out of both the token and the wire form when it is zero -- so the worker's four-field key documents, every stored baseline and every cached snapshot are unchanged. Measured through the installed CLI: a file holding `def same(x)` twice, one body five deep and the other four, used to report **one** `routine.MaxNesting` violation (the four-deep one, whichever survived the mapping) and now reports **both**.
 - **Understand cannot tell a `classmethod` from a `staticmethod`**: both are `python Function Attribute Static`, and only the leading `cls` parameter separates them. A rule that branched on the kind string would treat them alike.
 - **A Python property getter/setter pair does NOT collide**: Understand names them `Gauge.value-getter` and `Gauge.value-setter`, so their long names differ.
 - **`__init__.py` is kind `python File`, not `python Module File`** -- both are inside the `file ~unknown ~unresolved` kind string, so nothing is lost, but a rule that matched the kind name would miss every package initialiser.
@@ -302,6 +307,112 @@ Read from `Metric.list` for all twelve languages the extension map can configure
   still blocks a third project-level layer. The shipped default is worth revisiting for any
   language whose frameworks use deep base classes.
 
+#### RE-MEASURED AFTER THE PIN (tasks 11.12 and 11.14, on Understand 6.5.1204)
+
+Everything in the three sections above was measured **before** task 11.10 pinned the
+interpreter. Both findings were re-measured afterwards, and the pin moved one of them a long
+way, left the second untouched, and turned out not to have closed the third at all.
+
+**The pin does close the editable-install half of 11.12 -- and only that half.** One shadow
+copy of this repository (172 files), one `und`, the analysis differing in nothing but the
+interpreter, counting file dependency edges that stay inside the analysed tree:
+
+| interpreter `und` executed | intra-tree file dependency edges | file entities enrolled |
+|---|---|---|
+| this project's venv `python` (carries the editable install) | **66** | 861 |
+| the pinned symlink | **1272** | 579 |
+| the pinned symlink, ambient `PYTHONPATH=<repo>/src` | **66** | 659 |
+
+`Errors:63` on every one of them, so the banner distinguishes nothing -- the fourth time
+`Errors:N` has been the wrong thing to read. What distinguishes them is the database:
+pre-pin, `shadow/src/scitools_hook/cli/app.py` has `depends()` **0** and its imports resolve
+to `/home/mc/Source/scitools-hook/src/...`, marked as *library* entities, so the edges do not
+merely leave the tree, they stop existing. Post-pin the same file has `depends()` **10**,
+every target inside the shadow.
+
+**Three ambient variables walk straight around the pin, because 11.10 pinned `PATH` and
+inherited everything else.** Each measured on its own, changing one variable:
+
+- `PYTHONPATH=<repo>/src` -- the row above: 1272 edges back down to 66, the whole of
+  `structure.new_dependencies` and `structure.fan` silently off.
+- `PYTHONUSERBASE` pointing at a `site-packages` holding one `.pth` -- the same leak through
+  the per-user path. A pinned `python` is not a virtualenv, so unlike the Gate's own
+  interpreter it has per-user packages switched *on*.
+- `PYTHONHOME=/nonexistent` -- **the Python 2 model is back**: `has_key`, `iteritems` and
+  `raw_input` in the database, `Errors:8`, and the routine after the parse failure gone. The
+  pinned link dies before printing anything and `und` reads that as "no python at all". This
+  is exactly the silent green 11.10 exists to prevent, reached around 11.10's own fix.
+
+Fixed by `PinnedPython.environment`: drop every `PYTHON*` variable and set
+`PYTHONNOUSERSITE=1`, which is `python -E -s` written as an environment. Verified through the
+production `UndCli`: all four environments now give byte-identical databases -- 287 file
+entities, 172 analysed, **1272** edges. `tests/e2e` pins it at the `check` level and was
+checked to **fail** on the pre-fix build, where the hostile run exits **0** on a repository
+holding a dependency cycle.
+
+- **A false green worth recording.** The first version of that e2e test passed on the broken
+  build. Both runs shared a setup that was not chosen: `und analyze` is incremental, so the
+  second `check` re-parsed nothing and answered out of the database the *first* environment
+  had built. The test only measures anything with a `db rebuild` in each environment. A
+  second false green preceded it -- the first fixture put the package directly under the
+  analysis root, where Understand resolves the import project-relatively and never consults
+  `sys.path` at all; the package has to sit under a subdirectory (`src/pkg/`) for the defect
+  to be reachable, which is why the real repository has it.
+- `PYTHONNOUSERSITE=1` also removes ~292 enrolled files on this repository (579 -> 287 file
+  entities), all of them from `~/.local/lib/python3.14/site-packages`. That is user-global
+  state deciding what the Gate sees, so removing it is the same determinism decision 11.10
+  already took.
+
+**11.14, first default: the pin changed what `class.MaxInheritanceTree` measures, and made it
+measure backwards.** One fixture, one `und`, only the interpreter differing:
+
+| class | venv `python` | pinned `python` | base declared in |
+|---|---|---|---|
+| `Plain` / `PlainChild` / ... / 5 deep | 0 / 1 / 2 / 3 / 4 | 0 / 1 / 2 / 3 / 4 | the project |
+| `Model(BaseModel)` | **5** | **1** | pydantic |
+| `ModelChild` / `ModelGrandChild` | 6 / 7 | 2 / 3 | pydantic |
+| `Speaker(Protocol)` | 5 | **5** | `typing` |
+| `Louder(Speaker, Protocol)` | 6 | **6** | `typing` |
+| `MyEnum(enum.Enum)` / `MyABC(abc.ABC)` | 4 | **4** | stdlib |
+| `MyError(Exception)` / its child | 3 / 4 | **3 / 4** | builtins |
+| `MyStringIO(io.StringIO)` | 0 | **0** | a C module |
+
+- On this repository's 152 classes the shipped limit of 4 went from **62** findings to
+  **5**, and the 54 that scored 6 now score 2. All five survivors are `Protocol`
+  declarations (`Probes`, `Progress`, `CommandLog`, `MetricAvailability`) plus
+  `ArchitectureNotFoundError`; not one is a hierarchy this project built.
+- So the metric is **loudest where there is no hierarchy and silent where there is one**: one
+  level of project inheritance costs 0, 1, 3, 4 or 5 depending only on where its base lives,
+  and a framework hierarchy genuinely four deep now reports 1. The number is not comparable
+  across the classes it ranks.
+- The stdlib floor is **stable**, which was measured rather than assumed: identical scores
+  under pinned CPython 3.11.13, 3.12.14, 3.13.13 and 3.14.4. So calibrating a number to it
+  would work -- and is still the wrong move, because it would ship a constant calibrated
+  against the standard library rather than against the operator's code, and would leave the
+  inversion untouched. **Decision: keep `max = 4`, ship it as a warning.** The direction that
+  would actually fix it is a depth counted only over bases declared inside the project, which
+  needs a synthetic metric (`config/metric_names`, `understand/worker`) and is out of 11.14's
+  boundary.
+
+**11.14, second default: the pin changes `routine.Essential` not at all**, which is the
+control the first row needed. Identical histograms over 998 routines on both interpreters:
+`{1: 824, 3: 99, 4: 50, 5: 15, 6: 5, 7: 3, 8: 2}`, 25 findings at the shipped limit. On the
+fixture, `six_guards` scores **7** and `six_elif_ladder` **1** with `CyclomaticStrict` **7**
+for both, and `three_guards` scores exactly **4** -- the shipped maximum fires on the fourth
+guard clause, while the rule's own hint says "returns early". **Decision: keep `max = 4`,
+ship it as a warning**; `CyclomaticStrict`, `CyclomaticModified`, `MaxNesting` and `CountPath`
+keep the blocking half and are untouched.
+
+**Both of this repository's threshold deviations are therefore gone.** `Essential` became
+byte-for-byte the new default. `MaxInheritanceTree = 6` was raised for a measurement that the
+pin has since falsified, so it is removed rather than re-justified, and the five warnings it
+leaves are shown instead of configured away.
+
+Severity and ratchet stay independent: `analysis.ratchet` reads `severity` only to set
+`blocking`, so both demoted rules still compare against HEAD. Measured on the fixture
+snapshots -- an `Essential` ratchet regression on `src/cli/app.py` is still raised, and is now
+a warning rather than a block.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
@@ -363,7 +474,7 @@ Read from `Metric.list` for all twelve languages the extension map can configure
 - **Simplification**: no plugin system; no plotting library; one `Finding` type; SVGs only via `Ent.draw`; before/after only in staged/worktree/files modes (no arbitrary two-commit diff beyond `explain --range A..B`, which reuses the same shadow mechanism).
 
 ## Risks & Mitigations
-- Entity identity across DBs verified for functions, methods, classes and files (see live experiment); **closed by task 10.1's contract suite** -- C++ overloads separate on `parameters` alone, a function template is one entity, a Python lambda is no entity at all, and the residual hole is the opposite of the one feared: several entities can share one key (`@typing.overload`, a plain redefinition) and the extra records are dropped silently. Unmatched entities degrade to absolute-threshold-only with a note in the finding.
+- Entity identity across DBs verified for functions, methods, classes and files (see live experiment); **closed by task 10.1's contract suite** -- C++ overloads separate on `parameters` alone, a function template is one entity, a Python lambda is no entity at all, and the residual hole is the opposite of the one feared: several entities can share one key (`@typing.overload`, a plain redefinition) and the extra records were dropped silently. **Task 11.6 closed both halves**: the extra records are numbered instead of dropped, and a routine whose parameter list changed is paired with the key it left behind. An entity that still cannot be paired degrades to absolute-threshold-only.
 - Licensing: `und` and the API share the GUI's `~/.config/SciTools/License.conf` (Linux) and need HTTPS to `licensing.scitools.com` for heartbeats; a sandboxed shell without network produced "No valid Und license found" here. CLI activation: `und -setlicensecode <code>` / env `UNDERSTAND_LICENSE_CODE`; `und -isundlicensed` for scripts. `doctor` reports `und license` output verbatim; the hook shim's soft-fail variable prevents lock-out.
 - First-run analysis time on large repos — explicit progress messages, `db rebuild` and `db path` commands, cache location documented.
 - Metric availability differs per language (e.g. Python lacks some C++ metrics) — validate configured metrics against `Metric.list(kind)` per language; report "unavailable" once per run (Req 5.5).

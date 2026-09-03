@@ -146,6 +146,16 @@ Standard output was not named by an option, so advice about naming a better path
 decision the operator never made -- it points them at a mistake they cannot find.
 """
 
+CLOSED_STDOUT: Final = "cannot write to standard output: it was closed before this process started"
+"""A standard output that was never there, named as the condition rather than as a symptom.
+
+``scitools-hook --version >&-`` closes descriptor 1 at exec and CPython then sets
+``sys.stdout`` to ``None``. Measured before this constant existed, every write became
+``error: AttributeError: 'NoneType' object has no attribute 'write'`` at exit 70 -- an
+implementation detail of this module presented as an internal fault of the gate, which is the
+same mistake exit 70 on a full disk was.
+"""
+
 MAX_DESTINATION: Final = 120
 """How much of a destination one error message may quote before it stops being one line."""
 
@@ -217,8 +227,18 @@ class SelectionChoice:
 
 
 def in_hook(env: Mapping[str, str]) -> bool:
-    """Whether this process was started by a git hook (req 12.3)."""
-    return any(name in env for name in HOOK_ENV_VARS)
+    """Whether this process was started by a git hook (req 12.3).
+
+    A blank value counts as unset, which is the convention the rest of the package already
+    holds to (``config.loader._config_home``, ``understand.locator._env_home``,
+    ``understand.fake.fake_directory``): an exported-but-empty variable is how a caller says
+    "not this one". Nothing is lost by reading it that way, because git never exports an empty
+    ``GIT_INDEX_FILE`` -- the value it sets is the path to the index. A membership test would
+    read ``GIT_INDEX_FILE= scitools-hook check`` as a hook run and silently default the
+    selection to ``--staged`` where the operator would see ``--all``, which is a different set
+    of files rather than a slower answer.
+    """
+    return any(env.get(name, "").strip() for name in HOOK_ENV_VARS)
 
 
 def resolve_selection(
@@ -559,7 +579,16 @@ def _short(destination: str) -> str:
 def _write_stdout(document: str) -> None:
     """Write findings to standard output; no way of failing may outrank the command's verdict.
 
-    Two outcomes, and the difference between them is whether anything went wrong:
+    **The stream may not be there at all**, and that is settled before anything is written.
+    ``>&-`` closes descriptor 1 at exec and CPython sets ``sys.stdout`` to ``None``; reaching
+    the write then produced ``AttributeError: 'NoneType' object has no attribute 'write'`` at
+    exit 70, naming a Gate internal for a condition the operator created deliberately. It is
+    the same condition ``--output`` reports when a destination cannot be written -- the report
+    was not delivered -- so it raises the same error and the same code (see
+    :data:`CLOSED_STDOUT`).
+
+    Once the stream exists, three outcomes, and the difference between them is whether
+    anything went wrong:
 
     * **A reader that stopped reading is not a fault.** ``check --format json | head`` closes
       the pipe once ``head`` has what it asked for. Reporting that would spend exit code 70 --
@@ -572,22 +601,41 @@ def _write_stdout(document: str) -> None:
     * **Anything else is re-raised as itself**, so the structural handler renders requirement
       12.7's one-liner. Swallowing would be a silent green: findings never delivered, exit 0.
 
-    What all three need is :func:`_detach`. Whatever the failure, the stream is detached
-    *first*, because CPython flushes ``sys.stdout`` again at interpreter shutdown -- after
-    the exit code has been decided -- and a second failure there replaces the documented
-    status with 120 and prints a traceback nobody can act on. Measured on this build:
-    ``scitools-hook --version > /dev/full`` exited **120** with 2872 bytes of traceback.
+    Each arm calls :func:`_detach` first, because CPython flushes ``sys.stdout`` **again** at
+    interpreter shutdown -- after the exit code has been decided -- and a second failure there
+    replaces the documented status with 120 and prints a traceback nobody can act on. That is
+    measured, and it is measured **on the** ``OSError`` **arm**: with the call in place
+    ``scitools-hook --version > /dev/full`` exits 7 with 143 bytes of diagnostic, and with the
+    call removed from that arm alone it exits **120** with 232 bytes ending in ``Exception
+    ignored``. The ``BrokenPipeError`` arm is pinned separately, by a test that reads the
+    descriptor afterwards and finds the null device.
 
-    The final catch is on ``Exception``, not on one errno, because guarding a TYPE rather
-    than the outcome is how this defect survived a first fix that named only
-    ``BrokenPipeError``: a closed stream raises ``ValueError``, a path decoded with
-    ``surrogateescape`` (which is how ``git`` hands us a name that is not valid UTF-8) raises
-    ``UnicodeEncodeError``, and a substituted stream can raise ``AttributeError``. Its
-    breadth is insurance rather than a measured need -- narrowing it is *equivalent* for
-    every shape we can construct, because a stream that raises those has no real descriptor
-    for :func:`_detach` to redirect. What the tests prove for those shapes is the re-raise.
-    ``KeyboardInterrupt`` and ``SystemExit`` are not ``Exception`` and still propagate.
+    **The third arm's ``_detach`` is a claim rather than a test, and is recorded as one.** No
+    shape has been found in which it changes anything, and the reason is mechanical rather
+    than a gap in imagination: to matter, a stream must fail with a non-``OSError``
+    ``Exception``, own a real descriptor, *and* still hold buffered bytes for the shutdown
+    flush to fail on. Measured on this build, an encode failure leaves nothing buffered --
+    ``TextIOWrapper`` encodes the whole string before it appends any of it, so a write raising
+    ``UnicodeEncodeError`` leaves the buffer as it was and a following ``flush()`` onto
+    ``/dev/full`` succeeds, while the same stream given pure ASCII buffers and then fails.
+    Six shapes were run with the call and without it -- ``--version`` and a findings document,
+    ASCII and UTF-8 standard output, a regular file and ``/dev/full``, both directly and
+    through the real application -- and the exit status and the whole of standard error were
+    byte-identical in all six. Two of those same six *do* separate the ``OSError`` arm, which
+    is what says the measurement was capable of finding a difference at all rather than blind.
+    The line stays because the alternative is a guard that holds only for the shapes anyone
+    thought to try; it is written down here as unpinned rather than left looking tested.
+
+    The catch is on ``Exception``, not on one errno, because guarding a TYPE rather than the
+    outcome is how this defect survived a first fix that named only ``BrokenPipeError``: a
+    closed stream raises ``ValueError``, a path decoded with ``surrogateescape`` (which is how
+    ``git`` hands us a name that is not valid UTF-8) raises ``UnicodeEncodeError``, and a
+    substituted stream can raise ``AttributeError``. What the tests prove for those shapes is
+    the re-raise. ``KeyboardInterrupt`` and ``SystemExit`` are not ``Exception`` and still
+    propagate.
     """
+    if sys.stdout is None:
+        raise ReportUndeliverableError(CLOSED_STDOUT, hint=REDIRECTION_HINT)
     try:
         sys.stdout.write(document)
         sys.stdout.flush()

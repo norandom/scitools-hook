@@ -70,7 +70,7 @@ malformed row from becoming a wrong finding rather than an error:
   **The inbound side: everything between a file name the Gate holds and what und receives.**
   ``und -files`` takes a list file whose format ``und`` defines, so the hazards are its
   grammar rather than a decoder's. Each item was measured against the real binary or quoted
-  from its own help; all four are **newly refused** by :func:`_unusable_name`, because a
+  from its own help; all four are **newly refused** by :func:`unusable_list_file_name`, because a
   name that cannot be *asked* about is a file that goes unchecked — a clean report on code
   nobody looked at.
 
@@ -345,13 +345,13 @@ class CodeCheckRunner:
         An empty ``files`` list starts no process. There is nothing to check, and ``und``
         would write no CSV, which the wrapper reports as a failed run.
 
-        Each name is held against :func:`_unusable_name` before it goes anywhere, for the
+        Each name is held against :func:`unusable_list_file_name` before it goes anywhere, for the
         reasons enumerated in the module docstring under *the inbound side*.
         """
         if not files:
             return []
         for position, name in enumerate(files):
-            problem = _unusable_name(name)
+            problem = unusable_list_file_name(name)
             if problem is not None:
                 raise AnalysisFailedError(
                     f"the file list for CodeCheck holds {name!r} at position {position}, "
@@ -362,8 +362,17 @@ class CodeCheckRunner:
         return read_violations(written)
 
 
-def _unusable_name(name: str) -> str | None:
+def unusable_list_file_name(name: str) -> str | None:
     """Why ``name`` cannot be handed to ``und -files``, or ``None`` when it can.
+
+    **Public, and named for the format rather than for this module.** ``und -files`` is read
+    by ``codecheck``, by ``analyze`` and by ``remove``, so the same grammar is written by
+    three commands across two modules: this one, ``understand/database.py`` and
+    ``runner/check.py``. It was called ``_unusable_name`` while it had one outside importer
+    and kept the leading underscore when it acquired a second, with both of them aliasing it
+    to this very name on the way in -- which is not a private predicate, it is a public one
+    spelled twice (found by the import-direction gate, fixed by task 11.7). Its two siblings
+    below stay private: nothing outside this module calls them.
 
     The outbound predicate has had nine rounds of scrutiny and this side had one, which is
     why it is a list of measured refusals rather than a single rule: the list file is a

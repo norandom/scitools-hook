@@ -222,6 +222,10 @@ _STRUCTURE_HINTS: Final[dict[str, str]] = {
         "two architecture nodes depend on each other: move the shared code into a lower node "
         "both may use, or define the interface in the lower node and implement it above"
     ),
+    "structure.call_cycle": (
+        "these routines call each other in a cycle: give the recursion one entry point that "
+        "the others do not call back into, or turn the mutual recursion into an explicit loop"
+    ),
     "structure.layer": (
         "this edge crosses a layer boundary the architecture forbids: depend downwards only -- "
         "put an interface in the lower layer and inject the implementation from above"
@@ -233,6 +237,11 @@ _STRUCTURE_HINTS: Final[dict[str, str]] = {
     "structure.fan_out": (
         "this entity depends on too many others: hide one cluster of them behind a single "
         "collaborator and depend on that instead"
+    ),
+    "structure.reachable_complexity": (
+        "a reviewer of this routine has to hold everything it calls in their head: extract the "
+        "deepest branch of the subtree behind a narrower collaborator, or simplify the "
+        "routines it reaches -- the finding lists them"
     ),
     "structure.new_dependencies": (
         "the change adds too many dependencies to one file: keep the new code in a module of "

@@ -57,7 +57,14 @@ def test_reducer_registry_has_exactly_the_documented_prefixes() -> None:
     assert list(STATS_REDUCERS) == [prefix for prefix, _ in EXPECTED_REDUCERS]
 
 
-@pytest.mark.parametrize(("prefix", "func"), EXPECTED_REDUCERS, ids=lambda x: str(x))
+# `ids=lambda x: str(x)` put the reducer's repr in the test id, which for a function is
+# `<function mean at 0x704f2e9616f0>` -- a memory address. That made the id differ between any
+# two processes, so `pytest -n` refused to run at all ("Different tests were collected between
+# gw0 and gw1"), and it also meant no id could be reused to re-run a single case or matched
+# against a previous CI log. The prefix alone names the case and is stable.
+@pytest.mark.parametrize(
+    ("prefix", "func"), EXPECTED_REDUCERS, ids=[p for p, _ in EXPECTED_REDUCERS]
+)
 def test_reducer_is_the_intended_statistics_function(
     prefix: str, func: Callable[[Sequence[float]], float]
 ) -> None:

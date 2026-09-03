@@ -144,13 +144,15 @@ def test_every_adapter_records_the_same_two_statuses() -> None:
 
     The ``--verbose`` stream mixes ``git``, ``und``, the API worker and the installation
     probes, so an operator who has learnt that 124 means "killed" and 127 means "never
-    started" must not have to learn a different pair per adapter. Three of the four now import
-    the pair from this module, which makes divergence impossible rather than merely absent.
+    started" must not have to learn a different pair per adapter. **All four now import the
+    pair from this module**, which makes divergence impossible rather than merely absent.
 
-    ``git.repo`` is the exception and it is the reason this test exists: task 11.2's boundary
-    excluded that module (task 11.1 had just landed in it), so its two literals are still a
-    separate definition. **Redirecting them to this module is the remaining half of the
-    decision**, and until that happens this assertion is what stops the copy from drifting.
+    ``git.repo`` was the last exception, for a boundary reason rather than a technical one:
+    task 11.2 excluded that module because task 11.1 was landing in it, so its two literals
+    stayed a separate definition and this assertion was what stopped the copy from drifting.
+    Task 11.3 replaced them with the import. What is left here is a **census**, not a
+    drift-guard: it fails if any adapter grows a private copy again, which is the shape the
+    duplication took the first time.
     """
     from scitools_hook.git import repo as git_repo
     from scitools_hook.runner import context as run_context
@@ -202,3 +204,24 @@ def test_no_undocumented_error_class_exists() -> None:
         if issubclass(obj, GateError) and obj.__module__ == errors.__name__
     }
     assert defined == {cls for cls, _ in ERROR_CODES}
+
+
+def test_the_package_version_is_the_one_the_distribution_declares() -> None:
+    """One version, not two that can drift apart.
+
+    They did drift: `pyproject.toml` reached `0.1.0a1` while `scitools_hook/__init__.py` still
+    carried a literal `0.1.0`, so the built wheel installed and ran while reporting the older
+    number -- and `__version__` is written into `RunResult.tool_version`, hence into every SARIF
+    report. This asserts the module agrees with the distribution metadata, which is what
+    `pyproject.toml` produces, so the two cannot disagree again.
+    """
+    import tomllib
+    from importlib.metadata import version
+    from pathlib import Path
+
+    import scitools_hook
+
+    declared = tomllib.loads(
+        (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    assert scitools_hook.__version__ == version("scitools-hook") == declared

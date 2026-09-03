@@ -100,8 +100,55 @@ DEFAULT_FAN: Final[dict[FanKey, float]] = {
 """Fan-in/fan-out maxima for files and classes (req 6.4); reported as warnings by default."""
 
 _SOFT_THRESHOLDS: Final[frozenset[str]] = frozenset(
-    {"file.RatioCommentToCode", "class.PercentLackOfCohesion"}
+    {
+        "file.RatioCommentToCode",
+        "class.PercentLackOfCohesion",
+        "routine.Essential",
+        "class.MaxInheritanceTree",
+    }
 )
+"""Thresholds shipped as warnings: they are reported, they are ratcheted, they never block.
+
+The first two are soft because the metric is a ratio or is unavailable for Python. The other
+two are here for a harder reason, measured in task 11.14 on Understand 6.5.1204: **neither
+number is comparable across the entities it ranks**, so neither can carry a refusal. Both
+keep their limits, and both keep their ratchets -- ``analysis.ratchet`` reads ``severity``
+only to set ``blocking``, so the comparison against HEAD is untouched by being demoted.
+
+**``routine.Essential`` ranks style, not complexity, and contradicts its own hint.** One
+file, one database: the same six-way branch written as six guard clauses scores ``Essential``
+**7**; written as one ``elif`` ladder with a single exit it scores **1**; both score
+``CyclomaticStrict`` **7**. One guard scores 1 and three score 4, so the shipped maximum of 4
+fires on the *fourth* guard clause. Understand counts an early return as unstructured control
+flow -- and ``report.hints`` answers a ``routine.Essential`` finding with "extract the block
+that is jumped out of into a routine that **returns early**", which raises the metric. A
+default that blocks the refactoring the same tool recommends is not a default; 25 of this
+repository's 998 routines are over the limit and 824 of them score 1. The blocking half of
+the concern is untouched and still shipped as an error: ``CyclomaticStrict`` 10,
+``CyclomaticModified`` 8, ``MaxNesting`` 3 and ``CountPath`` 100.
+
+**``class.MaxInheritanceTree`` measures where a base class lives, and now measures it
+backwards.** One fixture, one ``und``, varying only which interpreter Understand analysed
+with: ``class Model(BaseModel)`` scores **5** when pydantic is on that interpreter's
+``sys.path`` and **1** when it is not, and one unchanged line of source is the whole input.
+Since task 11.10 pinned the interpreter, it is deliberately *not* -- a metric must not depend
+on which libraries sit beside the Gate -- so third-party depth is now invisible. What is
+still visible is the pure-Python standard library, and it is expensive: ``class X(Protocol)``
+scores **5** and a subclass of it **6**, ``enum.Enum`` and ``abc.ABC`` **4**, an ``Exception``
+subclass **3** and its child **4**, while ``io.StringIO`` -- a C module -- scores **0**. So
+one level of project inheritance costs anything from 0 to 5 depending on where its base
+lives, and the metric is **loudest where there is no hierarchy and silent where there is
+one**: all 5 findings the shipped limit raises on this repository's ``src/`` are Protocol
+declarations or one exception subclass, and none is a hierarchy this project built.
+
+Raising the number instead was measured and rejected: 6 clears the standard library's floor
+today (Protocol 5, its subclass 6, stable across CPython 3.11, 3.12, 3.13 and 3.14) but it
+calibrates a shipped constant against the standard library rather than against the code, and
+it leaves the inversion in place -- a framework hierarchy four deep still reports 1. The
+number stays honest about what Understand saw; the severity stops it deciding a commit. The
+real remedy is a depth counted only over bases declared inside the project, which needs a
+synthetic metric and is recorded as the direction in ``research.md``.
+"""
 
 
 def _threshold_severities() -> SeverityMap:
@@ -124,7 +171,7 @@ DEFAULT_SEVERITIES: Final[SeverityMap] = {
     "structure.coupling": "error",
     "codecheck": "warning",
 }
-"""Rule name -> default severity (req 3.7). Ratio and cohesion thresholds only warn."""
+"""Rule name -> default severity (req 3.7). The four :data:`_SOFT_THRESHOLDS` only warn."""
 
 DEFAULT_HINTS: Final[dict[str, str]] = {}
 """Operator hint overrides; the built-in hint catalogue lives in ``report.hints``."""

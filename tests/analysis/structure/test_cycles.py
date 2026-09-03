@@ -237,3 +237,90 @@ def test_the_fixture_architecture_edges_stay_acyclic() -> None:
     after = snapshot_fixture("after")
 
     assert find_new_cycles(before.arch_edges, after.arch_edges, "error", "arch") == []
+
+
+# --- a deferred dependency cannot close an import cycle (import_time) ---------------
+
+
+def timed(src: str, dst: str, refs: int, import_time: int | None) -> DepEdge:
+    """One edge whose import-time share is stated; ``None`` is "never measured"."""
+    return DepEdge(src=src, dst=dst, refs=refs, import_time=import_time)
+
+
+def test_a_cycle_closed_only_by_deferred_dependencies_is_not_a_cycle() -> None:
+    """The measured false positive: nine files, closed by TYPE_CHECKING and local imports.
+
+    Both edges carry references -- the two files really do use each other's names -- and
+    neither reference runs when the module is loaded, so importing one cannot import the
+    other and there is nothing to break.
+    """
+    edges = [timed("a.py", "b.py", 6, 0), timed("b.py", "a.py", 3, 3)]
+    assert find_new_cycles(None, edges, "error", "file") == []
+
+
+def test_a_cycle_closed_by_module_level_imports_is_still_a_cycle() -> None:
+    """The negative control. A fix that silenced this too would be worse than the defect."""
+    edges = [timed("a.py", "b.py", 6, 2), timed("b.py", "a.py", 3, 3)]
+    assert [members(finding) for finding in find_new_cycles(None, edges, "error", "file")] == [
+        ["a.py", "b.py"]
+    ]
+
+
+def test_one_deferred_edge_is_enough_to_open_a_cycle() -> None:
+    """A cycle is only as strong as its weakest edge: one deferred link and it is not closed."""
+    edges = [
+        timed("a.py", "b.py", 4, 4),
+        timed("b.py", "c.py", 4, 4),
+        timed("c.py", "a.py", 4, 0),
+    ]
+    assert find_new_cycles(None, edges, "error", "file") == []
+
+
+def test_an_unmeasured_edge_keeps_the_older_louder_behaviour() -> None:
+    """``None`` is not zero: an edge nobody measured must behave exactly as it did before.
+
+    This is what keeps C++ -- whose ``#include`` produces no import reference at all -- and
+    any Python file that would not parse reporting the cycles they reported yesterday.
+    """
+    edges = [timed("a.h", "b.h", 6, None), timed("b.h", "a.h", 3, None)]
+    assert [members(finding) for finding in find_new_cycles(None, edges, "error", "file")] == [
+        ["a.h", "b.h"]
+    ]
+
+
+def test_a_measured_and_an_unmeasured_edge_still_close_a_cycle() -> None:
+    edges = [timed("a.py", "b.h", 6, 1), timed("b.h", "a.py", 3, None)]
+    assert len(find_new_cycles(None, edges, "error", "file")) == 1
+
+
+def test_the_before_side_is_reduced_the_same_way_as_the_after_side() -> None:
+    """Otherwise a cycle deferred on both sides would look new the moment the rule shipped."""
+    before = [timed("a.py", "b.py", 1, 0), timed("b.py", "a.py", 1, 1)]
+    after = [timed("a.py", "b.py", 2, 2), timed("b.py", "a.py", 1, 1)]
+    assert [members(finding) for finding in find_new_cycles(before, after, "error", "file")] == [
+        ["a.py", "b.py"]
+    ]
+
+
+def test_an_architecture_cycle_is_never_reduced() -> None:
+    """Architecture edges come from ``Arch.depends()`` and carry no import-time measurement.
+
+    Measured on a real project: the ``scripts`` <-> ``tests/unit`` architecture cycle fires
+    exactly as it did, because every architecture edge is ``None`` here by construction.
+    """
+    edges = [timed("Arch/a", "Arch/b", 6, 0), timed("Arch/b", "Arch/a", 3, 0)]
+    assert [members(finding) for finding in find_new_cycles(None, edges, "error", "arch")] == [
+        ["Arch/a", "Arch/b"]
+    ]
+
+
+def test_the_closing_references_shown_are_the_ones_that_actually_close_it() -> None:
+    """A cycle's evidence must not name an edge the reduction has just decided is not in it."""
+    edges = [
+        timed("a.py", "b.py", 5, 5),
+        timed("b.py", "a.py", 4, 4),
+        timed("a.py", "c.py", 9, 0),
+        timed("c.py", "b.py", 2, 2),
+    ]
+    findings = find_new_cycles(None, edges, "error", "file")
+    assert closing_refs(findings[0]) == ["a.py -> b.py (5 refs)", "b.py -> a.py (4 refs)"]

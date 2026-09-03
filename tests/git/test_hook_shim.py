@@ -322,7 +322,12 @@ def test_uvx_runs_the_gate_when_it_is_not_installed(shim: Shim) -> None:
     shim.stub("uvx", status=0)
     finished = run(shim)
     assert finished.returncode == 0
-    assert shim.arguments("uvx") == "scitools-hook check --staged"
+    # `--from` is load-bearing, not decoration: this tool is not on PyPI and never will be, so
+    # a bare `uvx scitools-hook` resolves to nothing. Asserting the whole argument string keeps
+    # the source in the command rather than letting it be dropped as noise.
+    assert shim.arguments("uvx") == (
+        "--from git+https://github.com/norandom/scitools-hook scitools-hook check --staged"
+    )
 
 
 def test_the_uvx_branch_reports_the_status_it_was_given(shim: Shim) -> None:

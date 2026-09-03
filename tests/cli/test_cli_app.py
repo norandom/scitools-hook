@@ -31,6 +31,7 @@ from scitools_hook.cli import db as db_module
 from scitools_hook.cli import doctor as doctor_module
 from scitools_hook.cli import explain as explain_module
 from scitools_hook.cli import hooks as hooks_module
+from scitools_hook.cli import recommend as recommend_module
 from scitools_hook.errors import ConfigError, NotAGitRepositoryError
 from scitools_hook.exit_codes import ExitCode, describe
 
@@ -38,6 +39,7 @@ SUBCOMMANDS = (
     "check",
     "explain",
     "baseline",
+    "recommend",
     "init",
     "config",
     "doctor",
@@ -46,14 +48,21 @@ SUBCOMMANDS = (
     "uninstall-hook",
     "agent-rules",
 )
-"""The ten names requirement 12.1 lists, in the order it lists them."""
+"""Requirement 12.1's ten names, in the order it lists them, plus ``recommend``.
 
-DB_SUBCOMMANDS = ("path", "rebuild", "analyze")
+``recommend`` is the eleventh and postdates the requirement list. It sits directly after
+``baseline`` because the two are the repository-measuring pair -- "where you are" and "where
+to aim" -- and ``--help`` lists commands in registration order, so an operator meets them
+together and reads their contrasting one-line help side by side.
+"""
+
+DB_SUBCOMMANDS = ("path", "rebuild", "analyze", "export-arch", "project")
 
 COMMAND_MODULES = {
     "check": check_module,
     "explain": explain_module,
     "baseline": baseline_module,
+    "recommend": recommend_module,
     "init": config_module,
     "config": config_module,
     "doctor": doctor_module,
@@ -62,7 +71,7 @@ COMMAND_MODULES = {
     "uninstall-hook": hooks_module,
     "agent-rules": agent_rules_module,
 }
-"""Which module holds each of requirement 12.1's ten commands."""
+"""Which module holds each command."""
 
 
 def is_stub(module: object) -> bool:
@@ -114,7 +123,7 @@ def test_exactly_the_documented_subcommands_are_registered() -> None:
     assert set(getattr(root, "commands", {})) == set(SUBCOMMANDS)
 
 
-def test_the_database_subcommand_offers_its_three_operations() -> None:
+def test_the_database_subcommand_offers_exactly_its_documented_operations() -> None:
     root = get_command(app_module.app)
     database = getattr(root, "commands", {})["db"]
     assert set(getattr(database, "commands", {})) == set(DB_SUBCOMMANDS)
@@ -200,6 +209,7 @@ CLI_MODULES = {
     "explain.py",
     "hooks.py",
     "pipelines.py",
+    "recommend.py",
 }
 """Every module in the package. A scan of nothing passes; this is what makes it a scan."""
 

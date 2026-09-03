@@ -24,12 +24,26 @@ half: a discovery that found nothing would make the sweep vacuous.
 
 **Recorded exceptions are single module pairs, never whole layers.** A matrix edited to match
 the code enforces nothing, so :data:`RECORDED_EXCEPTIONS` is keyed on
-``(importing module, imported module)``. Permitting ``understand.database -> git.shadow``
-leaves every *other* ``understand -> git`` import refused, and
-:func:`test_a_recorded_exception_does_not_licence_its_neighbours` proves that. Entries whose
-reason begins ``OPEN VIOLATION`` are edges this task found, could not fix inside its
-boundary, and reported rather than accommodated -- they are written down here so they cannot
-be lost, not because they are approved.
+``(importing module, imported module)``. Permitting ``cli.db -> understand.database``
+leaves every *other* ``cli -> understand`` import refused, and
+:func:`test_a_recorded_exception_does_not_licence_its_neighbours` proves that. An entry whose
+reason begins ``OPEN VIOLATION`` is an edge some task found, could not fix inside its
+boundary, and reported rather than accommodated -- written down so it cannot be lost, not
+because it is approved. Task 10.3 recorded one here and an ``OPEN FINDING`` in
+:data:`RECORDED_PRIVATE_IMPORTS`; task 11.7 closed both by changing the code, so neither
+table holds one now, and :data:`RECORDED_PRIVATE_IMPORTS` is empty outright -- its last
+entry, ``cli.config_cmd -> config.loader._threshold_tables``, was closed the same way. The
+convention stays because the next one will need somewhere to go that is not the matrix.
+
+**A rule the design states belongs in the matrix, not in the exception table.** The two are
+different things and 11.7 found them mixed: ``cli/pipelines.py`` was recorded as five
+separate exceptions reading "DRIFT, reported", which said the code disagreed with the plan
+while the plan said nothing about the module at all. The design now names it the composition
+root and says why (design.md, *Allowed Dependencies*), so it is a named entry in
+:data:`MODULE_RULES` -- one module, written out in full -- and the exception table is back to
+holding only things nobody has approved. The naming is held to that one module by the
+composition-root tests below, which drive the same :func:`check_module` over a *sibling* cli
+module making the identical imports and require every one of them to be reported.
 """
 
 from __future__ import annotations
@@ -76,19 +90,36 @@ ALLOWED: dict[str, frozenset[str]] = {
     "config": LEAF,
     "models": LEAF | {"config"},
     # The two adapters are siblings: neither may import the other, and neither may reach
-    # above itself. This is the rule `understand.database -> git.shadow` breaks.
+    # above itself. `understand.database` used to break this by importing `git.shadow`
+    # directly; it now depends on `models.ports.ShadowPort`, which is below both (task 11.7).
     "understand": LEAF | {"config", "models"},
     "git": LEAF | {"config", "models"},
     "analysis": LEAF | {"config", "models"},
     "report": LEAF | {"config", "models", "analysis"},
     "runner": LEAF | {"config", "models", "analysis", "report", "understand", "git"},
-    # The design's matrix sentence says "cli imports runner (plus config/models for option
-    # types)", but the design's own File Structure Plan puts `--format` handling in
-    # `cli/check.py` with the renderers in `report/`, so cli -> report is required by the
-    # plan rather than permitted by the sentence. It is allowed as a class here; every other
-    # edge the sentence omits is a single recorded exception below.
+    # `cli -> report` is here because the File Structure Plan puts `--format` handling in
+    # `cli/check.py` with the renderers in `report/`. The design's matrix sentence used to
+    # omit it, which made a planned edge look like an unrecorded one; 11.7 amended the
+    # sentence to say it. Everything the sentence still omits is either a single recorded
+    # exception below or the composition root's named entry in MODULE_RULES.
     "cli": LEAF | {"config", "models", "report", "runner"},
 }
+
+COMPOSITION_ROOT = "scitools_hook.cli.pipelines"
+"""The one module the design lets build both adapters (design.md, *Allowed Dependencies*).
+
+Somewhere has to know every concrete class at once, or nothing can be wired together. The
+design puts that somewhere in ``cli`` rather than in ``runner/context.py``, and the reason is
+measured rather than stylistic: requirement 12.5 says a command that needs git stops with
+exit 6 outside a working tree, ``build_context`` deliberately answers ``None`` instead of
+raising for that case (``doctor`` and ``config`` must run without a repository), and the
+locator it then reaches raises exit 3. Measured on this repository with no reachable
+Understand: outside a working tree the command exits 6 as written, and exits 3 -- "no
+SciTools Understand installation was found" -- with the early ``GitRepo.discover`` deleted.
+The refusal therefore has to be raised above ``build_context``, and ``assemble`` also takes
+``cli.common.GlobalOptions``, so moving it down would turn the five sideways edges into an
+upward one.
+"""
 
 MODULE_RULES: dict[str, frozenset[str]] = {
     # worker.py runs under Understand's own interpreter (`<home>/bin/<plat>/upython`), where
@@ -97,19 +128,14 @@ MODULE_RULES: dict[str, frozenset[str]] = {
     # even the leaf. `test_the_worker_answers_ping_under_an_isolated_interpreter` below
     # executes it to prove the rule holds at runtime and not only in the parse.
     WORKER_MODULE: frozenset(),
+    # The composition root, widened rather than restricted, and the only entry of that kind.
+    # `"cli"` is written out because a module named here does not get the implicit same-layer
+    # allowance -- that is what stops `worker` importing its own siblings -- so an entry that
+    # omitted it would forbid `cli.pipelines -> cli.common` and say something nobody meant.
+    COMPOSITION_ROOT: ALLOWED["cli"] | {"cli", "understand", "git"},
 }
 
 RECORDED_EXCEPTIONS: dict[tuple[str, str], str] = {
-    (
-        "scitools_hook.understand.database",
-        "scitools_hook.git.shadow",
-    ): (
-        "OPEN VIOLATION (found by 10.3, reported not approved). The matrix says the two "
-        "adapters import nothing from each other, and the architecture diagram has no such "
-        "edge either. DatabaseManager uses exactly two members of ShadowSync -- `.sync(...)` "
-        "and `.repo.root` -- so the fix is a Protocol port in `models/`, which is a change "
-        "to understand/database and models together and therefore outside 10.3's boundary."
-    ),
     (
         "scitools_hook.cli.agent_rules",
         "scitools_hook.analysis.baseline",
@@ -137,61 +163,15 @@ RECORDED_EXCEPTIONS: dict[tuple[str, str], str] = {
         "scitools_hook.cli.hooks",
         "scitools_hook.git.repo",
     ): "Same command: it needs the repository to find the hooks directory.",
-    (
-        "scitools_hook.cli.pipelines",
-        "scitools_hook.git.repo",
-    ): (
-        "DRIFT, reported: `cli/pipelines.py` is not in the design's File Structure Plan. It "
-        "is the composition root, and the plan assigns adapter assembly to "
-        "`runner/context.py`. Moving it is a runner change and 11.2 owns runner/context."
-    ),
-    (
-        "scitools_hook.cli.pipelines",
-        "scitools_hook.git.shadow",
-    ): "As above: the composition root builds the shadow synchroniser every pipeline runs on.",
-    (
-        "scitools_hook.cli.pipelines",
-        "scitools_hook.understand.codecheck",
-    ): "As above: the composition root builds the CodeCheck runner the check pipeline takes.",
-    (
-        "scitools_hook.cli.pipelines",
-        "scitools_hook.understand.database",
-    ): "As above: the composition root builds the database manager all three pipelines take.",
-    (
-        "scitools_hook.cli.pipelines",
-        "scitools_hook.understand.snapshot",
-    ): "As above: the composition root builds the snapshot extractor all three pipelines take.",
 }
 
-RECORDED_PRIVATE_IMPORTS: dict[tuple[str, str, str], str] = {
-    (
-        "scitools_hook.understand.database",
-        "scitools_hook.understand.codecheck",
-        "_unusable_name",
-    ): (
-        "One predicate for one list-file format: `und -files` takes a list file whose "
-        "grammar `_unusable_name` encodes, and a second copy is a second place to get it "
-        "wrong. It wants a public name -- see the note on the runner entry below."
-    ),
-    (
-        "scitools_hook.runner.check",
-        "scitools_hook.understand.codecheck",
-        "_unusable_name",
-    ): (
-        "OPEN FINDING (found by 10.3): the same private predicate now has TWO importers "
-        "outside its module, and both alias it to the same public-looking name "
-        "(`unusable_list_file_name`). A name imported twice from outside is not private; "
-        "renaming it is a change to a closed task (6.7), so it is recorded here."
-    ),
-    (
-        "scitools_hook.cli.config_cmd",
-        "scitools_hook.config.loader",
-        "_threshold_tables",
-    ): (
-        "`config` must render the threshold tables in exactly the shape the loader merges, "
-        "and one shape beats two. Flagged by 9.3 for this test to allow."
-    ),
-}
+RECORDED_PRIVATE_IMPORTS: dict[tuple[str, str, str], str] = {}
+"""Cross-module imports of a private name that are permitted anyway. **Empty, and that is the
+point.** Two entries have stood here: ``understand.database -> codecheck._unusable_name``,
+closed by task 11.7 giving the name a public one, and ``cli.config_cmd ->
+config.loader._threshold_tables``, closed the same way once the first closure left it citing a
+precedent that no longer existed. An entry here is a problem written down, never an approval,
+so the table is kept for the next one rather than deleted."""
 
 FORBIDDEN_IN_PURE_LAYERS = frozenset({"os", "subprocess", "shutil", "tempfile", "socket"})
 """Modules that ``analysis`` and ``report`` may not import.
@@ -522,23 +502,116 @@ def test_every_recorded_exception_carries_a_reason() -> None:
 
 
 def test_a_recorded_exception_does_not_licence_its_neighbours() -> None:
-    """The point of keying exceptions on module pairs rather than on layers."""
-    assert check_module(
-        "scitools_hook.understand.snapshot",
-        "from scitools_hook.git.shadow import ShadowSync\n",
-    )
-    assert check_module(
-        "scitools_hook.understand.database",
-        "from scitools_hook.git.repo import GitRepo\n",
-    )
+    """The point of keying exceptions on module pairs rather than on layers.
+
+    Four different neighbours of the live exceptions: ``cli.db -> understand.database`` is
+    recorded, so a *different importer* of the same module, the *same importer* of a different
+    understand module, and the same importer of the sibling adapter must each still be
+    reported. The fourth is the private-name rule with no exception left to lean on --
+    ``config.loader._read_toml`` is private and is refused wherever it is read from.
+    """
     assert check_module(
         "scitools_hook.cli.check",
         "from scitools_hook.understand.database import DatabaseManager\n",
     )
     assert check_module(
-        "scitools_hook.understand.snapshot",
-        "from scitools_hook.understand.codecheck import _unusable_name\n",
+        "scitools_hook.cli.db",
+        "from scitools_hook.understand.snapshot import SnapshotExtractor\n",
     )
+    assert check_module(
+        "scitools_hook.cli.db",
+        "from scitools_hook.git.shadow import ShadowSync\n",
+    )
+    assert check_module(
+        "scitools_hook.report.human",
+        "from scitools_hook.config.loader import _read_toml\n",
+    )
+
+
+def test_the_cross_adapter_edge_is_refused_now_that_its_exception_is_gone() -> None:
+    """The edge 11.7 removed, asserted as a rule; the sweep is what asserts it of the source.
+
+    ``understand.database`` reached into ``git.shadow`` for :class:`ShadowSync` until the port
+    in ``models/ports.py`` took its place. There is no exception for it any more, so the
+    general adapter rule now covers it -- and this names the pair that used to be special, in
+    both directions, so re-adding the import fails here as well as in the sweep.
+    """
+    assert check_module(
+        "scitools_hook.understand.database",
+        "from scitools_hook.git.shadow import ShadowSync\n",
+    )
+    assert check_module(
+        "scitools_hook.git.shadow",
+        "from scitools_hook.understand.database import DatabaseManager\n",
+    )
+    assert (
+        check_module(
+            "scitools_hook.understand.database",
+            "from scitools_hook.models.ports import ShadowPort\n",
+        )
+        == []
+    )
+
+
+def test_the_list_file_predicate_is_public_and_its_private_siblings_are_not() -> None:
+    """The rename 11.7 made, in the terms this gate refuses names by.
+
+    ``codecheck._unusable_name`` had two importers outside its module, both aliasing it to
+    ``unusable_list_file_name``; it now carries that name. The two predicates it delegates to
+    stay private, so importing either from outside is still reported -- which is what makes
+    this a rename rather than a general opening of the module.
+    """
+    assert (
+        check_module(
+            "scitools_hook.understand.database",
+            "from scitools_hook.understand.codecheck import unusable_list_file_name\n",
+        )
+        == []
+    )
+    for private in ("_unusable_shape", "_unusable_characters", "_unusable"):
+        assert check_module(
+            "scitools_hook.runner.check",
+            f"from scitools_hook.understand.codecheck import {private}\n",
+        ), private
+
+
+def test_only_the_named_composition_root_may_assemble_the_adapters() -> None:
+    """One module is named; its siblings get nothing, and it is bound by every other rule.
+
+    The adapter imports below are the ones ``cli/pipelines.py`` really makes. Each is driven
+    twice -- once as the composition root, once as ``cli.check``, which is a plain command
+    module -- so the widening cannot be read as "cli may reach the adapters".
+    """
+    adapters = [
+        "from scitools_hook.git.repo import GitRepo\n",
+        "from scitools_hook.git.shadow import ShadowSync\n",
+        "from scitools_hook.understand.codecheck import CodeCheckRunner\n",
+        "from scitools_hook.understand.database import DatabaseManager\n",
+        "from scitools_hook.understand.snapshot import SnapshotExtractor\n",
+    ]
+    for source in adapters:
+        assert check_module(COMPOSITION_ROOT, source) == [], source
+        assert check_module("scitools_hook.cli.check", source), source
+    # Naming a module in MODULE_RULES drops its implicit same-layer allowance, so the two
+    # edges the root shares with every other cli module are asserted rather than assumed.
+    assert (
+        check_module(COMPOSITION_ROOT, "from scitools_hook.cli.common import GlobalOptions\n") == []
+    )
+    assert (
+        check_module(COMPOSITION_ROOT, "from scitools_hook.runner.context import build_context\n")
+        == []
+    )
+    # Widened for the adapters, not exempted from the rest.
+    assert check_module(COMPOSITION_ROOT, "from scitools_hook.config.loader import _private\n")
+    assert check_module(COMPOSITION_ROOT, "from scitools_hook.brandnew.thing import Thing\n")
+
+
+def test_the_composition_root_is_the_module_the_source_tree_actually_holds() -> None:
+    """A rule naming a module that is not there would be a rule about nothing."""
+    assert COMPOSITION_ROOT in KNOWN
+    names = {name for name, _, _ in source_modules()}
+    assert COMPOSITION_ROOT in names
+    assert set(MODULE_RULES) <= names
 
 
 # --- the detector fires -----------------------------------------------------------
@@ -561,6 +634,12 @@ def test_a_recorded_exception_does_not_licence_its_neighbours() -> None:
             "from scitools_hook.git.repo import GitRepo\n",
             "forbidden-layer",
             id="sideways-between-adapters",
+        ),
+        pytest.param(
+            "scitools_hook.understand.database",
+            "from scitools_hook.git.shadow import ShadowSync\n",
+            "forbidden-layer",
+            id="the-cross-adapter-edge-11-7-removed",
         ),
         pytest.param(
             "scitools_hook.git.repo",
@@ -690,14 +769,24 @@ def test_the_checker_reports_a_forbidden_import(module: str, source: str, rule: 
             id="external-and-sibling-imports",
         ),
         pytest.param(
-            "scitools_hook.understand.database",
-            "from scitools_hook.git.shadow import ShadowSync\n",
+            "scitools_hook.cli.db",
+            "from scitools_hook.understand.database import DatabaseManager\n",
             id="the-recorded-adapter-exception",
         ),
         pytest.param(
             "scitools_hook.cli.config_cmd",
-            "from scitools_hook.config.loader import _threshold_tables\n",
-            id="the-recorded-private-exception",
+            "from scitools_hook.config.loader import threshold_tables\n",
+            id="a-public-name-crosses-a-module-boundary",
+        ),
+        pytest.param(
+            COMPOSITION_ROOT,
+            "from scitools_hook.understand.database import DatabaseManager\n",
+            id="the-composition-root-builds-the-adapters",
+        ),
+        pytest.param(
+            "scitools_hook.understand.database",
+            "from scitools_hook.models.ports import ShadowPort\n",
+            id="an-adapter-reaches-its-sibling-through-a-port-in-models",
         ),
     ],
 )

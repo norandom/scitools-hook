@@ -11,6 +11,9 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # release.yml calls this workflow instead of repeating its one command: a tag push does
+  # not match `branches`, so without this a release would build from an ungated tree.
+  workflow_call:
 
 concurrency:
   group: gate-${{ github.ref }}

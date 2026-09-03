@@ -60,7 +60,19 @@ becomes :class:`~scitools_hook.errors.NotAGitRepositoryError` (requirement 12.5)
 other non-zero status, timeout or unstartable executable becomes
 :class:`~scitools_hook.errors.AnalysisFailedError` carrying the argv and stderr. Every
 attempt is recorded on the injected :class:`~scitools_hook.models.progress.CommandLog` with
-its timing and status, including the ones that never ran (requirement 12.8).
+its timing and status, including the ones that never ran (requirement 12.8). The two statuses
+it records for those two failures -- :data:`~scitools_hook.exit_codes.TIMEOUT_RC` and
+:data:`~scitools_hook.exit_codes.MISSING_RC` -- come from the package leaf rather than being
+defined here, because ``und``, the API worker and the installation probes record the same two
+numbers into the same ``--verbose`` stream and one convention cannot be spelled four times.
+This module held the fourth copy until task 11.3: task 11.2's boundary excluded it while task
+11.1 was landing here, and ``tests/test_exit_codes.py`` carried an assertion whose whole job
+was to stop the copy drifting until the import replaced it.
+
+Every field the typed errors carry -- ``key``, ``command``, ``stderr`` and ``hint`` -- is
+rendered by ``cli.common._context_lines`` and read by an operator, so each one is asserted at
+the site that sets it rather than treated as metadata; sixteen of them were set and read by
+nothing until task 11.3.
 """
 
 from __future__ import annotations
@@ -74,17 +86,12 @@ from pathlib import Path
 from typing import Final, Literal
 
 from scitools_hook.errors import AnalysisFailedError, ConfigError, NotAGitRepositoryError
+from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.models.git import StagedChange
 from scitools_hook.models.progress import CommandLog, NullCommandLog
 
 DEFAULT_TIMEOUT_S: Final = 300
 """Ceiling for one git call; a full ``checkout-index`` of a large repository still fits."""
-
-TIMEOUT_RC: Final = 124
-"""Status recorded for a command that had to be killed; GNU ``timeout``'s convention."""
-
-MISSING_RC: Final = 127
-"""Status recorded for a command that never started; the shell's "not found" convention."""
 
 NO_ANSWER_RC: Final = 1
 """git's "I looked and there is nothing", as opposed to 128, "I could not look at all".

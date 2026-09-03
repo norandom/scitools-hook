@@ -1,0 +1,8 @@
+{
+  "name": "scitools-hook-ci",
+  "engineVersion": "v0.21.9",
+  "sdk": {
+    "source": "python"
+  },
+  "source": "module"
+}

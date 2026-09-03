@@ -1,4 +1,4 @@
-"""One command line, assembled into the adapters a pipeline runs on.
+"""The composition root: one command line, assembled into the adapters a pipeline runs on.
 
 ``check``, ``explain`` and ``baseline`` ask different questions of Understand, but they reach
 it the same way: a repository, a cache keyed on that repository, a shadow synchroniser, a
@@ -7,21 +7,32 @@ database manager and a snapshot extractor, all built from the settings
 the three commands hold their option grammar and nothing else, and so a fourth command --
 or a test -- substitutes one seam rather than three.
 
+**This is the one ``cli`` module that names both adapters**, and the design says so (design.md,
+*Allowed Dependencies* and the File Structure Plan). ``tests/test_import_direction.py`` names
+it too, as the single widened entry in its ``MODULE_RULES``; every other ``cli`` module is
+still refused an ``understand`` or ``git`` import. It is here rather than in
+``runner/context.py`` -- which the plan otherwise makes responsible for adapters -- for the
+ordering reason below, and because :func:`assemble` takes a
+:class:`~scitools_hook.cli.common.GlobalOptions`, so moving it down would replace three
+five sideways imports with an upward one, which is the worse trade.
+
 Two decisions in this module are load-bearing.
 
 **The repository is required before any Understand work starts.** Requirement 12.5 says a
 command that needs git stops with the not-a-git-repository code when there is no working
-tree, and that promise must not depend on whether Understand happens to be installed:
-``build_context`` locates and *verifies* an installation -- running ``und version`` and
-pinging the API in a child process -- before anything asks it for a repository, so a run
-started outside a working tree on a machine with no Understand would answer "no Understand"
-(exit 3) to a question that is really "you are not in a repository" (exit 6). The check is
-therefore made first, with :meth:`~scitools_hook.git.repo.GitRepo.discover`, which raises the
-located refusal itself rather than restating one. The price is one extra ``git rev-parse``
-per run -- a few milliseconds against the seconds a locator probe costs -- and, under
-``--verbose``, that call appearing twice in the command log, because ``build_context``
-discovers the repository again for its own purposes. Both are deliberate; the second is what
-tells an operator reading the log that nothing is being hidden from them.
+tree, and that promise must not depend on whether Understand happens to be installed.
+``build_context`` cannot make it: it treats "no repository" as ``None`` rather than as an
+error, deliberately, because ``doctor`` and ``config`` have to run outside a working tree --
+so it goes on to the locator, which raises exit 3 on a machine with no Understand, and the
+run answers "no Understand" to a question that is really "you are not in a repository". The
+check is therefore made first, with :meth:`~scitools_hook.git.repo.GitRepo.discover`, which
+raises the located refusal itself rather than restating one. Measured outside a working tree
+with no reachable installation: exit 6 as written, exit 3 with that one call deleted. The
+price is one extra ``git rev-parse`` per run -- a few milliseconds against the seconds a
+locator probe costs -- and, under ``--verbose``, that call appearing twice in the command
+log, because ``build_context`` discovers the repository again for its own purposes. Both are
+deliberate; the second is what tells an operator reading the log that nothing is being hidden
+from them.
 
 **The cache is re-derived from the required repository rather than read off the context.**
 :attr:`~scitools_hook.runner.context.RunContext.cache` answers ``CachePaths | None``, and the
@@ -45,6 +56,7 @@ from scitools_hook.runner.baseline_cmd import BaselineCmd
 from scitools_hook.runner.check import CheckPipeline
 from scitools_hook.runner.context import ContextOptions, RunContext, build_context, cache_dir
 from scitools_hook.runner.explain import ExplainPipeline
+from scitools_hook.runner.recommend import RecommendCmd
 from scitools_hook.understand.codecheck import CodeCheckRunner
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.snapshot import SnapshotExtractor
@@ -80,6 +92,16 @@ class Assembly:
     def baseline(self) -> BaselineCmd:
         """The baseline capture (req 8.1)."""
         return BaselineCmd(self.ctx, self.dbm, self.extractor)
+
+    def recommend(self) -> RecommendCmd:
+        """The threshold recommendation -- the same three adapters, the opposite question.
+
+        Built from this assembly rather than from one of its own precisely because it is
+        ``baseline``'s twin: both take a whole-project extraction, and two assemblies would
+        eventually differ in which settings, cache or shadow they measured, which would let
+        "where you are" and "where to aim" disagree about the repository they describe.
+        """
+        return RecommendCmd(self.ctx, self.dbm, self.extractor)
 
 
 def assemble(options: GlobalOptions, overrides: Mapping[str, object] | None = None) -> Assembly:

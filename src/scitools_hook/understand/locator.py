@@ -283,6 +283,25 @@ PIN_HINT: Final = (
 )
 """Every failure here is the same operator-visible fact, so it carries the same hint."""
 
+PYTHON_ENV_PREFIX: Final = "PYTHON"
+"""Every variable CPython reads out of the environment begins with this, and all of them go.
+
+This is the environment spelling of ``python -E``, whose documented meaning is "ignore all
+``PYTHON*`` environment variables", and it is a prefix rule rather than a list for the reason
+a list would be wrong: the set grows with each release, and a variable this module has never
+heard of is exactly the one that would put the analysed project back on ``sys.path``.
+:meth:`PinnedPython.environment` records what each of the three measured ones did.
+"""
+
+NO_USER_SITE: Final = "PYTHONNOUSERSITE"
+"""Set to ``1`` rather than removed: the per-user ``site-packages`` is the other ambient path.
+
+The environment spelling of ``python -s``. It is the one ``PYTHON*`` variable the pin *adds*,
+because removing the rest still leaves ``~/.local/lib/python3.x/site-packages`` on
+``sys.path`` -- a directory another tool's ``pip install --user`` writes into, and one a
+``pip install --user -e .`` of the analysed project itself would use.
+"""
+
 
 def pin_name(platform: str = sys.platform) -> str:
     """The executable name Understand looks for: a bare ``python``, ``.exe`` on Windows.
@@ -368,6 +387,45 @@ class PinnedPython:
         ambient = env.get("PATH", "")
         return f"{self.directory}{os.pathsep}{ambient}" if ambient else str(self.directory)
 
+    def environment(self, env: Mapping[str, str]) -> dict[str, str]:
+        """``env`` with the whole Python decision taken here, not only ``PATH`` (task 11.12).
+
+        **Pinning ``PATH`` alone does not pin the interpreter, and all three of the leftover
+        levers were measured to defeat it on Understand 6.5.1204.** Each was driven through
+        the same tree, the same ``und`` and the same link, changing one ambient variable:
+
+        * ``PYTHONHOME=/nonexistent`` -- the pinned link dies with a fatal error before it
+          prints anything, ``und`` reads that as "no python", and the database comes back
+          **Python 2**: ``has_key``/``iteritems``/``raw_input`` in it, ``Errors:8``, and the
+          routine after the parse failure gone. That is precisely the silent green
+          :func:`pinned_python` exists to make impossible, reached around it.
+        * ``PYTHONPATH=<repo>/src`` -- the analysed project is back on ``sys.path``, so
+          ``import scitools_hook.x`` resolves to the live working tree *outside* the shadow
+          and the file dependency edges leave it. Measured on this repository's 172 files:
+          **1272 intra-tree edges without it, 66 with it** -- the same 66 an unpinned run
+          gives, i.e. the whole of ``structure.new_dependencies`` and ``structure.fan``
+          switched off by one variable, with nothing in the report naming it.
+        * ``PYTHONUSERBASE`` pointing at a directory whose ``site-packages`` holds a ``.pth``
+          -- the same leak through the per-user path, which is why :data:`NO_USER_SITE` is
+          set rather than merely cleared.
+
+        So the rule is :data:`PYTHON_ENV_PREFIX` plus :data:`NO_USER_SITE`, which together
+        are exactly ``python -E -s`` expressed through the environment. Measured against the
+        wrapper form of those two switches: 1272 edges under a hostile ``PYTHONPATH``, the
+        same number a clean environment gives.
+
+        **Everything that is not Python's reaches ``und`` untouched**, which is the same
+        deliberate choice :meth:`search_path` makes about the rest of ``PATH``: ``und`` reads
+        its licence from ``HOME`` and its configuration from the rest of the environment, and
+        a wrapper that handed it a clean one would be measuring a different program.
+        """
+        decided = {
+            name: value for name, value in env.items() if not name.startswith(PYTHON_ENV_PREFIX)
+        }
+        decided["PATH"] = self.search_path(env)
+        decided[NO_USER_SITE] = "1"
+        return decided
+
 
 @contextmanager
 def pinned_python(interpreter: Path | None = None) -> Iterator[PinnedPython]:
@@ -406,6 +464,12 @@ def pinned_python(interpreter: Path | None = None) -> Iterator[PinnedPython]:
     an interpreter that does not carry the analysed project on its ``sys.path``. The
     deterministic one is therefore the one taken, and it is named here so the next reader
     meets it as a decision rather than as a surprise.
+
+    **The link is only half of it.** A ``python`` reached this way still reads ``PYTHONPATH``,
+    ``PYTHONHOME`` and the per-user ``site-packages``, and all three were measured to undo
+    the pin -- one of them all the way back to the Python 2 model. The other half is
+    :meth:`PinnedPython.environment`, which is where those measurements are recorded and
+    which is what a caller must hand to the process it starts.
 
     Cleanup is best-effort: a directory that cannot be removed must not turn a finished
     analysis into a failure, and it holds one symbolic link and nothing else.

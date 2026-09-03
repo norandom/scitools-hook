@@ -53,11 +53,25 @@ else
         scitools-hook check --staged
         status=$?
     elif command -v uvx >/dev/null 2>&1; then
-        uvx scitools-hook check --staged
+        # `uvx scitools-hook` alone CANNOT work: this tool is not on PyPI and never will be,
+        # so the bare name resolves to nothing. It is published as a GitHub release, hence
+        # --from. Measured on a real repository before this was fixed: every commit was
+        # blocked, because uvx's resolution failure exits 1 and 1 is the Gate's code for
+        # "blocking violations found" -- so the operator was told their code was bad when
+        # the tool was simply absent, and SCITOOLS_HOOK_SOFT_FAIL could not help them.
+        #
+        # The two failures are told apart below: a resolution failure is an INFRASTRUCTURE
+        # failure and must not borrow the findings code.
+        uvx --from '@SCITOOLS_HOOK_SOURCE@' scitools-hook check --staged
         status=$?
+        if [ "$status" -eq 1 ] && ! uvx --from '@SCITOOLS_HOOK_SOURCE@' scitools-hook --version >/dev/null 2>&1; then
+            note 'scitools-hook: uvx could not resolve the tool, so nothing was checked.'
+            note 'hint: install it with `uv tool install @SCITOOLS_HOOK_SOURCE@`, or set SCITOOLS_HOOK_SOFT_FAIL=1.'
+            status=3
+        fi
     else
         note 'scitools-hook: neither scitools-hook nor uvx is on PATH, so nothing was checked.'
-        note 'hint: install it with `uv tool install scitools-hook`, or set SCITOOLS_HOOK_SOFT_FAIL=1.'
+        note 'hint: install it with `uv tool install @SCITOOLS_HOOK_SOURCE@`, or set SCITOOLS_HOOK_SOFT_FAIL=1.'
         status=3
     fi </dev/null
 fi

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -17,13 +18,20 @@ from scitools_hook.config.models import (
     LayerRule,
     Limit,
     OutputSettings,
+    ParseAcknowledgement,
+    ParseSettings,
+    PathScope,
     ProjectSettings,
     Provenance,
     RatchetSettings,
+    ScopeOverride,
     Settings,
     StructureRules,
     ThresholdSpec,
     UnderstandSettings,
+    compile_path_pattern,
+    matching_pattern,
+    path_prefixes,
     thresholds_from_tables,
 )
 
@@ -42,6 +50,10 @@ ALL_MODELS: list[type[BaseModel]] = [
     RatchetSettings,
     Settings,
     Provenance,
+    PathScope,
+    ScopeOverride,
+    ParseSettings,
+    ParseAcknowledgement,
 ]
 
 
@@ -396,3 +408,226 @@ def test_provenance_maps_dotted_keys_to_sources() -> None:
     prov = Provenance(values={"thresholds.routine.MaxNesting": "default"})
     assert prov.values["thresholds.routine.MaxNesting"] == "default"
     assert Provenance().values == {}
+
+
+# --- path scopes -----------------------------------------------------------------
+
+USER_SHAPE = """
+[thresholds.routine]
+CyclomaticStrict = 10
+
+[scope.tests]
+paths = ["tests/**"]
+[scope.tests.thresholds.routine]
+CyclomaticStrict = 15
+CountLineCode   = 120
+[scope.tests.thresholds.file]
+CountDeclFunction = false
+"""
+"""The exact TOML shape the feature was asked for; it has to validate as written."""
+
+
+def test_the_documented_scope_shape_validates_and_round_trips() -> None:
+    settings = Settings.model_validate(tomllib.loads(USER_SHAPE))
+    scope = settings.scope["tests"]
+    assert scope.paths == ["tests/**"]
+    assert scope.thresholds["routine"]["CyclomaticStrict"].limit == Limit(max=15)
+    assert scope.thresholds["file"]["CountDeclFunction"].disabled is True
+    assert Settings.model_validate(settings.model_dump()) == settings
+
+
+def test_settings_without_scopes_have_none() -> None:
+    assert Settings().scope == {}
+    assert Settings().parse.acknowledged == []
+
+
+def test_a_scope_matches_the_paths_it_names_and_no_others() -> None:
+    scope = PathScope(paths=["tests/**", "itests/**"])
+    assert scope.matched_by("tests/a/b.py") == "tests/**"
+    assert scope.matched_by("itests/c.py") == "itests/**"
+    assert scope.matched_by("src/a.py") is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (15, ScopeOverride(limit=Limit(max=15))),
+        ({"max": 15}, ScopeOverride(limit=Limit(max=15))),
+        ({"min": 0.5}, ScopeOverride(limit=Limit(min=0.5))),
+        (
+            {"max": 15, "severity": "warning"},
+            ScopeOverride(limit=Limit(max=15), severity="warning"),
+        ),
+        ({"max": 15, "ratchet": False}, ScopeOverride(limit=Limit(max=15), ratchet=False)),
+        (False, ScopeOverride(disabled=True)),
+        ({"severity": "warning"}, ScopeOverride(severity="warning")),
+    ],
+)
+def test_every_scope_override_spelling(raw: object, expected: ScopeOverride) -> None:
+    assert ScopeOverride.model_validate(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "fragment"),
+    [
+        (True, "does not say what the limit is"),
+        ({}, "needs a limit"),
+        ({"disabled": True, "max": 5}, "cannot carry a limit"),
+        ("15", "a number, a table"),
+        ({"max": 15, "limit": {"max": 20}}, "not both"),
+        ({"max": 15, "unknown": 1}, "unknown"),
+    ],
+)
+def test_a_malformed_scope_override_is_rejected(raw: object, fragment: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        ScopeOverride.model_validate(raw)
+    assert fragment in str(caught.value)
+
+
+@pytest.mark.parametrize("scope", ["project", "arch"])
+def test_a_path_scope_refuses_a_population_threshold(scope: str) -> None:
+    """A population is reduced once over the whole project, so it cannot be per path.
+
+    Accepting the table and quietly evaluating it project-wide would be the silent narrowing
+    the feature exists to avoid: the operator would read a limit that never applied.
+    """
+    with pytest.raises(ValidationError) as caught:
+        PathScope.model_validate({"paths": ["tests/**"], "thresholds": {scope: {"MaxNesting": 5}}})
+    assert "whole project" in str(caught.value)
+
+
+def test_a_path_scope_accepts_every_element_scope() -> None:
+    scope = PathScope.model_validate(
+        {
+            "paths": ["tests/**"],
+            "thresholds": {"routine": {"MaxNesting": 5}, "class": {}, "file": {}},
+        }
+    )
+    assert set(scope.thresholds) == {"routine", "class", "file"}
+
+
+def test_a_scope_with_an_unknown_key_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        PathScope.model_validate({"paths": ["a/**"], "thresolds": {}})
+
+
+# --- acknowledged parse limitations ------------------------------------------------
+
+
+def test_an_acknowledgement_needs_paths_and_a_reason() -> None:
+    entry = ParseAcknowledgement(paths=["src/a.py"], reason="Understand stops at line 10.")
+    assert entry.matched_by("src/a.py") == "src/a.py"
+    assert entry.matched_by("src/b.py") is None
+
+
+def test_a_bare_path_string_is_refused_and_says_what_to_write() -> None:
+    """The property that keeps this from becoming an ignore list with a longer name."""
+    with pytest.raises(ValidationError) as caught:
+        ParseAcknowledgement.model_validate("src/a.py")
+    message = str(caught.value)
+    assert "reason" in message and "src/a.py" in message
+
+
+@pytest.mark.parametrize(
+    ("payload", "fragment"),
+    [
+        ({"paths": [], "reason": "why"}, "at least 1 item"),
+        ({"paths": ["a.py"], "reason": "   "}, "cannot be empty"),
+        ({"paths": ["  "], "reason": "why"}, "acknowledges nothing"),
+        ({"paths": ["a.py"]}, "reason"),
+    ],
+)
+def test_an_acknowledgement_without_substance_is_rejected(
+    payload: dict[str, object], fragment: str
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        ParseAcknowledgement.model_validate(payload)
+    assert fragment in str(caught.value)
+
+
+def test_the_first_matching_acknowledgement_is_the_one_reported() -> None:
+    settings = ParseSettings(
+        acknowledged=[
+            ParseAcknowledgement(paths=["src/**"], reason="first"),
+            ParseAcknowledgement(paths=["src/a.py"], reason="second"),
+        ]
+    )
+    found = settings.acknowledgement("src/a.py")
+    assert found is not None and found.reason == "first"
+    assert settings.acknowledgement("tests/a.py") is None
+
+
+def test_an_acknowledgement_that_covers_nothing_is_reported_as_unused() -> None:
+    """A stale entry keeps a file from blocking long after the file is gone, and silently."""
+    live = ParseAcknowledgement(paths=["src/a.py"], reason="live")
+    stale = ParseAcknowledgement(paths=["src/gone.py"], reason="stale")
+    settings = ParseSettings(acknowledged=[live, stale])
+    assert settings.unused(["src/a.py", "src/b.py"]) == [stale]
+    assert settings.unused([]) == [live, stale]
+
+
+def test_a_settings_document_carrying_both_new_sections_round_trips() -> None:
+    document = """
+[scope.tests]
+paths = ["tests/**"]
+[scope.tests.thresholds.routine]
+CyclomaticStrict = 15
+
+[[parse.acknowledged]]
+paths = ["src/a.py"]
+reason = "Understand 6.5 stops at the type-parameter list on line 10."
+"""
+    settings = Settings.model_validate(tomllib.loads(document))
+    assert settings.parse.acknowledged[0].paths == ["src/a.py"]
+    assert Settings.model_validate(settings.model_dump()) == settings
+
+
+# --- the pattern helpers models and detection share --------------------------------
+
+
+def test_a_pattern_matches_a_containing_directory() -> None:
+    assert matching_pattern(["build"], "build/out/x.o") == "build"
+    assert matching_pattern(["build"], "src/build.py") is None
+
+
+def test_path_prefixes_are_the_path_and_every_directory_above_it() -> None:
+    assert path_prefixes("a/b/c.py") == ["a", "a/b", "a/b/c.py"]
+    assert path_prefixes("c.py") == ["c.py"]
+
+
+def test_a_compiled_pattern_is_reused() -> None:
+    """The cache is an implementation detail, but a per-call recompile is a real cost here."""
+    assert compile_path_pattern("tests/**") is compile_path_pattern("tests/**")
+
+
+@pytest.mark.parametrize(
+    ("metric", "fragment"),
+    [
+        ("Not A Metric", "invalid metric name"),
+        ("AVG:CyclomaticStrict", "cannot be scoped to a path"),
+    ],
+)
+def test_a_scope_metric_name_is_checked_where_it_is_written(metric: str, fragment: str) -> None:
+    """A typo here used to survive loading and raise from the middle of a commit check."""
+    with pytest.raises(ValidationError) as caught:
+        PathScope.model_validate({"paths": ["a/**"], "thresholds": {"routine": {metric: 5}}})
+    assert fragment in str(caught.value)
+    assert f"scope thresholds.routine.{metric}" in str(caught.value)
+
+
+def test_a_valid_scope_metric_name_is_accepted() -> None:
+    scope = PathScope.model_validate(
+        {"paths": ["a/**"], "thresholds": {"routine": {"CyclomaticStrict": 5}}}
+    )
+    assert "CyclomaticStrict" in scope.thresholds["routine"]
+
+
+def test_a_scope_override_instance_validates_to_itself() -> None:
+    override = ScopeOverride(limit=Limit(max=15))
+    assert ScopeOverride.model_validate(override) == override
+
+
+def test_a_scope_override_may_change_only_the_ratchet() -> None:
+    """Meaningful on its own: it turns the worse-than-before check off for one region."""
+    override = ScopeOverride.model_validate({"ratchet": False})
+    assert override == ScopeOverride(ratchet=False)

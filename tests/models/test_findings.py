@@ -71,9 +71,11 @@ def test_structure_rule_covers_every_documented_structural_rule() -> None:
     assert set(STRUCTURE_RULES) == {
         "file_cycle",
         "arch_cycle",
+        "call_cycle",
         "layer",
         "fan_in",
         "fan_out",
+        "reachable_complexity",
         "new_dependencies",
         "coupling",
     }

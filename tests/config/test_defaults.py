@@ -15,7 +15,21 @@ from scitools_hook.config.defaults import (
     is_default_threshold,
 )
 from scitools_hook.config.metric_names import SYNTHETIC_METRICS, Scope, parse_metric_name
-from scitools_hook.config.models import Limit, Settings, ThresholdSpec
+from scitools_hook.config.models import (
+    DECOMPOSITION_COUNTS,
+    Limit,
+    Settings,
+    ThresholdSpec,
+)
+from scitools_hook.report.hints import DEFAULT_CATALOGUE
+
+INHERITANCE_VOCABULARY = ("superclass", "subclass", "inherit", "base", "derive")
+"""Every word a hint recommending another inheritance layer would have to use.
+
+Deliberately wider than the phrases that would actually raise ``MaxInheritanceTree``: the
+test enumerates what it catches and pins what each one says, so a false positive costs a
+reader one glance while a miss would cost the ratchet decision silently.
+"""
 
 # Metrics the requirements name for each scope (5.1-5.4); defaults must cover at least these.
 REQUIRED_METRICS: dict[Scope, set[str]] = {
@@ -137,7 +151,98 @@ def test_project_population_thresholds_use_stats_prefixes() -> None:
 def test_soft_metrics_default_to_warning_and_all_others_to_error() -> None:
     by_rule = _by_rule(default_settings())
     warnings = {rule for rule, spec in by_rule.items() if spec.severity == "warning"}
-    assert warnings == {"file.RatioCommentToCode", "class.PercentLackOfCohesion"}
+    assert warnings == {
+        "file.RatioCommentToCode",
+        "class.PercentLackOfCohesion",
+        "routine.Essential",
+        "class.MaxInheritanceTree",
+    }
+
+
+# --- two metrics that rank the language rather than the code (task 11.14) ------------
+
+
+@pytest.mark.parametrize("rule", ["routine.Essential", "class.MaxInheritanceTree"])
+def test_the_two_language_metrics_keep_their_limits_and_stop_blocking(rule: str) -> None:
+    """Measured on Understand 6.5.1204; the limits are unchanged and the severity is not.
+
+    ``routine.Essential`` 4 fires on the fourth guard clause: six guards score 7 and the same
+    logic as one ``elif`` ladder scores 1, both at ``CyclomaticStrict`` 7. Its own hint says
+    "returns early", so following the hint raises the metric.
+
+    ``class.MaxInheritanceTree`` 4 measures where a base class lives. One unchanged line,
+    ``class Model(BaseModel)``, scores 5 when pydantic is on the analysing interpreter's
+    ``sys.path`` and 1 when it is not -- and since task 11.10 it deliberately is not, so a
+    framework hierarchy four deep now reports 1 while ``class X(Protocol)``, which has no
+    hierarchy at all, reports 5.
+
+    The limits stay so the number is still reported honestly; the severity goes so an
+    incomparable number cannot refuse a commit. Both are asserted here rather than only in
+    the warning set, so raising a limit "to make the rule usable" fails this test too.
+    """
+    spec = _by_rule(default_settings())[rule]
+    assert spec.severity == "warning"
+    assert spec.limit == Limit(max=4)
+
+
+def test_the_complexity_rules_that_carry_the_blocking_half_are_untouched() -> None:
+    """Demoting ``Essential`` must not quietly stop the Gate refusing complex routines.
+
+    These four are the reason the demotion is affordable: they are what actually blocks on a
+    routine that is too complex, and none of them is decided by whether the routine returns
+    early. Asserted as literals beside the demoted neighbour above.
+    """
+    by_rule = _by_rule(default_settings())
+    for rule, limit in (
+        ("routine.CyclomaticStrict", 10),
+        ("routine.CyclomaticModified", 8),
+        ("routine.MaxNesting", 3),
+        ("routine.CountPath", 100),
+    ):
+        assert by_rule[rule].severity == "error", rule
+        assert by_rule[rule].limit == Limit(max=limit), rule
+
+
+def test_no_shipped_hint_asks_for_another_inheritance_layer() -> None:
+    """Task 11.9's argument for leaving ``class.MaxInheritanceTree`` ratcheted, as a test.
+
+    Eight shipped counts lost their ratchet because a hint in the catalogue asks for exactly
+    the change that raises them. ``MaxInheritanceTree`` deliberately kept its ratchet on the
+    argument that **no** hint asks for another inheritance layer -- its own asks for one
+    fewer, and ``CountClassDerived``'s pushes to a strategy object rather than a subclass.
+    That argument lived only in a docstring.
+
+    "Extract a superclass" is a real refactoring and a plausible future hint -- it is what
+    ``CountDeclMethod``'s advice to move methods into a class of their own is one step away
+    from -- so this walks the whole catalogue and fails the day one is added, which is the
+    day the ratchet decision has to be taken again rather than inherited.
+    """
+    mentions = {
+        key: text
+        for key, text in DEFAULT_CATALOGUE.items()
+        if any(word in text.lower() for word in INHERITANCE_VOCABULARY)
+    }
+
+    assert set(mentions) == {"MaxInheritanceTree", "CountClassDerived"}, (
+        "a hint that talks about inheritance has been added or removed; if it recommends "
+        f"another layer, class.MaxInheritanceTree must lose its ratchet too: {mentions}"
+    )
+    assert "replace one layer with composition" in mentions["MaxInheritanceTree"]
+    assert "hold the base as a field and delegate to it" in mentions["MaxInheritanceTree"]
+    assert "replace the variation with a strategy object" in mentions["CountClassDerived"]
+    assert "class.MaxInheritanceTree" not in DECOMPOSITION_COUNTS, (
+        "the ratchet stays on precisely while no hint pushes into it"
+    )
+
+
+def test_the_essential_hint_still_recommends_the_style_its_own_limit_ranks_worst() -> None:
+    """The other half of 11.14: the contradiction that made ``Essential`` a warning.
+
+    If this hint is ever rewritten to stop recommending an early return, the severity is
+    worth revisiting -- so the demotion above is tied to the text that justifies it rather
+    than standing alone.
+    """
+    assert "returns early" in DEFAULT_CATALOGUE["Essential"]
 
 
 # --- the ratchet the shipped thresholds carry (task 11.9) ---------------------------

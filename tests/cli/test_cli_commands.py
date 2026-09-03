@@ -32,6 +32,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -42,6 +43,7 @@ from typer.testing import Result as CliResult
 
 from scitools_hook.cli import app as app_module
 from scitools_hook.config.loader import load_settings, repo_config_path
+from scitools_hook.config.models import Settings
 from scitools_hook.config.template import CONFIG_FILENAME
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.git.hooks import CHAINED_SUFFIX, HOOK_NAME, MARKER
@@ -949,7 +951,8 @@ def test_agent_rules_write_refuses_a_directory(tmp_path: Path, git_repo: MakeGit
 @pytest.mark.parametrize(
     ("argv", "options"),
     [
-        (["init"], ("--force",)),
+        (["init"], ("--force", "--detect", "--print")),
+        (["config"], ("--detect", "--why")),
         (["install-hook"], ("--force", "--global")),
         (["uninstall-hook"], ("--global",)),
         (["agent-rules"], ("--write",)),
@@ -960,3 +963,188 @@ def test_each_command_documents_its_own_options(argv: list[str], options: tuple[
     assert result.exit_code == 0
     for option in options:
         assert option in result.stdout, option
+
+
+# --- detection: `config --detect`, `config --why`, `init --detect` ------------------
+
+
+def declaring_repo(git_repo: MakeGitRepo) -> GitRepoBuilder:
+    """A repository that declares a vendored tree, a test tree and an unreadable file."""
+    builder = git_repo()
+    builder.write(".gitattributes", "vendor/** linguist-vendored\n")
+    builder.write("vendor/lib.py", "x = 1\n")
+    builder.write("pyproject.toml", '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    builder.write("tests/test_a.py", "def test_a():\n    pass\n")
+    builder.write("src/generic.py", "def gen[T](v: T) -> T:\n    return v\n")
+    builder.stage(".gitattributes", "vendor/lib.py", "pyproject.toml", "tests/test_a.py")
+    builder.stage("src/generic.py")
+    builder.commit("declare")
+    return builder
+
+
+def test_config_detect_reports_every_region_with_its_evidence(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    result = invoke(["config", "--detect"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert "vendored" in result.stdout and "vendor/**" in result.stdout
+    assert ".gitattributes: vendor/** linguist-vendored" in result.stdout
+    assert "tests" in result.stdout and "[tool.pytest.ini_options] testpaths" in result.stdout
+    assert "pep695" in result.stdout and "src/generic.py" in result.stdout
+
+
+def test_config_detect_changes_nothing_on_disk(tmp_path: Path, git_repo: MakeGitRepo) -> None:
+    """Detection proposes; a report that wrote a file would be the thing it must not be."""
+    builder = declaring_repo(git_repo)
+    before = sorted(path.name for path in builder.path.iterdir())
+    invoke(["config", "--detect"], cwd=builder.path, env=env_for(tmp_path))
+    assert sorted(path.name for path in builder.path.iterdir()) == before
+    assert not repo_config_path(builder.path).exists()
+
+
+def test_config_detect_needs_a_working_tree(tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    result = invoke(["config", "--detect"], cwd=outside, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.NOT_A_GIT_REPO), result.stdout
+    assert "working tree" in result.stderr
+
+
+def test_config_why_explains_one_path(tmp_path: Path, git_repo: MakeGitRepo) -> None:
+    builder = declaring_repo(git_repo)
+    result = invoke(["config", "--why", "vendor/lib.py"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert "role: vendored" in result.stdout
+    assert "linguist-vendored" in result.stdout
+
+
+def test_config_why_reports_a_path_nothing_declares(tmp_path: Path, git_repo: MakeGitRepo) -> None:
+    """The sibling case: same command, different input, and it must not invent a verdict."""
+    builder = declaring_repo(git_repo)
+    result = invoke(["config", "--why", "src/generic.py"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert "role: product" in result.stdout
+    assert "no region covers this path" in result.stdout
+
+
+def test_config_why_names_the_exclude_pattern_that_removed_a_path(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    repo_config_path(builder.path).write_text(
+        '[project]\nexclude = ["vendor/**"]\n', encoding="utf-8"
+    )
+    result = invoke(["config", "--why", "vendor/lib.py"], cwd=builder.path, env=env_for(tmp_path))
+    assert "role: not-analysed" in result.stdout
+    assert "[project] exclude = 'vendor/**'" in result.stdout
+
+
+def test_config_why_lists_the_scopes_that_apply_and_their_order(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    repo_config_path(builder.path).write_text(
+        "[scope.wide]\npaths = ['tests/**']\n"
+        "[scope.wide.thresholds.routine]\nCyclomaticStrict = 15\n"
+        "[scope.narrow]\npaths = ['tests/test_a.py']\n"
+        "[scope.narrow.thresholds.file]\nCountDeclFunction = false\n",
+        encoding="utf-8",
+    )
+    result = invoke(["config", "--why", "tests/test_a.py"], cwd=builder.path, env=env_for(tmp_path))
+    assert "scopes: wide, narrow" in result.stdout
+    assert "later one wins per rule" in result.stdout
+    assert "routine.CyclomaticStrict = max=15" in result.stdout
+    assert "file.CountDeclFunction = false (the rule does not apply here)" in result.stdout
+
+
+def test_config_why_says_whether_a_parse_error_would_block(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    plain = invoke(["config", "--why", "src/generic.py"], cwd=builder.path, env=env_for(tmp_path))
+    assert "not acknowledged" in plain.stdout and "blocks the commit" in plain.stdout
+
+    repo_config_path(builder.path).write_text(
+        '[[parse.acknowledged]]\npaths = ["src/generic.py"]\nreason = "PEP 695 on line 1."\n',
+        encoding="utf-8",
+    )
+    acknowledged = invoke(
+        ["config", "--why", "src/generic.py"], cwd=builder.path, env=env_for(tmp_path)
+    )
+    assert "acknowledged -- PEP 695 on line 1." in acknowledged.stdout
+    assert "only up to the construct" in acknowledged.stdout
+
+
+def test_init_detect_print_writes_nothing_and_emits_the_proposal(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    result = invoke(["init", "--detect", "--print"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert not repo_config_path(builder.path).exists(), "--print touches no file"
+    document = tomllib.loads(result.stdout)
+    settings = Settings.model_validate(document)
+    assert "vendor/**" in settings.project.exclude
+    assert settings.scope["tests"].paths == ["tests/**"]
+    assert settings.parse.acknowledged == []
+    assert "# evidence: gitattributes in .gitattributes" in result.stdout
+    assert "# [[parse.acknowledged]]" in result.stdout
+
+
+def test_init_detect_writes_the_proposal_to_the_repository_file(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    builder = declaring_repo(git_repo)
+    result = invoke(["init", "--detect"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    written = repo_config_path(builder.path).read_text(encoding="utf-8")
+    assert "vendor/**" in written
+    assert "# evidence: " in written
+    assert Settings.model_validate(tomllib.loads(written)).scope["tests"].paths == ["tests/**"]
+
+
+def test_init_without_detect_writes_the_plain_template(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    """The sibling: the same repository, the same command, one flag fewer."""
+    builder = declaring_repo(git_repo)
+    invoke(["init"], cwd=builder.path, env=env_for(tmp_path))
+    written = repo_config_path(builder.path).read_text(encoding="utf-8")
+    assert "vendor/**" not in written
+    assert "# evidence: " not in written
+
+
+def test_init_detect_is_reproducible(tmp_path: Path, git_repo: MakeGitRepo) -> None:
+    builder = declaring_repo(git_repo)
+    first = invoke(["init", "--detect", "--print"], cwd=builder.path, env=env_for(tmp_path))
+    second = invoke(["init", "--detect", "--print"], cwd=builder.path, env=env_for(tmp_path))
+    assert first.stdout == second.stdout
+
+
+def test_config_detect_reports_an_acknowledgement_that_covers_nothing(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    """A stale entry excuses a file that is gone, and nothing else would ever mention it."""
+    builder = declaring_repo(git_repo)
+    repo_config_path(builder.path).write_text(
+        '[[parse.acknowledged]]\npaths = ["src/deleted.py"]\nreason = "was PEP 695."\n',
+        encoding="utf-8",
+    )
+    result = invoke(["config", "--detect"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert "cover no tracked file" in result.stdout
+    assert "src/deleted.py" in result.stdout
+
+
+def test_config_detect_says_nothing_about_a_live_acknowledgement(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    """The sibling, differing in its input: an entry that covers a real file is not stale."""
+    builder = declaring_repo(git_repo)
+    repo_config_path(builder.path).write_text(
+        '[[parse.acknowledged]]\npaths = ["src/generic.py"]\nreason = "PEP 695 on line 1."\n',
+        encoding="utf-8",
+    )
+    result = invoke(["config", "--detect"], cwd=builder.path, env=env_for(tmp_path))
+    assert "cover no tracked file" not in result.stdout

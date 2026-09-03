@@ -14,3 +14,6 @@ htmlcov/
 # and a baseline captured by accident from whatever the tree happened to be is not a
 # decision (task 9.3 found two such artefacts at this root, task 10.4 removed the risk).
 scitools-hook.baseline.json
+
+# `mkdocs build` output. The published site is built by .github/workflows/docs.yml.
+site/

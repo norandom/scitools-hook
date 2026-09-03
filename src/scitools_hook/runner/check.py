@@ -65,6 +65,10 @@ from scitools_hook.analysis import baseline as baseline_rules
 from scitools_hook.analysis.classify import classify
 from scitools_hook.analysis.codecheck import map_violations
 from scitools_hook.analysis.ratchet import attach_before, evaluate_ratchet
+from scitools_hook.analysis.structure.calls import (
+    evaluate_reachable_complexity,
+    find_call_cycles,
+)
 from scitools_hook.analysis.structure.coupling import evaluate_coupling, new_dependencies
 from scitools_hook.analysis.structure.cycles import find_new_cycles
 from scitools_hook.analysis.structure.fan import evaluate_fan
@@ -95,8 +99,7 @@ from scitools_hook.runner.pipeline import (
     SelectionMode,
     plan_selection,
 )
-from scitools_hook.understand.codecheck import CodeCheckRunner
-from scitools_hook.understand.codecheck import _unusable_name as unusable_list_file_name
+from scitools_hook.understand.codecheck import CodeCheckRunner, unusable_list_file_name
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.snapshot import SnapshotExtractor
 
@@ -225,6 +228,10 @@ class CheckPipeline:
             effective,
             self.ctx.availability.unavailable,
             self.ctx.settings.ignore,
+            # Path scopes. Without this argument the whole `[scope.*]` feature is inert: the
+            # configuration parses, validates and prints, and changes no finding -- which is
+            # the worst shape a feature can have, because it looks configured.
+            self.ctx.settings.scope,
         )
         self._report(f"{rule}: {why}" for rule, why in sorted(outcome.reducer_failures.items()))
         findings = self._unparsed(plan.files, seen.unreadable)
@@ -326,6 +333,15 @@ class CheckPipeline:
                 rules.max_new_dependencies_per_file,
                 rules.new_dependencies_severity,
             )
+        # Call-graph rules, both off unless configured. Without these two statements the whole
+        # feature is inert: the settings parse, validate and print, and change no finding --
+        # which is the worst shape a feature can have, because it looks configured.
+        routines = {key for key in affected.keys if key.scope == "routine"}
+        findings += evaluate_reachable_complexity(
+            after, routines, rules.reachable_complexity, rules.reachable_complexity_severity
+        )
+        if rules.call_cycles is not None:
+            findings += find_call_cycles(after, routines, rules.call_cycles)
         return findings + evaluate_coupling(after.arch_edges, rules.coupling)
 
     def _violations(self, checked: Collection[str]) -> list[Finding]:
@@ -369,8 +385,16 @@ class CheckPipeline:
         self, findings: Sequence[Finding], effective: Sequence[EffectiveThreshold]
     ) -> list[Finding]:
         """Classify every finding, then give each one its remediation hint (req 4.6, 4.7, 7.2)."""
-        strict = self.ctx.settings.ratchet.strict
-        classified = classify(findings, strict, self._severities(effective))
+        # `parse` carries the acknowledged-unreadable files. Without it an acknowledgement is
+        # accepted by the loader and ignored by the run. `ratchet` carries `strict` and the
+        # `below_limit_severity` ceiling; passing the settings object rather than `strict`
+        # alone is what wires task 11.15's ceiling to the run instead of leaving it inert.
+        classified = classify(
+            findings,
+            self.ctx.settings.ratchet,
+            self._severities(effective),
+            self.ctx.settings.parse,
+        )
         return [
             finding.model_copy(update={"hint": self._hints.hint(finding.rule, finding)})
             for finding in classified

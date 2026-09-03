@@ -40,6 +40,7 @@ import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes import FakeUndCli
 
+from scitools_hook.analysis.ratchet import within_limit
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import (
     BaselineSettings,
@@ -463,12 +464,54 @@ def test_every_finding_of_a_staged_run_carries_a_hint(staged_harness: Harness) -
 def test_a_staged_run_counts_blocking_warning_and_preexisting_findings(
     staged_harness: Harness,
 ) -> None:
-    """The counts the exit code and both summaries are derived from (req 7.9)."""
+    """The counts the exit code and both summaries are derived from (req 7.9).
+
+    Two findings have moved from the first count to the second across two tasks, and both are
+    named here because the moves are the point.
+
+    Task 11.14 moved ``routine.Essential``: it rose on ``src/cli/app.py`` between the two
+    fixture sides, so the *ratchet* still fires and the finding is still reported -- it no
+    longer blocks. Demoting a threshold's severity must not switch its ratchet off, and a
+    count that only went down would not have shown the difference.
+
+    Task 11.15 moved ``routine.CountPath``, which is the defect this fixture had been
+    recording without anyone reading it that way: 12 -> 40 against a maximum of **100**, a
+    routine well inside its limit, counted as a blocking error. It is now a warning, and the
+    six findings still blocking on this change are the ones that broke a limit.
+    """
     result = staged_harness.run()
     warnings = [finding.rule for finding in result.findings if finding.severity == "warning"]
-    assert result.blocking_count == 18
-    assert result.warning_count == len(warnings) == 4
+    assert result.blocking_count == 16
+    assert result.warning_count == len(warnings) == 6
+    assert "routine.Essential" in warnings
+    assert "routine.CountPath" in warnings
     assert result.preexisting_count == 0
+
+
+def test_no_finding_blocks_a_change_that_left_its_entity_inside_its_limit(
+    staged_harness: Harness,
+) -> None:
+    """The property behind the counts above, asserted over every finding rather than one.
+
+    Task 11.15's rule in one line: a value that has not broken its own limit does not refuse
+    a commit. ``routine.CountPath`` at 40 of 100 is the finding this fixture used to fail on;
+    the assertion is written over the whole result so that the next rule to grow a ratchet
+    cannot reintroduce the freeze without failing here.
+    """
+    result = staged_harness.run()
+
+    inside = [
+        (finding.rule, finding.before, finding.value, finding.limit)
+        for finding in result.findings
+        if finding.blocking and within_limit(finding)
+    ]
+
+    assert inside == []
+    assert ("routine.CountPath", 12.0, 40.0, 100.0) in [
+        (finding.rule, finding.before, finding.value, finding.limit)
+        for finding in result.findings
+        if within_limit(finding)
+    ]
 
 
 def test_a_staged_run_analyses_the_after_side_first_and_then_the_before_side(
@@ -638,23 +681,48 @@ def test_a_repository_file_outside_the_selection_is_reported_and_does_not_block(
     assert result.blocking_count == clean.blocking_count
 
 
-def test_a_parse_error_outside_the_repository_is_reported_and_does_not_block(
+def test_a_parse_error_outside_the_repository_is_not_reported_at_all(
     git_repo: MakeGitRepo, tmp_path: Path
 ) -> None:
     """Task 10.4 measured four of these on a clean run, all in the interpreter's own stdlib.
 
     A different input from the test above rather than a different name for it: that one is a
     file of this repository that the change did not touch, this one is a file no commit of this
-    repository can reach at all. Both must be reported and neither may block, and they get
-    there by different halves of the rule -- ``in the selection`` and ``inside the shadow``.
+    repository can reach at all. The first must be reported and must not block; the second is
+    **dropped**. Measured on one real run of a 770-file project: 63 parse errors under the
+    interpreter's own ``typing.py``, ``pdb.py`` and ``_pyrepl``, none of which anyone can act
+    on. Non-blocking was not enough, because they still printed.
     """
     stdlib = "/usr/lib/python3.12/inspect.py"
     harness = unreadable_harness(git_repo, tmp_path, after=[stdlib])
 
     result = harness.run()
 
-    assert [str(error.path) for error in result.parse_errors] == [stdlib]
+    assert result.parse_errors == []
     assert parse_findings(result) == []
+
+
+def test_dropping_the_stdlib_noise_keeps_a_selected_file_blocking(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The negative control: the signal must survive beside the noise it is filtered from.
+
+    One error in the interpreter's standard library and one in a staged file of this
+    repository, in the same analysis. Only the second reaches the report, and it still blocks
+    -- which is requirement 2.6's whole point: the analysis stops where the parse stops, so a
+    rule that reported success over that file would be reporting success over code nobody read.
+    """
+    harness = unreadable_harness(
+        git_repo,
+        tmp_path,
+        after=["/usr/lib/python3.12/inspect.py", "src/analysis/rules.py"],
+    )
+
+    result = harness.run()
+
+    assert [error.path.as_posix() for error in result.parse_errors] == ["src/analysis/rules.py"]
+    blocking = [finding for finding in parse_findings(result) if finding.blocking]
+    assert [finding.path for finding in blocking] == ["src/analysis/rules.py"]
 
 
 def test_a_before_side_parse_error_does_not_block_the_commit_that_fixed_it(
@@ -1070,19 +1138,21 @@ def _preexisting_run(git_repo: MakeGitRepo, tmp_path: Path, strict: bool) -> Run
     return harness.run()
 
 
-def test_the_fan_severity_setting_reaches_the_fan_findings(
-    git_repo: MakeGitRepo, tmp_path: Path
-) -> None:
-    """Note 4.4: ``evaluate_fan`` carries no severity, so the pipeline must project it."""
-    builder = git_repo()
+def one_new_edge(
+    builder: GitRepoBuilder, tmp_path: Path, settings: Settings
+) -> list[tuple[str, str, bool]]:
+    """``src/a.py`` gaining its first dependency, and the fan findings that draws.
+
+    One staged change, two graphs: the before side has no edges at all and the after side has
+    ``src/a.py -> src/b.py``, so fan-out goes 0 -> 1 and every fan finding in the answer is
+    about that one edge.
+    """
     for path in SURVIVORS:
         builder.write(path, "# x\n")
     builder.stage(*SURVIVORS)
     builder.commit("initial")
     builder.write("src/a.py", "# changed\n")
     builder.stage("src/a.py")
-    settings = default_settings()
-    settings.structure.fan_severity = "error"
     before = built("before", [source_file("src/a.py"), source_file("src/b.py")], [])
     after = built(
         "after",
@@ -1096,8 +1166,64 @@ def test_the_fan_severity_setting_reaches_the_fan_findings(
         answers={"after": [after, after], "before": [before, before]},
     )
     result = harness.run()
-    fan = [finding for finding in result.findings if finding.rule == "structure.fan_out"]
-    assert [(finding.severity, finding.blocking) for finding in fan] == [("error", True)]
+    return sorted(
+        (finding.kind, finding.severity, finding.blocking)
+        for finding in result.findings
+        if finding.rule == "structure.fan_out"
+    )
+
+
+def test_the_fan_severity_setting_reaches_the_fan_findings(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Note 4.4: ``evaluate_fan`` carries no severity, so the pipeline must project it.
+
+    The limit is pinned at zero so the single new edge breaks it, which is what makes both
+    fan findings visible: the structural one for the absolute limit and the ratchet one for
+    the growth. Since task 11.15 the ratchet finding is capped at
+    ``ratchet.below_limit_severity`` while the entity is *inside* its limit, so a case under
+    the shipped maximum of 20 would show a warning here whatever ``fan_severity`` said, and
+    the projection this test exists for would be invisible.
+    """
+    settings = default_settings()
+    settings.structure.fan_severity = "error"
+    settings.structure.fan = {**settings.structure.fan, "file_fan_out": Limit(max=0)}
+
+    fan = one_new_edge(git_repo(), tmp_path, settings)
+
+    assert fan == [("ratchet", "error", True), ("structural", "error", True)]
+
+
+def test_one_new_dependency_inside_the_fan_limit_does_not_block(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Task 11.15 reaches the fan ratchet too, because it is the same refusal (req 6.4).
+
+    ``evaluate_fan`` builds a ``kind="ratchet"`` finding for fan-out growth, so "a file you
+    touched may not gain a dependency" is the freeze this task is about, one rule along: with
+    ``fan_severity = "error"`` a file importing its *first* module against a maximum of 20
+    refused the commit. The severity is capped instead, and there is no structural finding at
+    all -- one edge is not over the limit -- so this is a run with nothing blocking in it.
+    """
+    settings = default_settings()
+    settings.structure.fan_severity = "error"
+
+    fan = one_new_edge(git_repo(), tmp_path, settings)
+
+    assert fan == [("ratchet", "warning", False)]
+
+
+def test_the_fan_ratchet_refuses_again_under_below_limit_severity_error(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """One configuration key brings the refusal above back, which is what says it was real."""
+    settings = default_settings()
+    settings.structure.fan_severity = "error"
+    settings.ratchet.below_limit_severity = "error"
+
+    fan = one_new_edge(git_repo(), tmp_path, settings)
+
+    assert fan == [("ratchet", "error", True)]
 
 
 def test_the_fan_rules_see_the_neighbourhood_as_well_as_the_change(

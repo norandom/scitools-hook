@@ -10,6 +10,13 @@ across two Understand databases:
   commit at a time. Worse means higher for a ``max`` limit and lower for a ``min`` one; an
   entity the change added has no pre-change value and is therefore judged by absolute
   thresholds alone (req 4.5).
+* :func:`within_limit` says whether a ratchet finding's after value has broken its own limit.
+  Requirement 4.4 asks for a *report* and this module still makes one either way; what the
+  answer decides is the **severity** ``analysis.classify`` gives it, through
+  ``settings.ratchet.below_limit_severity`` (task 11.15). Reported and blocking are two
+  different things here, and conflating them is what made a 27-line routine gaining one line
+  refuse a commit against a limit of 60 -- the measurement is in
+  ``config.models.RatchetSettings``, and so is the decay this trade accepts.
 * :func:`attach_before` fills ``Finding.before`` on the threshold findings of step 4.1, whose
   evaluator only ever sees the after snapshot. ``analysis.classify`` reads that value to
   decide whether a violation was already there before the change (req 4.6); the check
@@ -46,12 +53,42 @@ comparison assumes.
   that fixed a syntax error. So an entity whose file is named in ``before.parse_errors`` is
   not ratcheted; the parse error itself is still reported by the run (req 2.6), so nothing
   goes quiet.
+
+**A routine whose parameter list changed is still the same routine** (task 11.6).
+``EntityKey`` keeps ``parameters`` so that a real C++ overload pair stays two entities, which
+means the key of a routine that gained an argument differs on the two sides: it reads as one
+entity removed and one added, requirement 4.4 never fires, and *"an agent added parameters and
+grew the function" -- the central case this gate exists to catch -- slips through*. Measured
+through the installed CLI, one repository, two runs whose sources differ in nothing but the
+parameter list: the routine that grew with its signature untouched drew the whole set of
+routine-scope ratchet findings, ``routine deep.walk CountLineCode rose from 6 to 10`` among
+them; the same growth with three parameters added drew **none at routine scope**, leaving only
+the file-scope findings, whose keys have no parameter list to change.
+
+:func:`pair_changed_signatures` closes that without weakening the key. Within one
+``EntityKey.family`` -- ``(scope, path, longname)``, everything a signature change leaves
+alone -- a key present only in ``after`` is paired with a key present only in ``before`` when
+there is **exactly one of each**. That is precisely "the same routine, new signature", and
+every other shape degrades to the behaviour this module already had:
+
+* a genuinely new overload beside an unchanged one is one added and none removed, so it is new
+  (req 4.5) and the unchanged overload keeps matching itself by its own key;
+* a deleted overload is one removed and none added, so it stays deleted (req 4.10);
+* two signatures changing at once in the same family is two and two, which no evidence can
+  resolve, so nothing is paired and both read as new. An unpaired entity is not ratcheted --
+  the same silence as today, and the honest answer rather than a guess.
+
+Only ``evaluate_ratchet`` pairs. :func:`attach_before` deliberately does not, and the
+asymmetry is the point: a paired before value *adds* a ratchet finding, while the before value
+``attach_before`` supplies is what lets ``analysis.classify`` call a violation **pre-existing**
+and therefore stop blocking. A guess may add a finding; it may not excuse one.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
-from typing import Final, Literal
+from dataclasses import dataclass
+from typing import Final, Literal, Self
 
 from scitools_hook.config.metric_names import ELEMENT_SCOPES, format_metric_name
 from scitools_hook.config.models import DECOMPOSITION_COUNTS, Limit
@@ -100,19 +137,55 @@ def evaluate_ratchet(
     """Report every entity of ``keys`` whose value got worse between the two snapshots.
 
     ``keys`` is the affected set: entities the staged change touched, plus those whose
-    dependencies moved (req 4.2). A key missing from either side yields nothing -- it is
+    dependencies moved (req 4.2). A key missing from the before side is looked for once more
+    through :func:`pair_changed_signatures`, which finds the same routine under a new
+    parameter list (task 11.6); a key still missing from either side yields nothing -- it is
     either new (req 4.5) or deleted (req 4.10) -- and so does a metric with the ratchet
     switched off in configuration (req 4.4), an entity in a file the before side could not
     parse, and a count a measured decomposition raised (both task 11.9; see the module
     docstring).
     """
     findings: list[Finding] = []
-    blind = unparsed_files(before)
+    pre_change = _PreChange.of(after, before)
     for threshold in specs:
         if not _is_ratcheted(threshold):
             continue
-        findings.extend(_compare_all(threshold, after, before, _in_scope(keys, threshold), blind))
+        scoped = _in_scope(keys, threshold)
+        findings.extend(_compare_all(threshold, after, pre_change, scoped))
     return findings
+
+
+def pair_changed_signatures(
+    after: ProjectSnapshot, before: ProjectSnapshot
+) -> dict[EntityKey, EntityKey]:
+    """Which after key is the before key's routine under a new signature (task 11.6).
+
+    One entry per family -- ``EntityKey.family``, the ``(scope, path, longname)`` a parameter
+    list change leaves alone -- in which **exactly one** key exists only on the after side and
+    **exactly one** exists only on the before side. Anything else is left out: a family with a
+    new overload has one added and none removed, a family with a deleted one has none added,
+    and a family with two of each carries no evidence about which became which. See the module
+    docstring for why the ambiguous case is answered with silence.
+
+    The empty answer is the common one -- a project whose signatures did not change pairs
+    nothing -- so this is built once per run rather than per threshold.
+    """
+    added = _grouped_by_family(key for key in after.entities if key not in before.entities)
+    removed = _grouped_by_family(key for key in before.entities if key not in after.entities)
+    pairs: dict[EntityKey, EntityKey] = {}
+    for family, new_keys in added.items():
+        old_keys = removed.get(family, ())
+        if len(new_keys) == 1 and len(old_keys) == 1:
+            pairs[new_keys[0]] = old_keys[0]
+    return pairs
+
+
+def _grouped_by_family(keys: Iterable[EntityKey]) -> dict[tuple[str, str, str], list[EntityKey]]:
+    """The given keys gathered under ``EntityKey.family``."""
+    families: dict[tuple[str, str, str], list[EntityKey]] = {}
+    for key in keys:
+        families.setdefault(key.family, []).append(key)
+    return families
 
 
 def unparsed_files(snapshot: ProjectSnapshot) -> frozenset[str]:
@@ -162,18 +235,57 @@ def _in_scope(keys: Iterable[EntityKey], threshold: EffectiveThreshold) -> list[
     return sorted((key for key in keys if key.scope == scope), key=lambda key: key.token)
 
 
+@dataclass(frozen=True, slots=True)
+class _PreChange:
+    """The before side of the change, and the two things needed to read an entity out of it.
+
+    Grouped rather than passed as three arguments, because a comparison needs all three
+    together and this project caps a routine at five parameters. Built once per run: both
+    members are derived from the whole of the two snapshots and neither depends on the
+    threshold being compared.
+    """
+
+    snapshot: ProjectSnapshot
+    blind: Collection[str]
+    paired: Mapping[EntityKey, EntityKey]
+
+    @classmethod
+    def of(cls, after: ProjectSnapshot, before: ProjectSnapshot) -> Self:
+        """The before side of a change into ``after``, ready to be asked about any key."""
+        return cls(
+            snapshot=before,
+            blind=unparsed_files(before),
+            paired=pair_changed_signatures(after, before),
+        )
+
+    def unreadable(self, key: EntityKey) -> bool:
+        """Whether this side failed to parse ``key``'s file; see the module docstring."""
+        return key.path in self.blind
+
+    def record_of(self, key: EntityKey) -> EntityRecord | None:
+        """``key``'s pre-change record: its own, or the one its signature change left behind.
+
+        The exact key is asked for first, so a routine that did not change signature never
+        depends on the pairing at all, and an unpaired key answers ``None`` as it always did.
+        """
+        record = self.snapshot.entities.get(key)
+        if record is not None:
+            return record
+        was = self.paired.get(key)
+        return None if was is None else self.snapshot.entities.get(was)
+
+
 def _compare_all(
     threshold: EffectiveThreshold,
     after: ProjectSnapshot,
-    before: ProjectSnapshot,
+    before: _PreChange,
     keys: Sequence[EntityKey],
-    blind: Collection[str],
 ) -> Iterator[Finding]:
     """Compare one threshold's metric for every key of its scope."""
     for key in keys:
-        if key.path in blind:
+        if before.unreadable(key):
             continue  # the before side of this file did not parse; see the module docstring
-        finding = _compare(threshold, after.entities.get(key), before.entities.get(key))
+        finding = _compare(threshold, after.entities.get(key), before.record_of(key))
         if finding is not None:
             yield finding
 
@@ -190,12 +302,12 @@ def _compare(
     was, now = before.metrics.get(metric), after.metrics.get(metric)
     if was is None or now is None:
         return None
-    bound = _worse_bound(threshold.limit, was, now)
-    if bound is None:
+    worse = _worse_bound(threshold.limit, was, now)
+    if worse is None:
         return None
     if _a_decomposition_raised_it(threshold, before, after):
         return None
-    return _ratchet_finding(threshold, after, was, now, bound)
+    return _ratchet_finding(threshold, after, was, now, worse)
 
 
 def _a_decomposition_raised_it(
@@ -232,20 +344,36 @@ def _got_simpler(was: Mapping[str, float], now: Mapping[str, float]) -> bool:
     return improved
 
 
-def _worse_bound(limit: Limit, was: float, now: float) -> Bound | None:
+@dataclass(frozen=True, slots=True)
+class _Worse:
+    """The bound a value moved towards, and the number that bound stands at.
+
+    The two travel together because neither answers anything alone: the direction says which
+    comparison to make and the limit is what to compare against, and carrying them as one
+    value is what keeps :func:`_ratchet_finding` and :func:`_message` inside this project's
+    five-parameter cap. Pairing them here is also the narrowing -- ``Limit`` holds two
+    optional bounds, and :func:`_worse_bound` returns this only for a bound that exists, so
+    ``limit`` is a number rather than ``float | None`` everywhere downstream.
+    """
+
+    bound: Bound
+    limit: float
+
+
+def _worse_bound(limit: Limit, was: float, now: float) -> _Worse | None:
     """The bound the value moved towards, or ``None`` when it did not get worse.
 
     A limit with both bounds is a maximum *and* a minimum, so either movement is worse.
     """
     if limit.max is not None and now > was:
-        return "max"
+        return _Worse("max", limit.max)
     if limit.min is not None and now < was:
-        return "min"
+        return _Worse("min", limit.min)
     return None
 
 
 def _ratchet_finding(
-    threshold: EffectiveThreshold, record: EntityRecord, was: float, now: float, bound: Bound
+    threshold: EffectiveThreshold, record: EntityRecord, was: float, now: float, worse: _Worse
 ) -> Finding:
     """One worsened entity (req 7.1); ``hint`` is attached by the pipeline."""
     metric = format_metric_name(threshold.metric)
@@ -260,21 +388,64 @@ def _ratchet_finding(
         line=record.ref.line,
         value=now,
         before=was,
-        limit=threshold.limit.max if bound == "max" else threshold.limit.min,
+        limit=worse.limit,
         limit_source=threshold.source,
         severity=threshold.spec.severity,
         blocking=threshold.spec.severity == "error",
-        message=_message(subject, metric, was, now, bound),
+        message=_message(subject, metric, was, now, worse),
     )
 
 
-def _message(subject: str, metric: str, was: float, now: float, bound: Bound) -> str:
-    """One line stating what got worse and by how much (req 7.1)."""
-    verb = "rose" if bound == "max" else "fell"
-    return (
-        f"{subject} {metric} {verb} from {_number(was)} to {_number(now)}; "
-        f"an affected entity may not get worse than it was"
-    )
+def within_limit(finding: Finding) -> bool:
+    """Whether this ratchet finding's after value is still inside the limit it moved towards.
+
+    The one predicate behind both halves of task 11.15, so the sentence the finding prints and
+    the severity ``analysis.classify`` gives it cannot drift apart: this module asks it while
+    wording the message, and ``classify`` asks it again about the finished finding when it
+    applies ``settings.ratchet.below_limit_severity``.
+
+    Everything it needs is on the finding itself, and the direction is read from the movement
+    rather than from a bound the finding does not carry: a ratchet finding exists *because*
+    the value moved the wrong way, and :func:`_worse_bound` answers ``max`` only when the
+    value rose and ``min`` only when it fell. So ``value > before`` is the ``max`` case
+    exactly, and ``Finding.limit`` is already the bound that movement broke.
+
+    ``False`` for anything that is not a ratchet finding, and for one missing a number the
+    comparison needs -- "not known to be inside its limit" is the answer that keeps a refusal
+    rather than inventing one.
+    """
+    if finding.kind != "ratchet":
+        return False
+    now, was, limit = finding.value, finding.before, finding.limit
+    if now is None or was is None or limit is None:
+        return False
+    return _inside(limit, now, "max" if now > was else "min")
+
+
+def _inside(limit: float, value: float, bound: Bound) -> bool:
+    """Whether ``value`` is still on the allowed side of the bound it moved towards.
+
+    The comparison is the same one ``analysis.thresholds`` makes, boundary included: a value
+    *equal* to its maximum is inside it, so a routine that grew to exactly the limit is the
+    last growth this reports without refusing.
+    """
+    return value <= limit if bound == "max" else value >= limit
+
+
+def _message(subject: str, metric: str, was: float, now: float, worse: _Worse) -> str:
+    """One line stating what got worse and by how much (req 7.1).
+
+    Two sentences, because two things are true and only one of them is a refusal. Past the
+    limit the entity may not get worse than it was and the line says so; inside the limit it
+    may, so the line reports the movement and names the bound that is still holding instead
+    of claiming a rule the run is not going to enforce (task 11.15).
+    """
+    verb = "rose" if worse.bound == "max" else "fell"
+    moved = f"{subject} {metric} {verb} from {_number(was)} to {_number(now)}"
+    if not _inside(worse.limit, now, worse.bound):
+        return f"{moved}; an affected entity may not get worse than it was"
+    edge = "maximum" if worse.bound == "max" else "minimum"
+    return f"{moved}, still within the {edge} {_number(worse.limit)}"
 
 
 def _with_before(finding: Finding, before: ProjectSnapshot, blind: Collection[str]) -> Finding:

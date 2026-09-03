@@ -47,11 +47,13 @@ from scitools_hook.models.snapshot import ParseError, Side
 from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.runner.context import cache_dir
 from scitools_hook.understand.database import (
+    ARCH_FILE,
     CACHE_MODE,
     LANGUAGE_BY_SUFFIX,
     NO_LANGUAGE_HINT,
     DatabaseManager,
 )
+from scitools_hook.understand.und_cli import ArchNode, write_architecture
 
 LEAKED_GIT_VARS = (
     "GIT_DIR",
@@ -93,6 +95,11 @@ class UndStub(FakeUndCli):
 
     fail: dict[str, Exception] = field(default_factory=dict)
     fail_once: bool = True
+    dropped: frozenset[str] = frozenset()
+    """Absolute member paths this ``und`` refuses to resolve, as a real one silently would."""
+
+    exported: ArchNode = field(default_factory=lambda: ArchNode(name="Directory Structure"))
+    """What ``export_arch`` answers, with its members already made absolute."""
 
     def create(self, db: Path, languages: list[str], local: bool = True) -> None:
         """Record the creation and make the ``.und`` directory the real command makes."""
@@ -110,6 +117,28 @@ class UndStub(FakeUndCli):
         result = super().analyze(db, files, all)
         self._maybe_fail("analyze-all" if all else "analyze")
         return result
+
+    def declare_architecture(self, db: Path, root: ArchNode) -> frozenset[str]:
+        """Record the declaration and answer what a real ``und`` would have resolved.
+
+        ``dropped`` is what makes the anti-false-green path reachable: ``und import -arch``
+        takes a document naming files it cannot resolve with status 0 and silently keeps
+        nothing of them, so a stub that always echoed its input back would make the manager's
+        check unfailable.
+        """
+        self.calls.append(
+            FakeCall(
+                "declare_architecture",
+                {"db": db, "root": root, "members": list(root.paths())},
+            )
+        )
+        self._maybe_fail("declare_architecture")
+        return frozenset(member for member in root.paths() if member not in self.dropped)
+
+    def export_arch(self, db: Path, name: str, out: Path) -> ArchNode:
+        """Answer the architecture this test planted, as ``und export -arch`` would."""
+        self.calls.append(FakeCall("export_arch", {"db": db, "name": name, "out": out}))
+        return self.exported
 
     def _maybe_fail(self, command: str) -> None:
         """Raise what this test planned for ``command``; once, unless it asked otherwise."""
@@ -1001,13 +1030,16 @@ def test_a_parse_error_inside_the_shadow_is_reported_repository_relative(
     assert [error.path.as_posix() for error in result.parse_errors] == ["src/a.py"]
 
 
-def test_a_parse_error_outside_the_shadow_keeps_its_absolute_path(harness: Harness) -> None:
+def test_a_parse_error_outside_the_shadow_is_dropped_rather_than_reported(
+    harness: Harness,
+) -> None:
     """The other half of the same decision, with a different input rather than a different name.
 
-    Task 10.4 measured four parse errors on a clean run of this repository, every one of them
-    in the interpreter's own standard library: Understand follows an import out of the project
-    and reports what it finds there. Those files belong to no commit, so they keep the only
-    name they have and never look like a repository path.
+    Understand follows an import out of the project and reports what it finds there: task 10.4
+    measured four such errors on a clean run of this repository, and one real run of a 770-file
+    project reported **63**, in the interpreter's own ``typing.py``, ``pdb.py`` and
+    ``_pyrepl``. Those files belong to no commit, nobody can fix them from here, and task
+    11.11's non-blocking treatment was not enough because they still printed. They are dropped.
     """
     stdlib = Path("/usr/lib/python3.12/inspect.py")
     harness.und.analyze_results.append(
@@ -1018,7 +1050,32 @@ def test_a_parse_error_outside_the_shadow_keeps_its_absolute_path(harness: Harne
 
     result = harness.ensure()
 
-    assert [error.path for error in result.parse_errors] == [stdlib]
+    assert result.parse_errors == []
+
+
+def test_a_parse_error_inside_the_shadow_survives_beside_one_outside_it(
+    harness: Harness,
+) -> None:
+    """The negative control: dropping the noise must not drop the signal with it.
+
+    A rule that silenced both would pass a test that only looked at the standard library, and
+    it is the file *inside* the shadow that requirement 2.6 exists for -- the analysis stops
+    where the parse stops, so every rule below reports success over code it never read.
+    """
+    stdlib = Path("/usr/lib/python3.12/inspect.py")
+    harness.und.analyze_results.append(
+        AnalyzeResult(
+            parse_errors=[
+                ParseError(path=stdlib, line=9, message="unknown token"),
+                unreadable(harness, "src/a.py"),
+            ],
+            seconds=0.0,
+        )
+    )
+
+    result = harness.ensure()
+
+    assert [error.path.as_posix() for error in result.parse_errors] == ["src/a.py"]
 
 
 def test_a_warm_run_still_names_what_the_database_could_not_read(harness: Harness) -> None:
@@ -1341,3 +1398,238 @@ def test_the_state_file_is_json_a_reader_outside_this_module_can_parse(
     document = json.loads(harness.paths.state.read_text(encoding="utf-8"))
     assert document["after_target"] == "index"
     assert document["languages"] == ["Python"]
+
+
+# --- the declared architecture (req 6.3, 6.7) -----------------------------------
+#
+# `scitools-hook.arch.xml` is what turns `structure.layers` from a rule about folders into a
+# rule about layers: `"Directory Structure"` is derived from the directory tree, so a layer
+# that spans two directories, or two layers that share one, cannot be expressed at all
+# without an architecture the repository declares. The measurements these tests encode were
+# taken against Understand build 1204 and are stated where they decide a case; the licensed
+# evidence is in `tests/contract/test_architecture_contract.py`.
+
+
+def declare(harness: Harness, *members: str, name: str = "Layers") -> None:
+    """Commit an architecture declaration naming ``members``, repository-relative."""
+    tree = ArchNode(name=name, children=(ArchNode(name="shells", members=members),))
+    harness.builder.write(ARCH_FILE, write_architecture(tree))
+    harness.builder.stage()
+
+
+def shadow(harness: Harness, side: Side, *names: str) -> list[str]:
+    """The absolute paths those repository-relative names have inside one shadow tree."""
+    tree = harness.paths.after_tree if side == "after" else harness.paths.before_tree
+    return [os.path.realpath(tree / name) for name in names]
+
+
+def test_no_declaration_means_no_architecture_command_at_all(harness: Harness) -> None:
+    """The default costs nothing: no file, no ``und`` call, folders as before."""
+    harness.ensure()
+
+    assert "declare_architecture" not in harness.commands
+
+
+def test_a_declaration_is_imported_after_the_analysis(harness: Harness) -> None:
+    """Measured, and the single worst way to get this wrong.
+
+    An ``import -arch`` into a database that has been ``add``-ed but not analysed produces an
+    architecture whose nodes are **empty**, exits 0, lists the architecture, and is not filled
+    in by the analysis that follows. Every layer rule then reads an empty node set as "no
+    finding", so the order here is the feature.
+    """
+    declare(harness, "src/a.py")
+
+    harness.ensure()
+
+    assert harness.commands == ["create", "add", "analyze", "declare_architecture"]
+
+
+def test_the_declared_members_reach_und_as_absolute_shadow_paths(harness: Harness) -> None:
+    """Measured: ``src/a.py`` written literally into the document resolves to *nothing*.
+
+    ``und import -arch`` answers ``Architecture imported.`` with status 0 and an empty node,
+    while a bare ``a.py`` resolves by short name -- a coin toss between two files of that name
+    -- and an absolute path resolves exactly. So the repository-relative declaration is
+    rewritten against the side's own shadow before ``und`` is asked.
+    """
+    declare(harness, "src/a.py")
+
+    harness.ensure()
+
+    assert harness.last("declare_architecture").arguments["members"] == shadow(
+        harness, "after", "src/a.py"
+    )
+
+
+def test_the_two_sides_get_the_same_declaration_over_their_own_shadows(
+    harness: Harness,
+) -> None:
+    """One repository file, two shadow trees; a path from the wrong side resolves to nothing."""
+    declare(harness, "src/a.py")
+    harness.builder.commit("declare")
+
+    harness.ensure()
+    harness.before()
+
+    members = [call.arguments["members"] for call in harness.calls("declare_architecture")]
+    assert members == [shadow(harness, "after", "src/a.py"), shadow(harness, "before", "src/a.py")]
+
+
+def test_a_declaration_is_re_imported_on_a_warm_run(harness: Harness) -> None:
+    """Measured: an imported architecture survives ``analyze``, and a re-import exits 1.
+
+    So the manager cannot simply leave a warm database alone -- it would keep whatever was
+    declared when the database was built, and an edited declaration would not take effect
+    until the next ``db rebuild``. ``UndCli.declare_architecture`` removes before it imports
+    for exactly this reason, and this test is what pins the second run happening at all.
+    """
+    declare(harness, "src/a.py")
+    harness.ensure()
+    harness.reset()
+
+    harness.builder.write("src/a.py", "def a():\n    return 2\n")
+    harness.builder.stage()
+    harness.ensure()
+
+    assert harness.commands == ["analyze", "declare_architecture"]
+
+
+def test_a_member_the_side_does_not_hold_is_named_on_the_progress_stream(
+    harness: Harness,
+) -> None:
+    """Dropped, but not silently: a typo in a declared path looks exactly like this.
+
+    A file the change adds is legitimately missing from the before shadow, so this cannot be
+    an error -- which is precisely why it may not be silence either, or a misspelt path would
+    take a file out of its layer with nothing to see it by.
+    """
+    harness.builder.write("src/new.py", "def n():\n    return 1\n")
+    declare(harness, "src/a.py", "src/new.py")
+
+    harness.before()
+
+    assert any("src/new.py" in note for note in harness.progress.notes)
+
+
+def test_a_member_the_side_does_not_hold_is_dropped_rather_than_refused(
+    harness: Harness,
+) -> None:
+    """The ordinary state of the before side of a change that adds a file.
+
+    ``src/new.py`` is staged but not committed, so it is in the *after* shadow and not in the
+    *before* one. A declaration that named it and then failed would make the gate unusable on
+    every commit that adds a file to a declared layer.
+    """
+    harness.builder.write("src/new.py", "def n():\n    return 1\n")
+    declare(harness, "src/a.py", "src/new.py")
+
+    harness.before()
+
+    assert harness.last("declare_architecture").arguments["members"] == shadow(
+        harness, "before", "src/a.py"
+    )
+
+
+def test_a_member_that_is_there_but_und_would_not_take_is_named(harness: Harness) -> None:
+    """The anti-false-green case, and the reason the import is read back at all.
+
+    ``und import -arch`` takes a document naming a directory, a file of a language the project
+    does not analyse, or a plain typo, answers ``Architecture imported.``, exits 0, and keeps
+    none of them. A file that *is* in the shadow and still did not survive is therefore a
+    defect in the declaration, and is named rather than quietly dropped.
+    """
+    harness.und.dropped = frozenset(shadow(harness, "after", "README.md"))
+    declare(harness, "src/a.py", "README.md")
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert "README.md" in str(caught.value)
+    assert ARCH_FILE in str(caught.value)
+
+
+def test_a_declaration_naming_nothing_that_resolved_says_so(harness: Harness) -> None:
+    """The catastrophic shape: every path wrong, an architecture of empty nodes, status 0."""
+    harness.und.dropped = frozenset(shadow(harness, "after", "src/a.py", "README.md"))
+    declare(harness, "src/a.py", "README.md")
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert "none of them" in str(caught.value)
+
+
+@pytest.mark.parametrize("escape", ("/etc/passwd", "../outside.py"))
+def test_a_member_outside_the_repository_is_refused(harness: Harness, escape: str) -> None:
+    """An absolute path is not portable and a ``../`` walk leaves the tree being analysed."""
+    declare(harness, escape)
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert escape in str(caught.value)
+
+
+def test_a_malformed_declaration_names_the_file_rather_than_reaching_und(
+    harness: Harness,
+) -> None:
+    harness.builder.write(ARCH_FILE, "<arch name='Layers'>\n")
+    harness.builder.stage()
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert ARCH_FILE in str(caught.value)
+    assert "declare_architecture" not in harness.commands
+
+
+def test_a_declaration_named_after_the_built_in_architecture_is_refused(
+    harness: Harness,
+) -> None:
+    """Measured: importing under that name *merges* into the folder-derived architecture.
+
+    It does not replace it and it is not refused as a duplicate the way any other name would
+    be, and ``und remove -arch "Directory Structure"`` exits 0 without removing anything -- so
+    a repository that made this mistake would carry the merged nodes in every database it ever
+    built until the cache was thrown away.
+    """
+    declare(harness, "src/a.py", name="Directory Structure")
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert "Directory Structure" in str(caught.value)
+    assert "declare_architecture" not in harness.commands
+
+
+def test_a_declaration_that_is_a_directory_is_refused(harness: Harness) -> None:
+    """A name taken by something that is not a readable file is not "no declaration"."""
+    (harness.builder.path / ARCH_FILE).mkdir()
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.ensure()
+
+    assert ARCH_FILE in str(caught.value)
+
+
+def test_export_architecture_answers_repository_relative_paths(harness: Harness) -> None:
+    """The exported document has to be committable, so it may not name this machine's cache."""
+    harness.ensure()
+    harness.und.exported = ArchNode(
+        name="Directory Structure",
+        children=(ArchNode(name="src", members=tuple(shadow(harness, "after", "src/a.py"))),),
+    )
+
+    document = harness.manager.export_architecture("after")
+
+    assert "src/a.py" in document
+    assert str(harness.paths.after_tree) not in document
+    assert harness.last("export_arch").arguments["name"] == "Directory Structure"
+
+
+def test_export_architecture_needs_a_database_to_read_one_out_of(harness: Harness) -> None:
+    with pytest.raises(AnalysisFailedError) as caught:
+        harness.manager.export_architecture("after")
+
+    assert str(harness.paths.after_db) in str(caught.value)

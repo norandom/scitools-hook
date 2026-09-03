@@ -66,7 +66,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
 
 import pytest
@@ -77,8 +77,10 @@ from scitools_hook.git.repo import (
     MISSING_RC,
     TIMEOUT_RC,
     GitRepo,
+    GitResult,
     parse_name_status,
 )
+from scitools_hook.models.progress import NullCommandLog
 
 FIVE_LINES = "one\ntwo\nthree\nfour\nfive\n"
 """Long enough that git scores a rename at 100% similarity rather than ignoring it."""
@@ -134,6 +136,56 @@ LEAKED_GIT_VARS = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
 )
 """Everything an outer ``git`` invocation exports that would steer these subprocesses."""
+
+
+# --- the structured context the typed errors carry -------------------------------
+#
+# ``cli/common.py::_context_lines`` renders ``key``, ``command``, ``stderr`` and ``hint`` for
+# every ``GateError``, so each of these is text an operator reads when the gate refuses -- not
+# dead metadata. Sixteen such fields in the module under test (three ``key=``, two ``command=``,
+# one ``stderr=`` and ten ``hint=``) were read by nothing at all, and each was measured
+# surviving this whole file in two flavours: **dropped** (``None``, which makes
+# ``_context_lines`` skip the line entirely, so the operator is told less) and **replaced**
+# with a different value (so the operator is told something untrue).
+#
+# The expectations are written out here as **literals**, never imported from the module under
+# test, for the reason :data:`TIMEOUT_KILLED_STATUS` above is: an assertion that reads its
+# expectation out of the code it is checking cannot fail. Two sites share
+# :data:`UNREADABLE_STREAM_HINT`, which is why every one of these is asserted at its own site;
+# a single assertion somewhere could not tell the two apart.
+
+HOOKS_PATH_KEY = "core.hooksPath"
+"""The setting both hooks-path refusals name, on the repository arm and on the global one."""
+
+HOME_KEY = "HOME"
+"""The variable the fallback names when it is relative -- a different key, one call deeper."""
+
+NOT_A_REPO_HINT = "Run from inside a repository; `doctor` and `config` work without one."
+"""``discover``: which subcommands still work when there is no repository to work in."""
+
+EMPTY_HOOKS_PATH_HINT = "Unset it (`git config --unset core.hooksPath`) or give it a directory."
+"""``_reject_empty_hooks_path``: the two ways out of a value git resolves to the root."""
+
+RELATIVE_HOOKS_PATH_HINT = "Give it an absolute path, or a `~/...` path, which git expands."
+"""``_reject_relative_hooks_path``: ``~`` is offered because ``--type=path`` expands it."""
+
+BLOCKED_DESTINATION_HINT = "Point the cache at a directory, or remove whatever is in the way."
+"""``_make_destination``: the export destination is a cache path the operator controls."""
+
+RELATIVE_HOME_HINT = "Set HOME to an absolute path."
+"""``_user_config_dir``: unlike ``XDG_CONFIG_HOME`` there is nothing to fall back to."""
+
+UNMERGED_HINT = "Finish the merge — resolve the conflicts and stage them — then run again."
+"""``_status_letter`` on ``U``: the operator's state rather than the gate's, and fixable."""
+
+UNREADABLE_STREAM_HINT = "Report this with the output of `git diff --cached --name-status -z -M`."
+"""``_status_letter`` on an unknown token **and** ``_truncated``: two sites, one text."""
+
+TIMED_OUT_HINT = "A git command this slow usually means a lock is held by another process."
+"""``_timed_out``: the likely cause, which is not something a longer limit would fix."""
+
+UNRUNNABLE_HINT = "Install git, or put it on PATH, and check with `scitools-hook doctor`."
+"""``_unrunnable``: the three things to try, ending at the subcommand that checks them."""
 
 
 # --- isolation ------------------------------------------------------------------
@@ -234,6 +286,71 @@ def tree_contents(root: Path) -> dict[str, bytes]:
     }
 
 
+# --- the two carriers, and what makes them safe to share ---------------------------
+#
+# ``GitRepo``'s docstring says the instance "is safe to share and every call is independent
+# of the last". Three declarations carry that claim -- ``frozen=True`` on both dataclasses
+# and ``field(default_factory=NullCommandLog)`` -- and nothing in the module ever writes to
+# an instance, so seven mutants of the three (``frozen=False``, the argument dropped, a
+# non-log default and a shared one) were each measured surviving this whole file: an absent
+# guard and a working one look identical until something tries.
+
+
+def test_a_git_result_cannot_be_rewritten_after_the_call_it_records() -> None:
+    """``GitResult`` is evidence about a finished call, not a mutable scratch pad.
+
+    ``_failed`` reads ``argv``, ``rc`` and ``stderr`` straight out of one and puts them in
+    front of the operator, so a consumer that edited a result in place would change what the
+    gate reports about a call that already happened -- and nothing would say so.
+    """
+    result = GitResult(argv=["git", "status"], rc=0, stdout=b"", stderr="", seconds=0.1)
+    with pytest.raises(FrozenInstanceError):
+        result.rc = 1  # type: ignore[misc]
+    assert result.rc == 0
+
+
+def test_a_repo_cannot_be_repointed_at_another_directory(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """Frozen is what makes "safe to share" true rather than merely intended.
+
+    Every method runs ``git -C self.root``, and both exports write to disk, so a consumer that
+    reassigned ``root`` on a shared instance would redirect every later call -- including the
+    ones that materialise a tree.
+    """
+    repo = open_repo(git_repo(), command_log)
+    elsewhere = repo.root.parent / "elsewhere"
+    with pytest.raises(FrozenInstanceError):
+        repo.root = elsewhere  # type: ignore[misc]
+    assert repo.root != elsewhere
+
+
+def test_a_repo_built_without_a_log_gets_a_null_one_of_its_own(
+    git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """``log`` defaults through ``field(default_factory=NullCommandLog)``; both halves matter.
+
+    Every call site does ``self.log.record(...)`` unconditionally, so the *default* is what
+    lets a caller build a ``GitRepo`` without a recorder at all -- and it has to be a
+    ``CommandLog``, or the first command turns into an ``AttributeError`` deep inside
+    ``_execute``. ``default_factory`` rather than one shared instance is the other half: two
+    repositories built this way must not end up writing into the same recorder, which is what
+    "every call is independent of the last" rests on.
+    """
+    builder = git_repo()
+    builder.write("a.py", "a\n")
+    builder.stage()
+    discovered = open_repo(builder, command_log)
+    unlogged = [
+        GitRepo(root=discovered.root, git_dir=discovered.git_dir, common_dir=discovered.common_dir)
+        for _ in range(2)
+    ]
+
+    assert all(isinstance(repo.log, NullCommandLog) for repo in unlogged)
+    assert unlogged[0].log is not unlogged[1].log, "one shared recorder would serve every repo"
+    assert unlogged[0].tracked_files() == ["a.py"], "the default log carries a real call"
+
+
 # --- discovery ------------------------------------------------------------------
 
 
@@ -264,11 +381,17 @@ def test_discover_from_a_nested_directory_finds_the_same_root(
 def test_discover_outside_a_repository_raises_not_a_git_repository(
     tmp_path: Path, command_log: FakeCommandLog
 ) -> None:
-    """Requirement 12.5: the not-a-git-repository exit code has to come from somewhere."""
+    """Requirement 12.5: the not-a-git-repository exit code has to come from somewhere.
+
+    The hint is asserted here rather than left to the message, because it is the half that
+    tells an operator what still works: ``doctor`` and ``config`` need no repository, and a
+    hook author who has just been refused has no other way to learn that.
+    """
     plain = tmp_path / "plain"
     plain.mkdir()
-    with pytest.raises(NotAGitRepositoryError):
+    with pytest.raises(NotAGitRepositoryError) as raised:
         GitRepo.discover(plain, command_log)
+    assert raised.value.hint == NOT_A_REPO_HINT
 
 
 def test_discover_in_a_bare_repository_raises_not_a_git_repository(
@@ -699,6 +822,7 @@ def test_staged_changes_refuses_an_unmerged_index(
     with pytest.raises(AnalysisFailedError) as raised:
         open_repo(builder, command_log).staged_changes()
     assert "unmerged" in str(raised.value).lower()
+    assert raised.value.hint == UNMERGED_HINT
 
 
 # --- the record parser on its own ------------------------------------------------
@@ -743,10 +867,16 @@ def test_parse_name_status_reads_a_typechange_as_a_modification() -> None:
 
 
 def test_parse_name_status_refuses_a_record_missing_its_second_path() -> None:
-    """A rename whose destination is missing is a truncated stream, not a one-path record."""
+    """A rename whose destination is missing is a truncated stream, not a one-path record.
+
+    ``_truncated`` and ``_status_letter``'s unknown-token arm carry the *same* hint text, so
+    each is asserted where it is raised: one assertion covering both sites would be satisfied
+    by either and would let a change to the other through.
+    """
     with pytest.raises(AnalysisFailedError) as raised:
         parse_name_status(b"R100\0pkg/old.py\0")
     assert "R100" in str(raised.value)
+    assert raised.value.hint == UNREADABLE_STREAM_HINT
 
 
 def test_parse_name_status_refuses_a_record_missing_its_path() -> None:
@@ -756,10 +886,15 @@ def test_parse_name_status_refuses_a_record_missing_its_path() -> None:
 
 
 def test_parse_name_status_refuses_an_unknown_status_token() -> None:
-    """An unrecognised token means the stream is being read out of step; say so loudly."""
+    """An unrecognised token means the stream is being read out of step; say so loudly.
+
+    The hint is the same text ``_truncated`` uses and is asserted at both sites for the reason
+    given there: an assertion made once cannot tell the two apart.
+    """
     with pytest.raises(AnalysisFailedError) as raised:
         parse_name_status(b"pkg/new.py\0M\0a.py\0")
     assert "pkg/new.py" in str(raised.value)
+    assert raised.value.hint == UNREADABLE_STREAM_HINT
 
 
 def test_staged_changes_detects_a_rename_even_when_the_repository_turns_renames_off(
@@ -1118,6 +1253,7 @@ def test_a_destination_blocked_by_a_regular_file_reports_a_typed_error(
         else:
             repo.export_commit(head, blocked, None)
     assert "in-the-way" in str(raised.value)
+    assert raised.value.hint == BLOCKED_DESTINATION_HINT
 
 
 @pytest.mark.parametrize("side", ["index", "commit"])
@@ -1734,6 +1870,8 @@ def test_hooks_dir_refuses_a_core_hooks_path_set_to_the_empty_string(
     with pytest.raises(ConfigError) as raised:
         repo.hooks_dir()
     assert "core.hooksPath" in str(raised.value)
+    assert raised.value.key == HOOKS_PATH_KEY
+    assert raised.value.hint == EMPTY_HOOKS_PATH_HINT
 
 
 def test_hooks_dir_still_reports_an_explicit_dot(
@@ -1803,6 +1941,8 @@ def test_global_hooks_dir_refuses_a_relative_value(
     with pytest.raises(ConfigError) as raised:
         repo.hooks_dir(global_=True)
     assert "core.hooksPath" in str(raised.value)
+    assert raised.value.key == HOOKS_PATH_KEY
+    assert raised.value.hint == RELATIVE_HOOKS_PATH_HINT
 
 
 def test_global_hooks_dir_normalises_an_absolute_value(
@@ -1926,6 +2066,8 @@ def test_global_hooks_dir_refuses_a_relative_home(
     with pytest.raises(ConfigError) as raised:
         repo.hooks_dir(global_=True)
     assert "HOME" in str(raised.value)
+    assert raised.value.key == HOME_KEY, "the key names the variable, not the setting above it"
+    assert raised.value.hint == RELATIVE_HOME_HINT
 
 
 def test_global_hooks_dir_falls_back_to_home_config_without_xdg(
@@ -2273,13 +2415,17 @@ def test_the_recorded_duration_is_the_length_of_the_call_it_timed(
 def test_the_two_recorded_status_sentinels_are_the_conventional_numbers() -> None:
     """The statuses :mod:`scitools_hook.git.repo` logs for a git that was killed or never ran.
 
-    Pinned as literals in one place because a second consumer is coming (task 11.2 has
-    ``runner.context.RealProbes._ping`` record the same two situations) and the ``--verbose``
-    log is meant to have **one** convention across the tool: an operator who has learnt that
-    124 means "killed" and 127 means "never started" for git must not have to learn different
-    numbers for the Understand probes. The behavioural tests below assert the same two
-    literals at the point where they are recorded; this one is about the exported names, which
-    is what the next consumer will import.
+    Pinned as literals because the ``--verbose`` log has **one** convention across the tool:
+    an operator who has learnt that 124 means "killed" and 127 means "never started" for git
+    must not have to learn different numbers for the Understand probes.
+
+    Since task 11.3 the module no longer defines them -- it imports them from
+    ``scitools_hook.exit_codes``, which is where every adapter that writes the log now reads
+    them. This assertion is therefore about the names this module still **exports**, because
+    that is the spelling three test modules and any future consumer import; the value is
+    asserted against the literal so that the import cannot quietly start re-exporting
+    something else. The behavioural tests below assert the same two literals at the point
+    where they are actually recorded.
     """
     assert TIMEOUT_RC == TIMEOUT_KILLED_STATUS
     assert MISSING_RC == SHELL_COMMAND_NOT_FOUND_STATUS
@@ -2335,22 +2481,47 @@ def test_a_command_that_never_starts_is_recorded_and_reported(
 
     The duration is asserted too, because a command that failed to start still took time to
     fail (measured: 0.00027 s) and ``--verbose`` prints that line like any other.
+
+    **The message is asserted with ``startswith``, not with ``in``.** ``_unrunnable`` builds
+    it as ``f"{argv[0]} could not be run: {broken}"`` and the interpolated ``OSError`` already
+    ends in ``'<executable>'``, so ``"no-such-git" in str(...)`` was satisfied by the *second*
+    half whatever the first said: mutating ``argv[0]`` to ``argv[1]`` survived, leaving a
+    message that opens ``-C could not be run: ...`` and names a git switch as the thing that
+    could not be started. Anchoring at the start is what separates the two halves.
+
+    ``command`` and ``stderr`` are asserted for the same reason the message is: both are
+    rendered by ``cli.common._context_lines``, so an operator reads them. The whole argv is
+    compared rather than a fragment, because the recorded one is what a reader copies to
+    reproduce the call.
     """
     builder = git_repo()
     repo = open_repo(builder, command_log)
+    executable = str(tmp_path / "no-such-git")
     missing = repo.__class__(
         root=repo.root,
         git_dir=repo.git_dir,
         common_dir=repo.common_dir,
         log=command_log,
-        git=str(tmp_path / "no-such-git"),
+        git=executable,
     )
     command_log.calls.clear()
 
     with pytest.raises(AnalysisFailedError) as raised:
         missing.head()
 
-    assert "no-such-git" in str(raised.value)
+    assert str(raised.value).startswith(f"{executable} could not be run: ")
+    assert raised.value.command == [
+        executable,
+        "-C",
+        str(missing.root),
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "HEAD",
+    ]
+    assert raised.value.stderr.endswith(f"'{executable}'"), "the OSError names the executable"
+    assert str(raised.value).endswith(raised.value.stderr), "stderr is what the message quotes"
+    assert raised.value.hint == UNRUNNABLE_HINT
     assert len(command_log.calls) == 1, "the attempt is recorded once, though it never ran"
     _, seconds, rc = command_log.calls[-1]
     assert rc == SHELL_COMMAND_NOT_FOUND_STATUS
@@ -2371,6 +2542,10 @@ def test_a_command_that_never_returns_is_recorded_and_reported(
 
     The duration is asserted for the same reason as the status: a command killed at its limit
     still ran for a measurable time (measured: 0.00067 s at ``timeout_s=0``).
+
+    ``command`` is compared whole. It is the only record of *which* call was killed once the
+    process is gone -- ``cli.common._context_lines`` prints it as a ``shlex``-quoted line the
+    operator can paste back -- and a truncated one would point at the wrong subcommand.
     """
     builder = git_repo()
     repo = open_repo(builder, command_log)
@@ -2387,6 +2562,8 @@ def test_a_command_that_never_returns_is_recorded_and_reported(
         impatient.tracked_files()
 
     assert "timed out" in str(raised.value)
+    assert raised.value.command == [impatient.git, "-C", str(impatient.root), "ls-files", "-z"]
+    assert raised.value.hint == TIMED_OUT_HINT
     assert len(command_log.calls) == 1, "the attempt is recorded once, though it was killed"
     _, seconds, rc = command_log.calls[-1]
     assert rc == TIMEOUT_KILLED_STATUS

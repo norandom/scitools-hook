@@ -7,6 +7,11 @@ counts (3.6), the metrics that were unavailable per language (5.5), the highest 
 metric among the evaluated entities (5.6) and the populations that could not be reduced to a
 value (3.4).
 
+``scopes`` is the one thing that makes a threshold depend on *where* an entity lives.
+:func:`resolve_for_path` states the merge and is the only place it is decided; the evaluation
+below simply asks it once per path. With no scopes configured -- the shipped case -- nothing
+changes: the same specs are checked against every entity, in the same order.
+
 An element-scope spec without a stats prefix is checked against every requested entity of
 its scope. Every other spec — a stats-prefixed one, or one on a scope that has no entities
 of its own (``project``, ``arch``) — is checked against the population vector of its scope
@@ -23,11 +28,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Final, Literal
 
 from scitools_hook.analysis.population import IgnoreFilter, filter_keys, reduce
 from scitools_hook.config.metric_names import ELEMENT_SCOPES, Scope, format_metric_name
-from scitools_hook.config.models import IgnoreRules, Limit
+from scitools_hook.config.models import (
+    IgnoreRules,
+    Limit,
+    PathScope,
+    ScopeOverride,
+    Severity,
+    ThresholdSpec,
+)
 from scitools_hook.models.findings import EffectiveThreshold, Finding, HighestValue, build_rule_name
 from scitools_hook.models.snapshot import EntityKey, EntityRecord, ProjectSnapshot
 
@@ -75,12 +87,161 @@ class _Tally:
             )
 
 
+# --- path scopes ------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeResolution:
+    """The thresholds one path is judged by, and what the path scopes did to get there.
+
+    Everything a scope changed is reported, not just the result: ``applied`` names the scopes
+    in the order they were overlaid, ``disabled`` the rules they switched off, and ``ignored``
+    the overrides that selected nothing. ``config --why`` prints all four, which is what makes
+    a scope auditable rather than a second place for limits to disappear.
+    """
+
+    path: str
+    applied: tuple[str, ...] = ()
+    thresholds: tuple[EffectiveThreshold, ...] = ()
+    disabled: tuple[str, ...] = ()
+    ignored: tuple[str, ...] = ()
+
+
+def resolve_for_path(
+    path: str, specs: Sequence[EffectiveThreshold], scopes: Mapping[str, PathScope]
+) -> ScopeResolution:
+    """The thresholds that apply to ``path`` once every matching scope has been overlaid.
+
+    **The merge, stated once.** Precedence is ``built-in defaults < user file < repository
+    file < environment < command line < path scope``. Everything left of the last step is
+    already done: ``specs`` arrives as the merged global configuration, with the adaptive
+    baseline applied. A scope is the final, most specific layer, and it works **per rule**:
+
+    * a rule the scope names gets the scope's limit, severity and ratchet, falling back to
+      the global spec's for whatever the scope leaves out;
+    * ``Metric = false`` removes the rule for this path -- it is not evaluated, and no finding
+      can come from it;
+    * a rule the scope names and no global threshold defines is *added*, provided the scope
+      gives it a limit;
+    * every rule no scope mentions keeps its global value, untouched.
+
+    A scope's limit replaces the *effective* limit, the adaptive baseline included. That is a
+    real consequence and it is the intended one: a scope is an explicit statement about a
+    region, and a recorded observation should not narrow it back.
+
+    **When two scopes match one file, both apply, in declaration order, and the later one
+    wins per rule.** Not "the most specific", which needs a specificity order nobody agrees
+    on, and not an error, which would make two independent scopes -- "tests" and "the vendored
+    package" -- impossible to write over one tree. The order is the order the scopes appear in
+    the merged configuration, so a repository file's scope overlays a user file's, and
+    :attr:`ScopeResolution.applied` reports it so an operator never has to infer it.
+    """
+    applied = tuple(name for name, scope in scopes.items() if scope.matched_by(path) is not None)
+    if not applied:
+        return ScopeResolution(path=path, thresholds=tuple(specs))
+    return _overlay(path, applied, specs, scopes)
+
+
+def _overlay(
+    path: str,
+    applied: Sequence[str],
+    specs: Sequence[EffectiveThreshold],
+    scopes: Mapping[str, PathScope],
+) -> ScopeResolution:
+    """Apply every matching scope's overrides to ``specs``, keeping the global order."""
+    resolved: dict[str, EffectiveThreshold | None] = {item.rule: item for item in specs}
+    ignored: list[str] = []
+    for name in applied:
+        for scope, metric, override in _override_entries(scopes[name]):
+            rule = build_rule_name(scope, metric)
+            replacement = _apply_override(resolved.get(rule), scope, metric, override)
+            if isinstance(replacement, _Unusable):
+                ignored.append(f"{name}: {rule} has no limit here and none globally")
+                continue
+            resolved[rule] = replacement
+    kept = tuple(item for item in resolved.values() if item is not None)
+    disabled = tuple(sorted(rule for rule, item in resolved.items() if item is None))
+    return ScopeResolution(
+        path=path,
+        applied=tuple(applied),
+        thresholds=kept,
+        disabled=disabled,
+        ignored=tuple(ignored),
+    )
+
+
+def _override_entries(scope: PathScope) -> list[tuple[Scope, str, ScopeOverride]]:
+    """One scope's overrides as ``(threshold scope, metric, override)``, in declaration order."""
+    return [
+        (threshold_scope, metric, override)
+        for threshold_scope, table in scope.thresholds.items()
+        for metric, override in table.items()
+    ]
+
+
+class _Unusable:
+    """Sentinel: an override that names no limit and has no global threshold to modify."""
+
+
+_UNUSABLE: Final = _Unusable()
+
+
+def _apply_override(
+    base: EffectiveThreshold | None, scope: Scope, metric: str, override: ScopeOverride
+) -> EffectiveThreshold | None | _Unusable:
+    """One rule after one scope: the replacement, ``None`` for disabled, or :data:`_UNUSABLE`."""
+    if override.disabled:
+        return None
+    limit = override.limit if override.limit is not None else _base_limit(base)
+    if limit is None:
+        return _UNUSABLE
+    spec = ThresholdSpec.model_validate(
+        {
+            "scope": scope,
+            "metric": metric,
+            "limit": limit,
+            "severity": _first(override.severity, base.spec.severity if base else None, "error"),
+            **_ratchet_field(override, base),
+        }
+    )
+    source = "config" if override.limit is not None or base is None else base.source
+    return EffectiveThreshold(spec=spec, metric=spec.ref, limit=limit, source=source)
+
+
+def _base_limit(base: EffectiveThreshold | None) -> Limit | None:
+    """The limit an override inherits when it names none of its own."""
+    return base.limit if base is not None else None
+
+
+def _ratchet_field(override: ScopeOverride, base: EffectiveThreshold | None) -> dict[str, object]:
+    """``{"ratchet": ...}`` only when something says so.
+
+    Left out entirely otherwise, because ``ThresholdSpec`` resolves the default from the
+    metric -- a decomposition count ships with the ratchet off -- and writing the field
+    explicitly, in either direction, is what turns that default off.
+    """
+    if override.ratchet is not None:
+        return {"ratchet": override.ratchet}
+    if base is not None:
+        return {"ratchet": base.spec.ratchet}
+    return {}
+
+
+def _first(*values: Severity | None) -> Severity:
+    """The first value that is not ``None``; the last argument is the fallback."""
+    for value in values:
+        if value is not None:
+            return value
+    raise AssertionError("_first needs a non-None fallback as its last argument")
+
+
 def evaluate_thresholds(
     snapshot: ProjectSnapshot,
     keys: Iterable[EntityKey],
     specs: Sequence[EffectiveThreshold],
     catalogue_unavailable: Mapping[str, Sequence[str]] | None = None,
     ignore: IgnoreRules | None = None,
+    scopes: Mapping[str, PathScope] | None = None,
 ) -> ThresholdOutcome:
     """Check ``specs`` against the entities named by ``keys`` and against the populations.
 
@@ -88,16 +249,16 @@ def evaluate_thresholds(
     whole-project mode (req 4.8); entities matching ``ignore`` are dropped and counted
     (req 3.6). ``catalogue_unavailable`` maps a language to the metrics Understand does not
     provide for it; together with the snapshot's own record it seeds the unavailable report
-    (req 5.5), which is otherwise discovered entity by entity.
+    (req 5.5), which is otherwise discovered entity by entity. ``scopes`` is
+    ``settings.scope``: the path scopes whose thresholds replace the global ones for the
+    files they name (:func:`resolve_for_path`). It never removes a file from the analysis --
+    only a ``[project] exclude`` line does that -- so a scope cannot hide an entity, only
+    change the numbers it is judged by.
     """
     selected = filter_keys(keys, IgnoreFilter.from_rules(ignore) if ignore is not None else None)
     records = _records_by_scope(snapshot, selected.keys)
     tally = _Tally()
-    for threshold in specs:
-        if _is_population(threshold):
-            _evaluate_population(threshold, snapshot, tally)
-        else:
-            _evaluate_elements(threshold, records.get(threshold.spec.scope, ()), tally)
+    _evaluate_all(snapshot, records, specs, scopes or {}, tally)
     _seed_unavailable(tally, specs, catalogue_unavailable, snapshot)
     return ThresholdOutcome(
         findings=tally.findings,
@@ -108,6 +269,60 @@ def evaluate_thresholds(
         },
         reducer_failures=tally.reducer_failures,
     )
+
+
+def _evaluate_all(
+    snapshot: ProjectSnapshot,
+    records: Mapping[Scope, Sequence[EntityRecord]],
+    specs: Sequence[EffectiveThreshold],
+    scopes: Mapping[str, PathScope],
+    tally: _Tally,
+) -> None:
+    """Run every spec, in one walk without path scopes and in two walks with them.
+
+    The scope-free branch is written out rather than folded into the general one, and the
+    reason is measured: it walks ``specs`` in configuration order, dispatching each to the
+    population or the element evaluator as it goes, so the findings come out in **exactly**
+    the order they always have. Two pipeline tests pin that order, and running the general
+    path unconditionally reordered them -- every population finding ahead of every element
+    one -- for configurations that use no scope at all. A feature nobody switched on must not
+    move a byte.
+    """
+    if not scopes:
+        for threshold in specs:
+            if _is_population(threshold):
+                _evaluate_population(threshold, snapshot, tally)
+            else:
+                _evaluate_elements(threshold, records.get(threshold.spec.scope, ()), tally)
+        return
+    for threshold in specs:
+        if _is_population(threshold):
+            _evaluate_population(threshold, snapshot, tally)
+    _evaluate_scoped_elements(records, specs, scopes, tally)
+
+
+def _evaluate_scoped_elements(
+    records: Mapping[Scope, Sequence[EntityRecord]],
+    specs: Sequence[EffectiveThreshold],
+    scopes: Mapping[str, PathScope],
+    tally: _Tally,
+) -> None:
+    """Check the element specs one file at a time, since a scope makes them file-dependent."""
+    element = [threshold for threshold in specs if not _is_population(threshold)]
+    for path, grouped in sorted(_records_by_path(records).items()):
+        for threshold in resolve_for_path(path, element, scopes).thresholds:
+            _evaluate_elements(threshold, grouped.get(threshold.spec.scope, ()), tally)
+
+
+def _records_by_path(
+    records: Mapping[Scope, Sequence[EntityRecord]],
+) -> dict[str, dict[Scope, list[EntityRecord]]]:
+    """Regroup the entities by the file holding them, keeping the scope grouping inside."""
+    grouped: dict[str, dict[Scope, list[EntityRecord]]] = {}
+    for scope, entities in records.items():
+        for record in entities:
+            grouped.setdefault(record.key.path, {}).setdefault(scope, []).append(record)
+    return grouped
 
 
 def _records_by_scope(

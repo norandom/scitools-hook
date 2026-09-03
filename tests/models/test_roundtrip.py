@@ -284,6 +284,11 @@ EXPORTED: dict[str, tuple[str, ...]] = {
         "NullProgress",
         "NullCommandLog",
     ),
+    # Protocols, not models: they carry no data and so have no round trip. They are listed
+    # because this table is also what `test_models_package_re_exports_every_public_name`
+    # compares `models.__all__` against, and a port that is not re-exported would make the
+    # package docstring's "every public name is re-exported here" quietly false.
+    "scitools_hook.models.ports": ("ShadowPort", "RepositoryRoot"),
 }
 
 

@@ -40,7 +40,11 @@
 - External processes: `und`, `git`. External modules: `understand` (loaded from `SCITOOLS_HOME`), `typer`, `rich`, `pydantic`, `platformdirs`; stdlib `tomllib`, `json`, `subprocess`, `statistics`.
 - Layer direction (enforced by an import-direction test, a violation is a review blocker):
   `config → models → understand | git → analysis → report → runner → cli`
-  Allowed-import matrix: every layer may import `config` and `models`; `understand/` and `git/` import nothing from each other nor from `analysis`, `report`, `runner`, `cli`; `analysis` imports only `config`/`models`; `report` imports `config`/`models`/`analysis`; `runner` imports everything below it; `cli` imports `runner` (plus `config`/`models` for option types). `understand/worker.py` imports nothing from `scitools_hook`. `analysis` and `report` never touch the filesystem or subprocesses.
+  Allowed-import matrix: every layer may import `config` and `models`; `understand/` and `git/` import nothing from each other nor from `analysis`, `report`, `runner`, `cli`; `analysis` imports only `config`/`models`; `report` imports `config`/`models`/`analysis`; `runner` imports everything below it; `cli` imports `runner` (plus `config`/`models` for option types, and `report` because `--format` is handled in `cli/check.py` against the renderers in `report/`). `understand/worker.py` imports nothing from `scitools_hook`. `analysis` and `report` never touch the filesystem or subprocesses.
+- **Cross-adapter dependencies go through a port in `models/`, never directly.** `DatabaseManager` (in `understand/`) cannot work without a shadow synchroniser (in `git/`), so the dependency is real and only its direction is negotiable: it is declared as `models/ports.py::ShadowPort`, which sits below both adapters, and the git adapter satisfies it structurally. The port is exactly as wide as its caller — `sync(side, target, state)` and `repo.root`, nothing else — and `tests/models/test_ports.py` holds it to that width by parsing `understand/database.py` for what it actually reaches for.
+- **One composition root, and it is `cli/pipelines.py`.** Somewhere has to name every concrete adapter at once. The plan below otherwise makes `runner/context.py` responsible for adapters, and this is the documented exception to that: `cli/pipelines.py` is the only `cli` module permitted to import `understand/` and `git/`, and the import-direction test names it explicitly rather than widening `cli` as a layer. Two reasons, the first measured:
+  - Requirement 12.5 (exit 6 outside a working tree) must not depend on Understand being installed. `build_context` deliberately answers `None` rather than raising when there is no repository — `doctor` and `config` have to run without one — and then reaches the locator, which raises exit 3. So the refusal has to be raised *above* `build_context`, by `GitRepo.discover` in `assemble`. Measured outside a working tree with no reachable installation: exit 6 as written; exit 3 ("no SciTools Understand installation was found") with that one call deleted.
+  - `assemble` takes a `cli/common.py::GlobalOptions`. Moving it into `runner/` would make `runner` import `cli`, replacing the five sideways imports with an upward one — a worse violation of the same rule.
 
 ### Revalidation Triggers
 - Change to `Finding` or `RunResult` JSON schema (bump `schema_version`; agent-rules text and SARIF writer must be re-checked).
@@ -116,7 +120,8 @@ src/scitools_hook/
 │   ├── git.py                         # StagedChange, SyncTarget variants, SyncDelta
 │   ├── cache.py                       # CachePaths, SyncState, repo_id() and cache-root rule
 │   ├── baseline.py                    # Baseline, BaselineIssue
-│   └── progress.py                    # Progress and CommandLog protocols (+ no-op implementations)
+│   ├── progress.py                    # Progress and CommandLog protocols (+ no-op implementations)
+│   └── ports.py                       # ShadowPort/RepositoryRoot: the cross-adapter port understand/ uses git/ through
 ├── understand/
 │   ├── locator.py                     # resolve SCITOOLS_HOME (precedence, well-known dirs), verify und + API + upython
 │   ├── api_runner.py                  # ApiRunner: run a worker operation in-process or under upython; JSON in/out; error mapping
@@ -173,7 +178,8 @@ src/scitools_hook/
     ├── db.py                          # `db path|rebuild|analyze`
     ├── hooks.py                       # `install-hook`, `uninstall-hook`
     ├── doctor.py                      # `doctor`
-    └── agent_rules.py                 # `agent-rules`
+    ├── agent_rules.py                 # `agent-rules`
+    └── pipelines.py                   # composition root: GlobalOptions -> repo, cache, adapters, pipelines (see Allowed Dependencies)
 tests/
 ├── conftest.py                        # fixtures: temp git repo builder, contract marker, FakeCommandLog
 ├── fakes/                             # FakeUndCli, FakeApiRunner, FakeSnapshotExtractor (each added by the task owning the real one)

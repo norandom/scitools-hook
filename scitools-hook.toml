@@ -31,23 +31,19 @@ exclude = [
     "tests/fixtures/**",
 ]
 
-[thresholds.class]
-# Measured with Understand 6.5.1204: `class Plain:` scores MaxInheritanceTree 0 and a child
-# of it 1, but `class Model(BaseModel)` scores 5 and `class ModelChild(Model)` scores 6 --
-# pydantic's own base is four levels deep before this project adds a line. Every one of the
-# 64 findings the shipped default raised here was exactly 5 or 6, i.e. every one was
-# "declares a pydantic model", not "has a deep hierarchy". 6 keeps the rule doing its job: a
-# third project-level layer (7) still blocks, and `ModelGrandChild` was measured at 7.
-MaxInheritanceTree = 6
-
-[thresholds.routine]
-# Kept as a limit, downgraded to a warning, because on Python this metric ranks style, not
-# complexity. Measured on one file: six guard clauses (`if x == 1: return "a"` ...) score
-# Essential 7, and the SAME logic written as one elif ladder with a single exit scores
-# Essential 1 -- while both score CyclomaticStrict 7. Understand counts an early return as
-# unstructured control flow, so the shipped max of 4 is a ban on more than three guard
-# clauses, and the gate's own hints ("extract the block ... into a routine that returns
-# early") push straight into it. It stays visible because a genuine break/continue tangle
-# does show up here; the blocking half of the same concern is carried by CyclomaticStrict,
-# CyclomaticModified and MaxNesting, which are all left at their defaults.
-Essential = { max = 4, severity = "warning" }
+# Two threshold deviations stood here until task 11.14 and both are gone, deliberately and
+# with the measurement recorded, because the shipped defaults now carry what they carried.
+#
+# `[thresholds.routine] Essential = { max = 4, severity = "warning" }` was byte-for-byte what
+# the default became: the guard-clause measurement behind it (six guards score Essential 7,
+# the same logic as one elif ladder scores 1, both CyclomaticStrict 7) is now in
+# `config/defaults.py`, and a deviation identical to the default is not a decision.
+#
+# `[thresholds.class] MaxInheritanceTree = 6` was raised because `class Model(BaseModel)`
+# measured 5 and `class ModelChild(Model)` 6 -- pydantic's own base being four levels deep.
+# Task 11.10 pinned the interpreter Understand analyses with, and a pinned interpreter cannot
+# see pydantic: RE-MEASURED on this repository's 152 classes, the 54 that scored 6 now score
+# 2, and the reason this line existed no longer exists. The default is now a warning, and the
+# 5 findings it still raises here (four `Protocol` declarations and one exception subclass,
+# each scoring 5) are left visible on purpose. Configuring them away would be this project
+# teaching the habit its own defaults are written against.

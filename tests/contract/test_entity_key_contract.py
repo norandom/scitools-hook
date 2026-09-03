@@ -16,10 +16,16 @@ The tests here are deliberately of two kinds:
   shows up here as a difference.
 * **The join's discriminator is measured, not assumed.** ``parameters`` is in the key "to
   distinguish overloads"; these tests measure what it actually distinguishes and what
-  survives without it, because task 11.6 has to decide whether to keep it.
+  survives without it. Task 11.6 read that measurement and kept it: dropping ``parameters``
+  merges a real C++ overload pair, so the key keeps it and ``analysis.ratchet`` pairs a
+  removed key with an added one instead. Both halves are measured here -- one overload
+  re-signed pairs, its untouched sibling stays a separate entity, and two identical projects
+  pair nothing.
 
-The edge-case project exists to find entity kinds the key cannot separate at all. Two of
-them turn out to be reachable in ordinary Python, and are recorded in ``research.md``.
+The edge-case project exists to find entity kinds the key cannot separate at all. Two of them
+turn out to be reachable in ordinary Python -- ``def same(x)`` twice and ``@typing.overload``
+-- and they are the reason a key names more than one record and the reason the mapping numbers
+them instead of dropping all but one.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import collections
 import pytest
 from contract_project import (
     FILES,
+    SOURCES,
     SampleProject,
     build_database,
     contract_settings,
@@ -38,6 +45,10 @@ from contract_project import (
     write_tree,
 )
 
+from scitools_hook.analysis.ratchet import evaluate_ratchet, pair_changed_signatures
+from scitools_hook.config.metric_names import parse_metric_name
+from scitools_hook.config.models import Limit, ThresholdSpec
+from scitools_hook.models.findings import EffectiveThreshold
 from scitools_hook.models.progress import NullCommandLog
 from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot
 from scitools_hook.understand.api_runner import ApiRunner
@@ -318,34 +329,57 @@ def test_a_python_lambda_is_not_a_routine_entity_at_all(edge_snapshot: ProjectSn
     assert inside == {"anon.with_lambda"}
 
 
-def test_two_python_routines_with_one_signature_share_a_single_key(
+def test_two_python_routines_with_one_signature_are_both_kept(
     edge_snapshot: ProjectSnapshot,
 ) -> None:
-    """The measured hole in ``EntityKey``, reachable from ordinary Python (recorded for 11.6).
+    """The measured hole in ``EntityKey``, and what task 11.6 does about it.
 
-    ``def same(x)`` written twice, and ``@typing.overload``'s stub-plus-implementation triple,
-    each put several Understand entities behind one key. ``ProjectSnapshot.entities`` is a
-    mapping, so the extra records are dropped on the way in and one survives -- silently, on
-    both sides, which is why no rule can notice. Recorded rather than fixed: the models are
-    outside this task's boundary and 11.6 owns the key.
+    ``def same(x)`` written twice, and ``@typing.overload``'s stub-plus-stub-plus-
+    implementation triple, each put several Understand entities behind one
+    ``(scope, path, longname, parameters)``. The mapping used to keep the last of each and
+    drop the rest -- silently, on both sides, so no rule could notice that an entity was
+    never measured. They are numbered now, in file order, and every one of them arrives.
     """
     duplicated = [key for key in routines(edge_snapshot) if key.longname == "dup.same"]
     overloaded = [key for key in routines(edge_snapshot) if key.longname == "typed.widen"]
 
-    assert len(duplicated) == 1, "two routines, one key"
-    assert len(overloaded) == 1, "three routines, one key"
-    assert duplicated[0].parameters == "x"
-    assert overloaded[0].parameters == "x"
+    assert len(duplicated) == 2, "two routines, two records"
+    assert len(overloaded) == 3, "three routines, three records"
+    assert {key.parameters for key in duplicated} == {"x"}
+    assert {key.ordinal for key in duplicated} == {0, 1}
+    assert {key.ordinal for key in overloaded} == {0, 1, 2}
 
 
-def test_the_worker_really_reported_the_records_the_snapshot_dropped(
+def test_the_numbering_follows_the_order_the_routines_are_written_in(
+    edge_snapshot: ProjectSnapshot,
+) -> None:
+    """The ordinal has to mean the same thing on both sides, so it is read off the source.
+
+    ``pkg/typed.py`` holds the two ``@overload`` stubs and then the implementation, so the
+    lines rise with the ordinal. Understand's own walk order is not promised to, which is why
+    the numbering sorts rather than counting.
+    """
+    lines = {
+        key.ordinal: edge_snapshot.entities[key].ref.line
+        for key in routines(edge_snapshot)
+        if key.longname == "typed.widen"
+    }
+
+    assert sorted(lines) == [0, 1, 2]
+    assert [lines[ordinal] for ordinal in sorted(lines)] == sorted(lines.values())
+    assert len(set(lines.values())) == 3, "three distinct definitions, not one read three times"
+
+
+def test_the_worker_reports_three_records_and_the_snapshot_keeps_three(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """The discriminator for the test above: the loss is in the model, not in Understand.
+    """Where the numbering happens, measured: Understand reports three, the model keeps three.
 
-    Reading the worker's answer *before* it is validated shows three ``typed.widen`` records
-    arriving and one surviving. Without this, "one key" could equally mean Understand only
-    ever reported one entity, and the finding recorded in ``research.md`` would be wrong.
+    Reading the worker's answer *before* it is validated is what makes the test above mean
+    something -- without it "three keys" could not be told from Understand having reported
+    three of anything. It also pins the wire form: the worker cannot import the package and
+    writes no ordinal at all, and the four field key documents it sends are what the model
+    numbers on the way in.
     """
     workdir = tmp_path_factory.mktemp("overload-records")
     root = write_tree(workdir / "tree", {"pkg/typed.py": EDGE_SOURCES["pkg/typed.py"]})
@@ -362,8 +396,117 @@ def test_the_worker_really_reported_the_records_the_snapshot_dropped(
     assert isinstance(records, list)
     arriving = [record for record in records if _longname(record) == "typed.widen"]
     assert len(arriving) == 3
+    assert all("ordinal" not in record["ref"]["key"] for record in arriving)  # type: ignore[index]
     surviving = ProjectSnapshot.model_validate(answer)
-    assert len([key for key in surviving.entities if key.longname == "typed.widen"]) == 1
+    assert len([key for key in surviving.entities if key.longname == "typed.widen"]) == 3
+
+
+# --- the join across a changed signature (task 11.6) ------------------------------
+
+RESIGNED: dict[str, str] = {
+    **SOURCES,
+    "native/shape.h": SOURCES["native/shape.h"].replace(
+        "int area(int width) const;", "int area(int width, int height, int depth) const;"
+    ),
+    "native/shape.cpp": SOURCES["native/shape.cpp"].replace(
+        "int Shape::area(int width) const { return width * side_; }",
+        "int Shape::area(int width, int height, int depth) const {\n"
+        "    return width * height * depth * side_;\n}",
+    ),
+}
+"""The sample project with **one** overload re-signed: ``area(int)`` gains two parameters.
+
+Its sibling ``area(int, int)`` is untouched, which is what makes this the C++ shape task 11.6
+is about: the pair must stay two entities, and only the one that changed may pair.
+"""
+
+
+@pytest.fixture(scope="module")
+def resigned(tmp_path_factory: pytest.TempPathFactory) -> ProjectSnapshot:
+    """The sample project with one overload's parameter list changed."""
+    workdir = tmp_path_factory.mktemp("resigned")
+    root = write_tree(workdir / "tree", RESIGNED)
+    db = workdir / "resigned.und"
+    build_database(db, root)
+    return extract(db, root, FILES)
+
+
+def test_two_databases_over_identical_sources_pair_nothing(
+    sample_project: SampleProject,  # noqa: F811
+) -> None:
+    """The control the pairing must not fire on: nothing changed, so nothing is paired.
+
+    ``alpha`` and ``beta`` hold byte-identical sources under differently named roots, so every
+    key is on both sides. A pairing that answered anything here would be matching entities
+    that never moved.
+    """
+    before = extract(sample_project.db("alpha"), sample_project.root("alpha"), FILES, "before")
+    after = extract(sample_project.db("beta"), sample_project.root("beta"), FILES, "after")
+
+    assert pair_changed_signatures(after, before) == {}
+
+
+def test_one_overload_re_signed_pairs_while_its_sibling_stays_a_separate_entity(
+    alpha: ProjectSnapshot, resigned: ProjectSnapshot
+) -> None:
+    """The defect and the invariant, measured together against a real Understand.
+
+    ``Shape::area(int) const`` gained two parameters, so its key changed and requirement 4.4
+    lost it. It is now paired with the key it left behind -- and its overload sibling
+    ``Shape::area(int, int) const``, which nothing touched, is matched by its own key on both
+    sides and is *not* part of the pairing. That is the whole of task 11.6: a signature change
+    is followed, and a real overload pair is still two entities.
+    """
+    both = [key for key in routines(resigned) if key.longname == OVERLOADED]
+    assert len(both) == 2, sorted(key.parameters or "" for key in both)
+
+    pairs = pair_changed_signatures(resigned, alpha)
+
+    was = EntityKey(
+        scope="routine", path="native/shape.cpp", longname=OVERLOADED, parameters="int width"
+    )
+    now = EntityKey(
+        scope="routine",
+        path="native/shape.cpp",
+        longname=OVERLOADED,
+        parameters="int width,int height,int depth",
+    )
+    assert pairs == {now: was}
+    unchanged = EntityKey(
+        scope="routine",
+        path="native/shape.cpp",
+        longname=OVERLOADED,
+        parameters="int width,int height",
+    )
+    assert unchanged in alpha.entities
+    assert unchanged in resigned.entities
+    assert unchanged not in pairs
+
+
+def test_the_re_signed_overload_is_ratcheted_against_the_routine_it_replaced(
+    alpha: ProjectSnapshot, resigned: ProjectSnapshot
+) -> None:
+    """What the pairing is *for*, end of the analysis chain: the growth is reported.
+
+    ``area(int)`` was a one line body and is now a three line one. Without the pairing this
+    is an added entity and requirement 4.4 says nothing about it; with it, the ratchet reports
+    the routine by name against the value it used to have.
+    """
+    spec = ThresholdSpec(scope="routine", metric="CountLineCode", limit=Limit(max=60), ratchet=True)
+    limit = EffectiveThreshold(
+        spec=spec, metric=parse_metric_name("CountLineCode"), limit=spec.limit, source="config"
+    )
+
+    findings = evaluate_ratchet(resigned, alpha, set(resigned.entities), [limit])
+
+    reported = {
+        finding.entity.key.parameters: (finding.before, finding.value)
+        for finding in findings
+        if finding.entity is not None and finding.entity.key.longname == OVERLOADED
+    }
+    assert list(reported) == ["int width,int height,int depth"]
+    ((was, now),) = reported.values()
+    assert was is not None and now is not None and now > was
 
 
 def _longname(record: object) -> str:
