@@ -1,0 +1,53 @@
+# This repository's own configuration for the gate it ships, adopted deliberately in task
+# 10.4 and not by an accidental smoke run. It carries only the keys that DEVIATE from the
+# built-in defaults; everything absent is the shipped default, so this file reads as a list
+# of decisions. Each deviation names what was measured, on Understand 6.5.1204.
+#
+# Run it with a bare `python` on PATH (`uv run scitools-hook check --all`). Without one,
+# Understand analyses Python 2, 25 files of this repository fail to parse and the code after
+# each failure is silently absent from the database (task 11.10).
+
+[project]
+# The default list, plus the fixture projects. `tests/fixtures/sample_project/` is analysis
+# INPUT, not source: task 3.1 built it to contain a dependency cycle, a layer violation and a
+# fan-out increase, and `tests/analysis/**` asserts the gate reports them. Gating on it would
+# be gating on the test data -- measured, it contributes one `structure.file_cycle` and three
+# threshold findings that exist because a test needs them to exist. Lists replace rather than
+# merge, so the defaults are repeated here in full.
+exclude = [
+    ".git/**",
+    "node_modules/**",
+    ".venv/**",
+    "venv/**",
+    "build/**",
+    "dist/**",
+    "target/**",
+    "__pycache__/**",
+    "*.min.js",
+    "*.generated.*",
+    "*.lock",
+    "uv.lock",
+    "package-lock.json",
+    "tests/fixtures/**",
+]
+
+[thresholds.class]
+# Measured with Understand 6.5.1204: `class Plain:` scores MaxInheritanceTree 0 and a child
+# of it 1, but `class Model(BaseModel)` scores 5 and `class ModelChild(Model)` scores 6 --
+# pydantic's own base is four levels deep before this project adds a line. Every one of the
+# 64 findings the shipped default raised here was exactly 5 or 6, i.e. every one was
+# "declares a pydantic model", not "has a deep hierarchy". 6 keeps the rule doing its job: a
+# third project-level layer (7) still blocks, and `ModelGrandChild` was measured at 7.
+MaxInheritanceTree = 6
+
+[thresholds.routine]
+# Kept as a limit, downgraded to a warning, because on Python this metric ranks style, not
+# complexity. Measured on one file: six guard clauses (`if x == 1: return "a"` ...) score
+# Essential 7, and the SAME logic written as one elif ladder with a single exit scores
+# Essential 1 -- while both score CyclomaticStrict 7. Understand counts an early return as
+# unstructured control flow, so the shipped max of 4 is a ban on more than three guard
+# clauses, and the gate's own hints ("extract the block ... into a routine that returns
+# early") push straight into it. It stays visible because a genuine break/continue tangle
+# does show up here; the blocking half of the same concern is carried by CyclomaticStrict,
+# CyclomaticModified and MaxNesting, which are all left at their defaults.
+Essential = { max = 4, severity = "warning" }

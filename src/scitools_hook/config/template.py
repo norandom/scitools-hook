@@ -50,7 +50,27 @@ _HEADER = """\
 
 
 def _toml_value(value: object) -> str:
-    """Render a scalar or list as a TOML value."""
+    """Render a scalar or list as a TOML value.
+
+    The two shapes are asked separately -- a list is the only recursive case, and keeping it
+    out of the scalar ladder is what holds both routines inside this project's own limits
+    (one body measured CyclomaticModified 10 against a maximum of 8; task 10.4).
+    """
+    if isinstance(value, list):
+        return _toml_list(value)
+    return _toml_scalar(value)
+
+
+def _toml_list(value: list[object]) -> str:
+    """Render a list, inline while it is short enough to read on one line."""
+    items = [_toml_value(item) for item in value]
+    if len(items) <= _INLINE_LIST_ITEMS:
+        return "[" + ", ".join(items) + "]"
+    return "[\n" + "".join(f"    {item},\n" for item in items) + "]"
+
+
+def _toml_scalar(value: object) -> str:
+    """Render one scalar; ``bool`` is asked before ``int`` because it is one in Python."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
@@ -61,11 +81,6 @@ def _toml_value(value: object) -> str:
         return json.dumps(value.as_posix())
     if isinstance(value, str):
         return json.dumps(value)
-    if isinstance(value, list):
-        items = [_toml_value(item) for item in value]
-        if len(items) <= _INLINE_LIST_ITEMS:
-            return "[" + ", ".join(items) + "]"
-        return "[\n" + "".join(f"    {item},\n" for item in items) + "]"
     raise TypeError(f"cannot render {type(value).__name__} as TOML")
 
 

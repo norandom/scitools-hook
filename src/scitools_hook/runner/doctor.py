@@ -38,7 +38,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, TypeVar
 
 from scitools_hook.config.loader import load_settings
 from scitools_hook.config.models import ApiMode, Provenance, Settings
@@ -73,6 +73,12 @@ from scitools_hook.understand.fake import (
 )
 from scitools_hook.understand.locator import WORKER_PATH, discover, verify
 from scitools_hook.understand.und_cli import UndCli
+
+# Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
+# cannot parse a type-parameter list, and one such declaration costs the rest of the file
+# from the analysis (measured in task 10.4).
+T = TypeVar("T")
+"""Whatever the guarded step returns; the guard neither inspects nor constrains it."""
 
 ApiModeName = Literal["inprocess", "upython"]
 """The two modes a probe can report on; ``auto`` is a preference, never an outcome."""
@@ -543,7 +549,7 @@ def _reason(what: str, broken: Exception) -> str:
     return f"{what} failed unexpectedly ({type(broken).__name__}): {broken}"
 
 
-def _guarded[T](step: Callable[[], T], what: str, problems: list[str]) -> T | None:
+def _guarded(step: Callable[[], T], what: str, problems: list[str]) -> T | None:
     """Run one diagnostic step; record its failure as a problem and answer ``None``.
 
     ``Exception`` is caught deliberately, and the breadth is the point. Requirement 1.5 asks

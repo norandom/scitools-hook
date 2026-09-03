@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Final
+from typing import Final, TypeVar
 
 from scitools_hook.config.metric_names import SCOPES, Scope, is_valid_scope
+
+# Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
+# cannot parse a type-parameter list, and one such declaration costs the rest of the file
+# from the analysis (measured in task 10.4).
+KeyT = TypeVar("KeyT", bound=str)
+"""Threshold-table key: any ``str`` subtype, so a ``Mapping[Scope, ...]`` is accepted."""
 
 THRESHOLD_TABLE_KEYS: Final[frozenset[str]] = frozenset({"max", "min", "severity", "ratchet"})
 """Keys a threshold written as a TOML table may carry."""
@@ -52,7 +58,7 @@ def _threshold_entry(scope: Scope, metric: str, raw: object) -> dict[str, object
     return entry
 
 
-def threshold_entries[KeyT: str](tables: Mapping[KeyT, object]) -> list[dict[str, object]]:
+def threshold_entries(tables: Mapping[KeyT, object]) -> list[dict[str, object]]:
     """Flatten ``{scope: {metric: value}}`` into ``ThresholdSpec`` inputs, keeping file order."""
     entries: list[dict[str, object]] = []
     for scope, table in tables.items():

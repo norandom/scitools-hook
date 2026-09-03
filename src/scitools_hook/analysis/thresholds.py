@@ -243,11 +243,17 @@ def _seed_unavailable(
     """
     named = {threshold.metric.metric for threshold in specs}
     sources: tuple[Mapping[str, Sequence[str]], ...] = (catalogue or {}, snapshot.unavailable)
-    for source in sources:
-        for language, metrics in source.items():
-            for metric in metrics:
-                if metric in named:
-                    tally.record_unavailable(language, metric)
+    # Flattened into one generator rather than three nested loops: the nesting measured
+    # MaxNesting 4 against this project's own maximum of 3 (task 4.1's note, repaid in 10.4).
+    reported = (
+        (language, metric)
+        for source in sources
+        for language, metrics in source.items()
+        for metric in metrics
+    )
+    for language, metric in reported:
+        if metric in named:
+            tally.record_unavailable(language, metric)
 
 
 def _rule_of(threshold: EffectiveThreshold) -> str:

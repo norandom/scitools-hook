@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal
+from typing import Final, Literal, TypeVar
 
 from pydantic import Field
 
@@ -60,6 +60,12 @@ from scitools_hook.models.snapshot import DataModel, ProjectSnapshot, Side
 from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.understand.database import LANGUAGE_BY_SUFFIX, DatabaseManager
 from scitools_hook.understand.snapshot import SnapshotExtractor, SnapshotTarget
+
+# Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
+# cannot parse a type-parameter list, and one such declaration costs the rest of the file
+# from the analysis (measured in task 10.4).
+T = TypeVar("T")
+"""Whatever the timed phase returns; the timing wrapper is agnostic to it."""
 
 SelectionMode = Literal["staged", "worktree", "all", "files"]
 """The four mutually exclusive things a run can be pointed at (req 12.3)."""
@@ -250,7 +256,7 @@ class Engine:
         )
         return self.phase(f"reading the {side} snapshot", lambda: self._extractor.extract(target))
 
-    def phase[T](self, name: str, work: Callable[[], T]) -> T:
+    def phase(self, name: str, work: Callable[[], T]) -> T:
         """Run one phase, announced and timed, so a slow one can be named (req 4.11)."""
         self._progress.start(name)
         started = time.monotonic()

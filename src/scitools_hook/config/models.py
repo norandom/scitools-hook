@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final, Literal, get_args
+from typing import Final, Literal, TypeVar, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -27,6 +27,12 @@ from scitools_hook.config.models_validation import (
     threshold_entries,
 )
 from scitools_hook.errors import ConfigError
+
+# Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
+# cannot parse a type-parameter list, and one such declaration costs the rest of the file
+# from the analysis (measured in task 10.4).
+KeyT = TypeVar("KeyT", bound=str)
+"""Threshold-table key: any ``str`` subtype, so a ``Mapping[Scope, ...]`` is accepted."""
 
 Severity = Literal["error", "warning"]
 """Only ``error`` findings block a commit (req 3.7)."""
@@ -105,7 +111,7 @@ class ThresholdSpec(StrictModel):
         return f"{self.scope}.{format_metric_name(self.ref)}"
 
 
-def thresholds_from_tables[KeyT: str](
+def thresholds_from_tables(
     tables: Mapping[KeyT, Mapping[str, object]],
 ) -> list[ThresholdSpec]:
     """Validate the TOML threshold tables into specs.

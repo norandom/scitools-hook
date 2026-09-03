@@ -66,7 +66,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 
 from scitools_hook.config.models import Settings
 from scitools_hook.errors import AnalysisFailedError, LicenseError
@@ -85,6 +85,12 @@ from scitools_hook.paths import classify_directory, classify_file
 # taken, because the file it lives in belongs to another task.
 from scitools_hook.understand.codecheck import _unusable_name as unusable_list_file_name
 from scitools_hook.understand.und_cli import UndCli
+
+# Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
+# cannot parse a type-parameter list, and one such declaration costs the rest of the file
+# from the analysis (measured in task 10.4).
+T = TypeVar("T")
+"""Whatever the timed phase returns; the timing wrapper is agnostic to it."""
 
 CACHE_MODE: Final = 0o700
 """The cache holds copies of the repository's source; only its owner may read it."""
@@ -517,7 +523,7 @@ class DatabaseManager:
             self._version = self._und.version()
         return self._version
 
-    def _phase[T](self, name: str, work: Callable[[], T]) -> T:
+    def _phase(self, name: str, work: Callable[[], T]) -> T:
         """Run one phase, announcing it and reporting how long it took (requirement 4.11).
 
         The five-second rule itself belongs to the reporter -- ``cli.common.ConsoleProgress``

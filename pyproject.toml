@@ -45,6 +45,13 @@ extend-exclude = [".kiro", ".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# UP040/UP046/UP047 push PEP 695 type-parameter syntax (`def f[T](...)`, `type X = ...`).
+# Understand 6.5 cannot parse a type-parameter list: one such declaration aborts the parse
+# and takes the REST OF THE FILE out of the database, so the gate silently stops measuring
+# there. Measured in task 10.4 -- five declarations cost five files, and the routine at the
+# declaration swallowed the remainder of its file into its own metrics. This project has to
+# be analysable by its own gate, so the older spelling stays until Understand catches up.
+ignore = ["UP040", "UP046", "UP047"]
 
 [tool.mypy]
 strict = true

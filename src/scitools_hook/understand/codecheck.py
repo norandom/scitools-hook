@@ -370,6 +370,19 @@ def _unusable_name(name: str) -> str | None:
     format ``und`` defines, and every entry was measured against the real binary or quoted
     from its own help.
 
+    The refusals are asked in two groups, and the split is by *what is being judged*: what
+    the string denotes, then which characters it holds. It is also what keeps the routine
+    inside the gate's own complexity limits -- nine guard clauses in one body measured
+    ``CyclomaticStrict`` 13 against a maximum of 10 (task 10.4). Order still matters within
+    each group and the shape group still runs first, so a directory is refused as a
+    directory rather than as, say, a name holding a comma.
+    """
+    return _unusable_shape(name) or _unusable_characters(name)
+
+
+def _unusable_shape(name: str) -> str | None:
+    """Refusals about what the string denotes: a directory, padded, or relative.
+
     The first test guards an *outcome*: ``Path(name).name`` is empty for ``""``, ``"."``,
     ``"./"`` and ``"/"``, and ``".."`` for ``".."``, ``"a/.."`` and ``"src/../."``. Listing
     those spellings is the shape :func:`_unusable` records as having failed every time.
@@ -385,6 +398,15 @@ def _unusable_name(name: str) -> str | None:
         return "has whitespace at an edge, which und strips from a list-file line"
     if not Path(name).is_absolute():
         return "is relative, and und resolves a list-file path against its own directory"
+    return None
+
+
+def _unusable_characters(name: str) -> str | None:
+    """Refusals about the characters the name holds, each one a syntax ``und`` gives them.
+
+    Every entry here was measured against the real binary or quoted from its own help; the
+    list file is one path per line and ``und`` reads the line, not the path.
+    """
     if "\n" in name or "\r" in name:
         return "holds a line break, and the list file is one path per line"
     if "," in name:

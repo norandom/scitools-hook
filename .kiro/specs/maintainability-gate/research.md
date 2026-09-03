@@ -158,6 +158,150 @@ Read from `Metric.list` for all twelve languages the extension map can configure
   - Flipped back and forth three times on the same database, deterministic in both directions. The `python` may be any real interpreter (3.12.3 and 3.14.4 both work); a stub that exits 1 or merely prints a version string does **not** work, so Understand executes it.
 - Consequences: the gate's analysis coverage depends on the `PATH` of whoever invoked it -- `uv run`/`uvx` put a venv `python` on `PATH` and hide the problem, a git hook run from a login shell on a distribution that ships only `python3` does not. Two machines, one commit, two entity sets, and nothing in the output naming `PATH`. Whoever owns `understand/und_cli` / `understand/database` should decide whether the gate guarantees a bare `python` in the environment it gives `und`, and `doctor` should report which one `und` will find.
 
+### Self-gate and timing on this repository (task 10.4)
+
+- **Context**: Requirement 4.11 asks for a staged run under 30 seconds on a repository whose
+  database already exists; task 10.4 asks the gate to be run against its own source with the
+  shipped defaults. Everything below is measured on Understand 6.5.1204, Linux x86-64,
+  2026-09-03, on this repository (79 source modules, 185 analysed files) with a licensed
+  install at `/home/mc/scitools`.
+
+#### Timing (req 4.11) -- measured, and the requirement is met with room
+
+| run | wall clock | what it did |
+|---|---|---|
+| `check --staged`, no cache at all | **19.9 s** | built BOTH databases (after 5.9 s, before 5.9 s) |
+| `check --staged`, warm cache, 3 consecutive runs | **7.8 s / 8.7 s / 7.9 s** | incremental `und analyze` on both sides, both snapshots re-extracted |
+| `check --all`, no cache | 8.9 s | one database |
+| `check --all`, warm cache | 2.9 s | one database, nothing to re-analyse |
+
+- Method: `/usr/bin/time -f "WALL %e s"` around `scitools-hook check --staged` with 12 files
+  staged (requirement 4.11's bound is 20), cache deleted between the cold and warm series,
+  `SCITOOLS_HOME` set, no other load on the machine. The warm number is the one requirement
+  4.11 names and it is **7.8-8.7 s against a 30 s budget**.
+- It is **four times** task 10.2's warm figure (1.8-2.0 s) and that is expected, not a
+  regression: 10.2 measured fixture repositories of a handful of files, this measures 185.
+  The cost is the two snapshot extractions, which are proportional to the whole tree rather
+  than to the change; a repository ten times this size would be worth re-measuring before
+  claiming 4.11 again.
+- **A warm run reports no parse errors even when the databases still hold them.** The cold
+  staged run printed `9 files failed to parse`; the three warm runs printed none, on the same
+  two databases with the same broken files still in them. `und analyze` is incremental, so
+  the errors are emitted by the run that did the parsing and by no later one. Requirement
+  2.6's report is therefore delivered once and then disappears -- a false green for every run
+  after the first.
+
+#### The gate on itself: 316 blocking findings before, 224 after
+
+- Measured with `check --all` (whole project, absolute limits, no ratchet), the interpreter
+  configuration held fixed at "a `python3` that does not carry this project on its
+  `sys.path`" (see the next section for why that has to be said):
+
+| tree | blocking | warnings | files that failed to parse |
+|---|---|---|---|
+| HEAD, shipped defaults, no repository config | **316** | 38 | 9 |
+| after this task's changes | **224** | 66 | 4 (all four in the CPython standard library, none in this repository) |
+
+  The 92 that went away are: **-64** `class.MaxInheritanceTree` and **-30**
+  `routine.Essential` (both deliberate configuration decisions, rationales in
+  `scitools-hook.toml`), **-3** in `tests/fixtures/**` (excluded: it is analysis input),
+  **-7** from five remediations, **+12** *revealed* by fixing the parse errors below.
+- What remains, by class -- each one an accepted deviation, not a fix waiting to happen:
+
+| n | rule | why it stands |
+|---|---|---|
+| 98 | `structure.new_dependencies` | `--all` has no before side, so a **delta** rule is applied as a total-import cap of 5 per file (deliberate, `coupling.py` documents it for req 4.8). A layered design cannot import fewer than five modules per file and the direction is enforced mechanically by `tests/test_import_direction.py` instead. The hint still says "the change adds", which is wrong in this mode. |
+| 50 | `file.CountDeclFunction` | 39 are pytest modules, which are lists of independent test functions; 11 are `src` modules already recorded as forced -- `worker.py` (99, forced by the single-file import-purity rule, note 6.2), `report/human.py`, `report/markdown.py`, `cli/common.py` (note 9.1), `config/loader.py`, `git/repo.py`, `git/shadow.py`, `understand/und_cli.py`, `understand/fake.py`, `understand/codecheck.py`, `config/template.py`. |
+| 19 | `file.CountLineCode` | 18 pytest modules (`tests/understand/test_worker.py` at 2598 lines is real debt and is left visible on purpose); 1 is `worker.py` at 849. |
+| 18 | `file.CountDeclClass` | 12 `src` modules, every one a group of models or errors that belong together: `config/models.py` (15), `errors.py` (9), `cli/common.py` (8), `models/snapshot.py` (8) -- all four recorded before this task (notes 5.1, 9.1). |
+| 12 | `routine.CountParams` | 7 in `src`: `cli.check.check` and `cli.explain.explain` declare **12** each because typer takes one function parameter per CLI option, `cli.app.root` 8, and `CheckPipeline.__init__` 6 is fixed by the approved design (note 8.3). Splitting a command function to satisfy a count would fragment the CLI for nothing. |
+| 11 | `class.CountClassCoupled` | the orchestrators: `ExplainPipeline` 27, `CheckPipeline` 24, `DatabaseManager` 19, `ShadowSync` 19. Coupling is what a pipeline *is*; the alternative is a facade that adds a layer and hides nothing. |
+| 16 | the rest | 10 in `tests/`, 6 in `src` (`_Extractor`'s method and instance-variable counts, `StrictModel`'s 14 subclasses, one `structure.file_cycle` between `tests/e2e/conftest.py` and its harness). |
+
+- **After the five remediations, no routine in `src/` breaks a complexity rule**:
+  `routine.CyclomaticStrict`, `routine.CyclomaticModified`, `routine.MaxNesting` and
+  `file.MaxCyclomaticStrict` are all at zero for `src/`. What is left in `src/` is size,
+  parameter and coupling *counts*, which is the honest shape of the debt.
+
+#### `def f[T](...)` costs the rest of the file (a product-level finding, fixed here)
+
+- Understand 6.5.1204 **cannot parse a PEP 695 type-parameter list**. `def
+  thresholds_from_tables[KeyT: str](` reports `expected token '(' at token [` and the parse
+  never recovers: every later line reports `expected identifier at token dedent` down to
+  `expected newline at token EOF`.
+- Measured cost on this repository: **five declarations, five files, 12 findings hidden and 2
+  fabricated.** `config/models.py` reported **3** classes instead of 15 -- the 12 declared
+  after line 108 were absent from the database, so no rule ran on them -- and the routine at
+  the parse site absorbed the remainder of the file into its own metrics
+  (`thresholds_from_tables` measured `CountStmt` 66 / `CountLineCode` 93 for a 30-line
+  function). Both directions of wrong from one construct: false negatives after it, false
+  positives on it.
+- Fixed by writing the five as explicit `TypeVar`s. `ruff`'s `UP046`/`UP047` push the other
+  way, so `pyproject.toml` now ignores `UP040`, `UP046` and `UP047` with the measurement in a
+  comment. **This is a live trap for users**: any project on Python 3.12+ syntax is silently
+  under-analysed, and nothing in the output says which entities were lost.
+- **The ratchet then blocked the fix.** Making 12 classes visible again reads to the ratchet
+  as a regression: `file.CountDeclClass rose from 3 to 15`, `class.CountClassDerived rose
+  from 2 to 14`. Task 11.9 recorded that the gate blocks the refactoring its hints recommend;
+  this is a new member of the same family -- the ratchet cannot tell "the code got worse"
+  from "the analysis got better".
+
+#### The same tree, the same command, three different answers (extends task 11.10)
+
+- `check --all` on the identical index, varying only which interpreter Understand runs:
+
+| `PythonOptions\python_exe` | blocking | `structure.new_dependencies` | files that failed to parse |
+|---|---|---|---|
+| this project's venv `python` (carries the editable install of `scitools_hook`) | **125** | 0 | 4, all CPython stdlib |
+| a `python3` without this project on its `sys.path` | **224** | 98 | 4, all CPython stdlib |
+| `python`, with none on `PATH` (Python 2 fallback) | **223** | 98 | **25, every one in this repository** |
+
+- **The editable self-install blinds every structural rule.** With a `python` whose
+  `sys.path` contains `<repo>/src`, `import scitools_hook.x` resolves to the live working
+  tree -- an absolute path *outside* the analysed shadow -- so the intra-project dependency
+  edges leave the tree and 98 `structure.new_dependencies` plus 12 `structure.fan` findings
+  simply do not exist. That is 99 findings turned off by the developer's own `uv sync`, and
+  nothing in the report names it.
+- **`und` remembers the interpreter in a machine-global file and rewrites it on every run.**
+  `~/.config/SciTools/Und.conf` carries `PythonOptions\python_exe`; a run that finds an
+  interpreter writes its absolute path there, a run that does not deletes the key, and the
+  value becomes the default for every database created afterwards -- including from another
+  repository, and including a `pytest` temporary directory that no longer exists. Two
+  consecutive runs of the same command on the same tree measured 316 and 231 blocking
+  findings before this was controlled for. Any future measurement here must pin the key
+  first; the numbers in this section were taken with it forced before every run.
+- **The remedy for 11.10 is one setting, measured.** `und settings -PythonExe
+  /abs/path/to/python3` restores Python 3 parsing with **no `python` on `PATH` at all**:
+  `['after', 'before']` both present, no Python-2 builtins in the database, `Errors:0`.
+  `PythonSetVersion Python3` does **not** work -- it is inert, the database still reports
+  `['before']` only and still holds `has_key`/`iteritems`/`raw_input`. So the fix belongs in
+  the `und create` recipe, not in the caller's `PATH`.
+
+#### `routine.Essential: 4` bans the guard clause on Python
+
+- Measured on one file, one database: the same six-way branch written as six guard clauses
+  scores `Essential` **7**, and written as one `elif` ladder with a single exit scores
+  `Essential` **1**. Both score `CyclomaticStrict` 7. One guard scores 1, three score 4.
+- Understand counts an early return as unstructured control flow, so on Python the shipped
+  maximum of 4 is a **ban on more than three guard clauses** -- and the gate's own
+  `routine.Essential` hint says "extract the block that is jumped out of into a routine that
+  **returns early**". Following the hint raises the metric.
+- 25 of the 30 `routine.Essential` findings on `src/` were guard-clause chains. This
+  repository keeps the limit and drops it to `severity = "warning"` (rationale in
+  `scitools-hook.toml`); **the shipped default is worth revisiting for Python**, because as
+  it stands it pushes Python code toward single-exit ladders that every style guide of the
+  last twenty years argues against.
+
+#### `class.MaxInheritanceTree: 4` is breached by declaring a pydantic model
+
+- Measured: `class Plain:` scores 0 and a child of it 1, but `class Model(BaseModel)` scores
+  **5**, `class ModelChild(Model)` **6** and `class ModelGrandChild(ModelChild)` 7 --
+  pydantic's own base is four levels deep before the project writes a line.
+- All **64** findings this rule raised on this repository were exactly 5 or 6, i.e. every one
+  of them said "this is a pydantic model". The repository config sets the limit to 6, which
+  still blocks a third project-level layer. The shipped default is worth revisiting for any
+  language whose frameworks use deep base classes.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |

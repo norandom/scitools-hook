@@ -54,7 +54,7 @@ import shutil
 import stat
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Final
+from typing import BinaryIO, Final
 
 from scitools_hook.config.models import ProjectSettings
 from scitools_hook.errors import AnalysisFailedError
@@ -479,10 +479,21 @@ def _walk_files(dest: Path) -> Iterator[Path]:
     same choice for Tarjan, where the depth was reachable.
     """
     for here in _walk_dirs(dest):
-        with os.scandir(here) as entries:
-            for entry in entries:
-                if not entry.is_dir(follow_symlinks=False):
-                    yield Path(entry.path)
+        for entry in _children(here):
+            if not entry.is_dir(follow_symlinks=False):
+                yield Path(entry.path)
+
+
+def _children(here: Path) -> list[os.DirEntry[str]]:
+    """One directory's entries, read out before the scan handle is closed.
+
+    Reading the listing eagerly is what keeps the two walkers flat: the ``with`` block that
+    would otherwise sit between the loop and its body counts as a level of nesting, and both
+    walkers measured MaxNesting 4 against this project's own maximum of 3 (task 10.4). The
+    handle is closed before any caller touches an entry, which is also the safer order.
+    """
+    with os.scandir(here) as entries:
+        return list(entries)
 
 
 def _walk_dirs(dest: Path) -> list[Path]:
@@ -492,10 +503,9 @@ def _walk_dirs(dest: Path) -> list[Path]:
     while pending:
         here = pending.pop()
         order.append(here)
-        with os.scandir(here) as entries:
-            for entry in entries:
-                if entry.is_dir(follow_symlinks=False):
-                    pending.append(Path(entry.path))
+        pending.extend(
+            Path(entry.path) for entry in _children(here) if entry.is_dir(follow_symlinks=False)
+        )
     return order
 
 
@@ -567,14 +577,25 @@ def _same_bytes(source: Path, shadow: Path) -> bool:
         if source.stat().st_size != shadow.stat().st_size:
             return False
         with open(source, "rb") as left, open(shadow, "rb") as right:
-            while True:
-                chunk = left.read(COMPARE_CHUNK)
-                if chunk != right.read(COMPARE_CHUNK):
-                    return False
-                if not chunk:
-                    return True
+            return _same_stream(left, right)
     except OSError:
         return False
+
+
+def _same_stream(left: BinaryIO, right: BinaryIO) -> bool:
+    """Whether two open readers yield the same bytes to the end of both.
+
+    Split out of :func:`_same_bytes` so the chunk loop is not nested inside that routine's
+    ``try`` and ``with``: together they measured MaxNesting 4 against this project's own
+    maximum of 3 (task 10.4). An ``OSError`` from a read still leaves through the caller's
+    guard, which is where the decision to answer ``False`` is documented.
+    """
+    while True:
+        chunk = left.read(COMPARE_CHUNK)
+        if chunk != right.read(COMPARE_CHUNK):
+            return False
+        if not chunk:
+            return True
 
 
 def _worktree_id(candidates: dict[str, os.stat_result]) -> str:
