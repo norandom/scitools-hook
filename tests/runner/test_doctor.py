@@ -242,6 +242,11 @@ def problem_about(report: DoctorReport, needle: str) -> str:
 # --- a healthy installation: both probes and the chosen mode (req 1.5) -----------
 
 
+def _too_deep(*_args: object, **_kwargs: object) -> object:
+    """Stand in for a document the parser cannot descend, so the threshold is not asserted."""
+    raise RecursionError("maximum recursion depth exceeded")
+
+
 def test_a_healthy_installation_reports_its_directory_version_and_license(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
@@ -1183,20 +1188,32 @@ def test_a_sync_state_nested_too_deeply_is_reported(
 
 
 def test_a_fixture_nested_too_deeply_is_an_analysis_failure_not_an_internal_defect(
-    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+    tmp_path: Path,
+    git_repo: MakeGitRepo,
+    command_log: FakeCommandLog,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The seam's own ``RecursionError`` used to reach the report as a Gate defect.
 
     ``configuration failed unexpectedly (RecursionError)`` is exit 70 for what is plainly a
     broken fixture, and the label matters: it tells the operator to file a bug rather than to
     fix their file.
+
+
+    The document used to be 100,000 nested brackets, trusting CPython to refuse it. In 3.14 the
+    json C scanner is bounded by the C stack rather than by ``sys.getrecursionlimit()``, so the
+    depth that trips it moves with the environment: measured, the release container parsed the
+    very document this machine refuses, and the test then failed on an unrelated message. The
+    promise here is that a ``RecursionError`` from the parser is reported rather than escaping
+    as a Gate defect, so the error is injected and CPython's threshold is left alone.
     """
     repo = git_repo()
     (repo.path / "scitools-hook.toml").write_text(
         '[project]\nlanguages = ["Python"]\n', encoding="utf-8"
     )
     fixtures, env = seam(tmp_path)
-    (fixtures / "catalogue.json").write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    (fixtures / "catalogue.json").write_text("[[[]]]", encoding="utf-8")
+    monkeypatch.setattr(json, "loads", _too_deep)
     report = run_doctor(options(repo.path, env, command_log))
     assert "too deeply" in problem_about(report, "too deeply")
     assert not [p for p in report.problems if "unexpectedly" in p]

@@ -71,6 +71,11 @@ def stored(tmp_path: Path, document: object) -> BaselineStore:
 # --- load: the three states of the file (req 8.6) --------------------------------
 
 
+def _too_deep(*_args: object, **_kwargs: object) -> object:
+    """Stand in for a document the parser cannot descend."""
+    raise RecursionError("maximum recursion depth exceeded")
+
+
 def test_a_missing_baseline_file_is_no_baseline_and_no_problem(tmp_path: Path) -> None:
     """A repository that never captured a baseline is the normal case, not a fault."""
     baseline, issues = BaselineStore(tmp_path / "absent.json").load(specs())
@@ -236,15 +241,30 @@ def test_a_baseline_that_is_a_fifo_is_reported_rather_than_read(tmp_path: Path) 
     assert "not a regular file" in issues[0].message
 
 
-def test_a_baseline_nested_too_deeply_is_reported_rather_than_raised(tmp_path: Path) -> None:
+def test_a_baseline_nested_too_deeply_is_reported_rather_than_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``json.loads`` answers a deeply nested document with ``RecursionError``, not ``ValueError``.
 
     The same fault class was already mapped twice for ``tomllib`` in ``config.loader``; it
     escaped here because that sweep went reader by reader instead of fault-class by reader.
     Requirement 8.6 and this module's own docstring both promise a ``BaselineIssue``.
+
+    A depth of 100,000 used to be written here and CPython was trusted to refuse it. It does
+    on some builds and not on others: in 3.14 the json C scanner is bounded by the C stack
+    rather than by ``sys.getrecursionlimit()``, so the depth that trips it moves with the
+    environment. Measured -- the release container parsed the same document this machine
+    refuses, and `sys.setrecursionlimit(200)` does not help because the scanner never consults
+    it. The test then failed on a message about the wrong thing entirely.
+
+    What this actually promises is that a ``RecursionError`` from the parser is REPORTED, not
+    that CPython raises one at any particular depth. So the error is injected. The claim is
+    about our handler; the threshold is CPython's business and it is not stable enough to
+    assert.
     """
     path = tmp_path / "baseline.json"
-    path.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    path.write_text("[[[]]]", encoding="utf-8")
+    monkeypatch.setattr(json, "loads", _too_deep)
     baseline, issues = BaselineStore(path).load(specs())
     assert baseline is None
     assert len(issues) == 1

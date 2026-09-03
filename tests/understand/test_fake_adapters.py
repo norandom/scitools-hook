@@ -60,6 +60,11 @@ def snapshot_document(side: str) -> dict[str, object]:
 # --- FixtureApiRunner: which file answers which request -------------------------
 
 
+def _too_deep(*_args: object, **_kwargs: object) -> object:
+    """Stand in for a document the parser cannot descend, so the threshold is not asserted."""
+    raise RecursionError("maximum recursion depth exceeded")
+
+
 def test_a_sided_request_is_answered_by_the_file_of_that_side(tmp_path: Path) -> None:
     """``<op>.<side>.json`` is the whole point: before and after must differ."""
     write(tmp_path, "snapshot.before.json", snapshot_document("before"))
@@ -500,7 +505,7 @@ def test_an_analysis_fixture_that_is_not_a_readable_file_is_refused(
 
 
 def test_a_fixture_nested_too_deeply_is_refused_rather_than_reported_as_a_gate_defect(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``json.loads`` raises ``RecursionError``, which is not a ``ValueError``.
 
@@ -508,7 +513,8 @@ def test_a_fixture_nested_too_deeply_is_refused_rather_than_reported_as_a_gate_d
     of as the broken fixture it is -- the same fault class already mapped for ``tomllib``.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "catalogue.json").write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    (tmp_path / "catalogue.json").write_text("[[[]]]", encoding="utf-8")
+    monkeypatch.setattr(json, "loads", _too_deep)
     with pytest.raises(AnalysisFailedError) as raised:
         FixtureApiRunner(tmp_path).run("catalogue", {"kinds": []})
     assert "too deeply" in raised.value.message
