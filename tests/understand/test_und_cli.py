@@ -18,7 +18,9 @@ deterministic commands against the real executable so the transcripts cannot sil
 from __future__ import annotations
 
 import json
+import os
 import stat
+import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -173,10 +175,20 @@ No ``und`` call in this file is allowed anywhere near ten seconds.
 
 # --- the stubbed executable ------------------------------------------------------
 
+STUB_SHEBANG = f"#!{sys.executable}"
+"""The stub is launched by absolute path, never through ``PATH``.
+
+The tests below hand ``und`` deliberately hostile search paths -- one holding a Python 2
+decoy, one holding nothing at all -- and a stub whose own shebang was ``/usr/bin/env
+python3`` would then fail to start and exit 127. This project has read such a 127 as evidence
+about the code under test five times; an absolute shebang removes the question.
+"""
+
 STUB_SOURCE = '''#!/usr/bin/env python3
-"""Stand-in for ``und``: record the call, snapshot any list files, replay a plan."""
+"""Stand-in for ``und``: record the call and its environment, snapshot list files, replay a plan."""
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -185,6 +197,21 @@ ARGV = sys.argv[1:]
 
 with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as handle:
     handle.write(json.dumps(ARGV) + "\\n")
+
+# The real und resolves a bare `python` off PATH *while it runs* and analyses Python 2 when
+# it finds none, so the answer has to be taken here: the directory the Gate builds is gone
+# by the time the test looks.
+FOUND = shutil.which("python")
+with open(os.path.join(HERE, "environment.json"), "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "PATH": os.environ.get("PATH", ""),
+            "python": FOUND,
+            "python_real": os.path.realpath(FOUND) if FOUND else None,
+            "marker": os.environ.get("SCITOOLS_HOOK_STUB_MARKER", ""),
+        },
+        handle,
+    )
 
 SEEN = {}
 for token in ARGV:
@@ -245,6 +272,19 @@ class UndStub:
         return self.calls[0]
 
     @property
+    def environment(self) -> dict[str, str | None]:
+        """What the stub saw of its own environment, recorded while it ran.
+
+        ``python`` is resolved *inside* the stub for the reason ``und`` resolves it inside
+        ``und``: the directory the wrapper builds exists only for the length of one call, so
+        a test that looked afterwards would find nothing and could not tell a working pin
+        from an absent one.
+        """
+        seen = self.root / "environment.json"
+        assert seen.exists(), "the stub did not run, so it recorded no environment"
+        return dict(json.loads(seen.read_text(encoding="utf-8")))
+
+    @property
     def lists(self) -> dict[str, str]:
         """Content of every file named on the last command line, read while it ran."""
         snapshot = self.root / "lists.json"
@@ -277,7 +317,8 @@ def stub(tmp_path: Path) -> UndStub:
     root = tmp_path / "bin"
     root.mkdir()
     script = root / "und"
-    script.write_text(STUB_SOURCE, encoding="utf-8")
+    body = STUB_SOURCE.split("\n", 1)[1]
+    script.write_text(f"{STUB_SHEBANG}\n{body}", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     made = UndStub(root)
     made.plan({})
@@ -1233,6 +1274,142 @@ def test_codecheck_without_a_csv_fails_loudly(
     with pytest.raises(AnalysisFailedError) as caught:
         cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], out_dir)
     assert "wrote no csv file" in str(caught.value).lower()
+
+
+# --- the python every und call is given -------------------------------------------
+
+# `und` decides the Python dialect by EXECUTING a bare `python` off `PATH`, and analyses a
+# Python 2 model when it cannot find one -- which silently drops every routine after the
+# first Python 3 construct in a file. The wrapper therefore decides that `PATH` rather than
+# inheriting it. What these tests can show is the environment the wrapper hands over; what a
+# real database does with it is measured under `tests/contract/`.
+
+DECOY_PYTHON = "#!/bin/sh\necho 'Python 2.7.18'\n"
+"""A `python` a developer might already have first on their PATH. Measured against the real
+und: a decoy printing exactly this, placed ahead of the pin, gives the Python 2 model."""
+
+
+def decoy_python_dir(root: Path) -> Path:
+    """A directory holding a ``python`` that is not the one the Gate would choose."""
+    root.mkdir(parents=True, exist_ok=True)
+    decoy = root / "python"
+    decoy.write_text(DECOY_PYTHON, encoding="utf-8")
+    decoy.chmod(decoy.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return root
+
+
+def prepend_to_path(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """Put ``directory`` ahead of the ambient ``PATH``, keeping the rest of it.
+
+    Keeping the rest is not politeness. The stub's own shebang is ``/usr/bin/env python3``,
+    so a test that *replaced* ``PATH`` would break its own harness and read the resulting
+    127 as evidence about the code under test. This project has been caught by that five
+    times; the rule is to add, never to replace.
+    """
+    monkeypatch.setenv("PATH", f"{directory}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+def test_every_und_call_is_given_a_python_the_gate_chose(
+    stub: UndStub, log: CommandLog, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare ``python`` resolves to the Gate's own interpreter even with none on ``PATH``.
+
+    The ``PATH`` is emptied of everything for this test, which is the CI-container case: a
+    distribution shipping ``python3`` and no ``python``. Leaving the ambient one in place
+    would have proved nothing here -- ``uv run`` puts a ``python`` on it, and that is exactly
+    the shared setup that hid this defect for the whole build.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    cli(stub, log).version()
+
+    seen = stub.environment
+    assert seen["python"] is not None, "und found no bare python at all"
+    assert seen["python_real"] == os.path.realpath(sys.executable)
+
+
+def test_the_pinned_python_is_ahead_of_one_the_developer_already_has(
+    stub: UndStub, log: CommandLog, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decisive case: a wrong ``python`` first on ``PATH`` no longer decides the dialect.
+
+    Before this, ``und`` inherited whatever ``PATH`` the shell had, so a machine carrying a
+    Python 2 -- or a distribution carrying no ``python`` at all -- analysed the same commit
+    to a different depth than CI did, with nothing in the output naming the reason.
+    """
+    decoy = decoy_python_dir(tmp_path / "decoy")
+    prepend_to_path(monkeypatch, decoy)
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    cli(stub, log).version()
+
+    seen = stub.environment
+    assert seen["python_real"] == os.path.realpath(sys.executable)
+    assert seen["python"] != str(decoy / "python")
+
+
+def test_the_pinned_directory_is_the_first_entry_and_holds_only_python(
+    stub: UndStub, log: CommandLog, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First, because measured on the real ``und`` the first ``python`` on ``PATH`` wins."""
+    decoy = decoy_python_dir(tmp_path / "decoy")
+    prepend_to_path(monkeypatch, decoy)
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    cli(stub, log).version()
+
+    entries = str(stub.environment["PATH"]).split(os.pathsep)
+    assert str(stub.environment["python"]).startswith(f"{entries[0]}{os.sep}")
+    assert entries[1] == str(decoy), "everything the caller had must still be there, behind it"
+
+
+def test_the_rest_of_the_environment_reaches_und_untouched(
+    stub: UndStub, log: CommandLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only ``PATH`` is decided. ``und`` reads its licence and its Qt settings from the rest.
+
+    A wrapper that handed ``und`` a clean environment would be running a different program
+    from the one an operator runs, and would fail on the licence before it failed on anything
+    this test is about.
+    """
+    monkeypatch.setenv("SCITOOLS_HOOK_STUB_MARKER", "inherited")
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    cli(stub, log).version()
+
+    assert stub.environment["marker"] == "inherited"
+
+
+def test_the_pinned_directory_does_not_outlive_the_call(stub: UndStub, log: CommandLog) -> None:
+    """A hook runs on every commit, so a directory left behind per call would accumulate."""
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    cli(stub, log).version()
+
+    pinned = Path(str(stub.environment["PATH"]).split(os.pathsep)[0])
+    assert not pinned.exists()
+
+
+def test_a_python_that_cannot_be_pinned_stops_the_call_instead_of_running_it(
+    stub: UndStub, log: CommandLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refusing is the point: an ``und`` on an uncontrolled ``PATH`` may report a green lie.
+
+    Nothing is recorded on the command log either, because nothing was started -- the same
+    treatment a list file that cannot be written already gets.
+    """
+    monkeypatch.setattr(sys, "executable", "")
+    stub.plan({"version": {"stdout": VERSION_OUTPUT}})
+
+    with pytest.raises(AnalysisFailedError) as refused:
+        cli(stub, log).version()
+
+    assert "cannot be pinned" in str(refused.value)
+    assert stub.calls == [], "und must not have run at all"
+    assert log.entries == []
 
 
 # --- timeouts, missing executables and the command log ----------------------------

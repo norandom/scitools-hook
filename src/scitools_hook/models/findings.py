@@ -6,6 +6,7 @@ The rule-name grammar lives here and nowhere else, because hints (7.2), SARIF ru
     <scope>.<metric>            e.g. "routine.CyclomaticStrict", "project.AVG:CountLineCode"
     structure.<rule>            one of STRUCTURE_RULES
     codecheck.<check_id>        the CodeCheck check id
+    analysis.<rule>             one of ANALYSIS_RULES -- the analysis itself failed
 
 ``Finding.hint`` and ``Finding.before`` are deliberately empty when an evaluator produces a
 finding: the ratchet step fills ``before`` and the pipeline attaches the hint, so JSON and
@@ -29,8 +30,14 @@ from scitools_hook.config.models import Limit, Severity, ThresholdSpec
 from scitools_hook.errors import ConfigError
 from scitools_hook.models.snapshot import DataModel, EntityRef, ParseError
 
-FindingKind = Literal["threshold", "ratchet", "structural", "codecheck"]
-"""Which evaluator produced a finding."""
+FindingKind = Literal["threshold", "ratchet", "structural", "codecheck", "parse"]
+"""Which evaluator produced a finding.
+
+``parse`` is the odd one out and deliberately so: every other kind is a statement about code
+the Gate *read*, while a ``parse`` finding says that a file in the selection was never read at
+all. It carries no value and no limit, because there is no measurement -- which is the whole
+point of it (req 2.6, task 11.11).
+"""
 
 LimitSource = Literal["config", "baseline", "rule"]
 """Where the limit in a finding came from; ``rule`` covers structural rules with no number."""
@@ -41,19 +48,38 @@ StructureRuleName = Literal[
 STRUCTURE_RULES: Final[tuple[StructureRuleName, ...]] = get_args(StructureRuleName)
 """Every structural rule name, in the order they are documented in the design."""
 
+AnalysisRuleName = Literal["parse_error"]
+ANALYSIS_RULES: Final[tuple[AnalysisRuleName, ...]] = get_args(AnalysisRuleName)
+"""Rules about the analysis itself rather than about the code it measured (req 2.6).
+
+A category of its own rather than a metric under ``file.``, because it is not a measurement:
+there is no number, no limit and nothing for a baseline to hold, and putting it under a scope
+would offer an operator a ``[thresholds.file]`` entry that can never mean anything. Its own
+category also gives the one lever an operator needs -- ``severity."analysis.parse_error"`` --
+without that lever reaching any rule about the code.
+"""
+
 STRUCTURE_CATEGORY: Final = "structure"
 CODECHECK_CATEGORY: Final = "codecheck"
+ANALYSIS_CATEGORY: Final = "analysis"
+PARSE_ERROR_RULE: Final = f"{ANALYSIS_CATEGORY}.parse_error"
+"""The rule a selected file that Understand could not read breaks (req 2.6, task 11.11).
+
+Spelled once, here, because the hint catalogue, the severity map, the SARIF rule id and the
+pipeline that raises it all have to agree on it.
+"""
 
 _GRAMMAR_HINT: Final = (
-    "expected '<scope>.<metric>', 'structure.<rule>' or 'codecheck.<check_id>', "
-    f"where <rule> is one of {', '.join(STRUCTURE_RULES)}"
+    "expected '<scope>.<metric>', 'structure.<rule>', 'analysis.<rule>' or "
+    f"'codecheck.<check_id>', where a structural <rule> is one of "
+    f"{', '.join(STRUCTURE_RULES)} and an analysis <rule> is one of {', '.join(ANALYSIS_RULES)}"
 )
 
 
 class ParsedRule(NamedTuple):
     """A rule name split into its parts; exactly one of ``metric``/``name`` is set."""
 
-    category: Literal["threshold", "structure", "codecheck"]
+    category: Literal["threshold", "structure", "codecheck", "analysis"]
     scope: Scope | None
     metric: MetricRef | None
     name: str | None
@@ -67,6 +93,11 @@ def build_rule_name(scope: Scope, metric: str) -> str:
 def structure_rule(name: StructureRuleName) -> str:
     """Rule name of a structural rule."""
     return f"{STRUCTURE_CATEGORY}.{name}"
+
+
+def analysis_rule(name: AnalysisRuleName) -> str:
+    """Rule name of a rule about the analysis itself (req 2.6)."""
+    return f"{ANALYSIS_CATEGORY}.{name}"
 
 
 def codecheck_rule(check_id: str) -> str:
@@ -87,6 +118,10 @@ def parse_rule_name(raw: str) -> ParsedRule:
         if rest not in STRUCTURE_RULES:
             raise ConfigError(f"unknown structural rule {rest!r}", key=raw, hint=_GRAMMAR_HINT)
         return ParsedRule(category="structure", scope=None, metric=None, name=rest)
+    if category == ANALYSIS_CATEGORY:
+        if rest not in ANALYSIS_RULES:
+            raise ConfigError(f"unknown analysis rule {rest!r}", key=raw, hint=_GRAMMAR_HINT)
+        return ParsedRule(category="analysis", scope=None, metric=None, name=rest)
     if category == CODECHECK_CATEGORY:
         return ParsedRule(category="codecheck", scope=None, metric=None, name=rest)
     if not is_valid_scope(category):

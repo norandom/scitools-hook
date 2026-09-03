@@ -477,6 +477,21 @@ def test_rule_descriptions_say_what_kind_of_rule_it_is() -> None:
     assert rules["codecheck.CPP_F016"] == "CodeCheck check CPP_F016: Explicit return type"
 
 
+def test_an_analysis_rule_is_described_as_one() -> None:
+    """A parse error is not a metric, and a SARIF consumer must not read it as ``None metric``."""
+    unreadable = Finding(
+        kind="parse",
+        rule="analysis.parse_error",
+        scope="file",
+        path=APP,
+        line=1,
+        limit_source="rule",
+        message="Understand could not read src/cli/app.py",
+    )
+
+    assert rules_of(run(unreadable))[0]["shortDescription"] == {"text": "analysis rule parse_error"}
+
+
 def test_codecheck_rule_description_falls_back_to_the_check_id() -> None:
     """A row that carried no check name still gets a description naming the check."""
     bare = Finding(

@@ -138,7 +138,77 @@ def test_soft_metrics_default_to_warning_and_all_others_to_error() -> None:
     by_rule = _by_rule(default_settings())
     warnings = {rule for rule, spec in by_rule.items() if spec.severity == "warning"}
     assert warnings == {"file.RatioCommentToCode", "class.PercentLackOfCohesion"}
-    assert all(spec.ratchet for spec in by_rule.values())
+
+
+# --- the ratchet the shipped thresholds carry (task 11.9) ---------------------------
+
+
+def test_the_counts_a_decomposition_raises_ship_with_the_ratchet_off() -> None:
+    """Eight shipped thresholds keep their limit and lose their comparison against HEAD.
+
+    Each counts what splitting the container *adds* to it, so "worse than before" is raised
+    by exactly the refactoring the Gate's own hints ask for -- measured through the installed
+    CLI: extracting two helpers out of one six-deep routine moved ``file.CountDeclFunction``
+    1 -> 3 and ``file.CountLineCode`` 10 -> 18 while every metric of the routine that was
+    split fell.
+    """
+    by_rule = _by_rule(default_settings())
+
+    assert {rule for rule, spec in by_rule.items() if not spec.ratchet} == {
+        "file.CountDeclFunction",
+        "file.CountDeclClass",
+        "file.CountLineCode",
+        "class.CountDeclMethod",
+        "class.CountDeclMethodNonStub",
+        "class.CountDeclInstanceVariable",
+        "class.CountClassCoupled",
+        "class.CountClassDerived",
+    }
+
+
+@pytest.mark.parametrize(
+    ("rule", "limit"),
+    [
+        ("file.CountDeclFunction", Limit(max=25)),
+        ("file.CountDeclClass", Limit(max=3)),
+        ("file.CountLineCode", Limit(max=500)),
+        ("class.CountDeclMethod", Limit(max=20)),
+        ("class.CountClassCoupled", Limit(max=12)),
+    ],
+)
+def test_a_threshold_without_a_ratchet_keeps_its_limit_and_its_severity(
+    rule: str, limit: Limit
+) -> None:
+    """Only the comparison stops: a file with 40 functions still fails at 25, as an error."""
+    spec = _by_rule(default_settings())[rule]
+
+    assert spec.ratchet is False
+    assert spec.limit == limit
+    assert spec.severity == "error"
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "routine.CountLineCode",
+        "routine.CountStmt",
+        "routine.MaxNesting",
+        "routine.CountParams",
+        "file.MaxCyclomaticStrict",
+        "class.MaxInheritanceTree",
+    ],
+)
+def test_the_neighbours_of_that_list_still_ratchet(rule: str) -> None:
+    """The four nearest misses, one per reason, so the list cannot quietly grow.
+
+    ``routine.CountLineCode`` and ``routine.CountStmt`` are the same metric names as two of
+    the eight at a different scope, and they stay on because the routine that was split is
+    the entity that shows the improvement. ``file.MaxCyclomaticStrict`` sits in the same
+    scope as three of the eight. ``class.MaxInheritanceTree`` does rise when a superclass is
+    extracted (measured 0 -> 1), and stays on anyway: no hint in the catalogue asks for
+    another inheritance layer, and its own asks for one fewer.
+    """
+    assert _by_rule(default_settings())[rule].ratchet is True
 
 
 def test_default_severity_map_covers_every_threshold_and_structural_rule() -> None:

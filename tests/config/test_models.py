@@ -114,6 +114,68 @@ def test_threshold_spec_with_an_unknown_severity_is_rejected() -> None:
         ThresholdSpec(scope="routine", metric="CountLineCode", limit=1, severity="fatal")  # type: ignore[arg-type]
 
 
+# --- the ratchet default, which depends on the metric (task 11.9) -------------------
+
+
+def test_a_decomposition_count_defaults_its_ratchet_off() -> None:
+    """``file.CountDeclFunction`` goes up precisely when a routine is extracted (11.9)."""
+    spec = ThresholdSpec(scope="file", metric="CountDeclFunction", limit=Limit(max=25))
+
+    assert spec.ratchet is False
+
+
+def test_another_metric_at_the_same_scope_defaults_its_ratchet_on() -> None:
+    """The sibling of the case above, differing only in the metric name.
+
+    ``file.MaxCyclomaticStrict`` is a file-scope threshold too, and no decomposition raises
+    it -- so a change that answered by scope rather than by rule would fail here.
+    """
+    spec = ThresholdSpec(scope="file", metric="MaxCyclomaticStrict", limit=Limit(max=10))
+
+    assert spec.ratchet is True
+
+
+def test_the_same_metric_name_at_the_routine_scope_defaults_its_ratchet_on() -> None:
+    """``CountLineCode`` is one of the eight at file scope and none of them at routine scope.
+
+    The routine that was split is the entity whose own numbers fall, so its length stays
+    compared; the file it lives in has nothing to show but the lines the new signature added.
+    """
+    assert (
+        ThresholdSpec(scope="file", metric="CountLineCode", limit=Limit(max=500)).ratchet is False
+    )
+    assert (
+        ThresholdSpec(scope="routine", metric="CountLineCode", limit=Limit(max=60)).ratchet is True
+    )
+
+
+def test_an_operator_can_switch_a_decomposition_count_back_on() -> None:
+    """``ratchet`` written out wins over the metric's default, in the direction that adds it."""
+    (spec,) = thresholds_from_tables({"file": {"CountDeclFunction": {"max": 25, "ratchet": True}}})
+
+    assert spec.rule == "file.CountDeclFunction"
+    assert spec.ratchet is True
+
+
+def test_a_decomposition_count_written_as_a_bare_number_still_defaults_off() -> None:
+    """The TOML shape an operator most often writes carries no ``ratchet`` key at all."""
+    (spec,) = thresholds_from_tables({"class": {"CountDeclMethod": 30}})
+
+    assert spec.rule == "class.CountDeclMethod"
+    assert spec.limit == Limit(max=30)
+    assert spec.ratchet is False
+
+
+def test_a_spec_that_round_trips_through_json_keeps_the_ratchet_it_resolved() -> None:
+    """The resolved value travels as data; nothing downstream re-derives it from the name."""
+    original = ThresholdSpec(scope="class", metric="CountClassCoupled", limit=Limit(max=12))
+
+    restored = ThresholdSpec.model_validate(original.model_dump())
+
+    assert original.ratchet is False
+    assert restored.ratchet is False
+
+
 # --- thresholds_from_tables ------------------------------------------------------
 
 

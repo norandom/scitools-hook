@@ -200,3 +200,34 @@ def test_entities_reject_a_key_that_disagrees_with_its_record() -> None:
 def test_snapshot_side_is_restricted() -> None:
     with pytest.raises(ValidationError):
         ProjectSnapshot(side="middle")  # type: ignore[arg-type]
+
+
+def test_unparsed_files_names_the_repository_relative_paths_that_failed() -> None:
+    """What the ratchet asks the before side: was this file read at all (tasks 11.9, 11.11)?
+
+    The paths have to be comparable with ``EntityKey.path``, which is repository-relative, and
+    ``DatabaseManager`` normalises ``ParseError.path`` to that form for exactly this reason.
+    """
+    snapshot = _snapshot()
+    assert snapshot.unparsed_files == frozenset({"src/cli/app.py"})
+    assert MAIN_KEY.path in snapshot.unparsed_files
+
+
+def test_unparsed_files_leaves_a_path_outside_the_repository_matching_nothing() -> None:
+    """A standard-library error keeps its absolute name, so no entity of this project matches it.
+
+    The other half of the same decision, with a different input: task 10.4 measured four parse
+    errors in the interpreter's own files on a clean run, and a ratchet that treated them as
+    repository paths would exempt whatever happened to share the basename.
+    """
+    stdlib = ProjectSnapshot(
+        side="before",
+        parse_errors=[ParseError(path=Path("/usr/lib/python3.12/inspect.py"), message="boom")],
+    )
+    assert stdlib.unparsed_files == frozenset({"/usr/lib/python3.12/inspect.py"})
+    assert MAIN_KEY.path not in stdlib.unparsed_files
+
+
+def test_a_snapshot_that_parsed_cleanly_names_nothing() -> None:
+    """The empty answer is an answer, and it must not be a truthy set."""
+    assert ProjectSnapshot(side="after").unparsed_files == frozenset()

@@ -39,6 +39,11 @@ Decisions worth knowing about, all of them visible in ``tests/report/test_human.
   any. They are not a cosmetic note: Understand analyses a file only as far as it parses, so
   the entities after an error are missing from the database and no rule ran on them -- a run
   over a file that failed to parse can report a clean bill of health for code it never saw.
+  Since task 11.11 a file *in the selection* that failed to parse is a blocking
+  ``analysis.parse_error`` finding as well, so it appears twice: here, with every error
+  Understand reported in it, and below with the one thing to do about it. That is not a
+  duplicate -- this section is the run's coverage statement and includes the files no commit
+  can fix, while the finding is the verdict on the file this change is asking to add.
   The section therefore leads the output it qualifies, the summary line carries the count of
   affected files so the tail of a long run says it too, and the no-findings line stops
   claiming that "this change breaks no rule" when part of the change was never read. The
@@ -122,6 +127,8 @@ PARSE_HEADER: Final = "parse errors: these files were NOT fully checked"
 _PARSE_LEAD: Final[tuple[str, ...]] = (
     "  Understand could not finish parsing them. Code after a parse error can be missing",
     "  from the analysis, so no rule ran on it: what follows covers only the code that parsed.",
+    "  A file in this run's selection that failed to parse is also a blocking analysis.parse_error",
+    "  finding below; one outside it -- the interpreter's own standard library, say -- is not.",
 )
 UNAVAILABLE_HEADER: Final = "unavailable metrics: these limits were NOT evaluated"
 _UNAVAILABLE_LEAD: Final[tuple[str, ...]] = (

@@ -975,6 +975,155 @@ def test_the_parse_errors_of_the_analysis_are_handed_back(
     assert result.warnings == 2
 
 
+def unreadable(harness: Harness, rel: str, line: int = 1, side: Side = "after") -> ParseError:
+    """A parse error in the shadow, spelled the way the real ``und`` spells it.
+
+    Absolute, and under the side's shadow tree, because that is what was measured: a real run
+    of this Gate over a PEP 695 declaration reported
+    ``<cache>/<repo id>/after/pkg/generic.py``, not the repository-relative name. A fake that
+    handed back the tidy form would test the assertion rather than the code -- the whole of
+    the relativisation would be dead and nothing here would notice.
+    """
+    tree = harness.paths.before_tree if side == "before" else harness.paths.after_tree
+    return ParseError(path=tree / rel, line=line, message="expected token '(' at token [")
+
+
+def test_a_parse_error_inside_the_shadow_is_reported_repository_relative(
+    harness: Harness,
+) -> None:
+    """The path an operator can act on, and the one an entity key can be compared with."""
+    harness.und.analyze_results.append(
+        AnalyzeResult(parse_errors=[unreadable(harness, "src/a.py")], seconds=0.0)
+    )
+
+    result = harness.ensure()
+
+    assert [error.path.as_posix() for error in result.parse_errors] == ["src/a.py"]
+
+
+def test_a_parse_error_outside_the_shadow_keeps_its_absolute_path(harness: Harness) -> None:
+    """The other half of the same decision, with a different input rather than a different name.
+
+    Task 10.4 measured four parse errors on a clean run of this repository, every one of them
+    in the interpreter's own standard library: Understand follows an import out of the project
+    and reports what it finds there. Those files belong to no commit, so they keep the only
+    name they have and never look like a repository path.
+    """
+    stdlib = Path("/usr/lib/python3.12/inspect.py")
+    harness.und.analyze_results.append(
+        AnalyzeResult(
+            parse_errors=[ParseError(path=stdlib, line=9, message="unknown token")], seconds=0.0
+        )
+    )
+
+    result = harness.ensure()
+
+    assert [error.path for error in result.parse_errors] == [stdlib]
+
+
+def test_a_warm_run_still_names_what_the_database_could_not_read(harness: Harness) -> None:
+    """Task 11.13: the errors belong to the database, not to the run that did the parsing.
+
+    Measured before this existed: a cold staged run over this repository printed ``9 files
+    failed to parse, not fully checked`` and three consecutive warm runs over the same two
+    databases printed none. A git hook is always warm, so requirement 2.6's report -- the one
+    that stops a partially-read file being taken for a clean one -- reached the operator least
+    likely to need it and never reached the one most likely to.
+    """
+    harness.und.analyze_results.append(
+        AnalyzeResult(parse_errors=[unreadable(harness, "src/a.py")], seconds=0.0)
+    )
+    cold = harness.ensure()
+    harness.reset()
+
+    warm = harness.ensure()
+
+    assert harness.last("analyze").arguments["files"] == [], "nothing changed, so nothing re-read"
+    assert [error.path.as_posix() for error in cold.parse_errors] == ["src/a.py"]
+    assert [error.path.as_posix() for error in warm.parse_errors] == ["src/a.py"]
+
+
+def test_re_analysing_a_file_that_now_parses_drops_its_recorded_error(
+    harness: Harness,
+) -> None:
+    """The positive case the test above needs, or "still reported" would mean "never cleared".
+
+    An assertion that an error is still there passes just as happily when the record can never
+    be emptied, which would leave a repository permanently blocked on a syntax error it fixed
+    three commits ago. So the same file is edited, re-analysed, and comes back clean.
+    """
+    harness.und.analyze_results.append(
+        AnalyzeResult(parse_errors=[unreadable(harness, "src/a.py")], seconds=0.0)
+    )
+    harness.ensure()
+    harness.builder.write("src/a.py", "def a():\n    return 2\n")
+    harness.builder.stage()
+    harness.reset()
+
+    warm = harness.ensure()
+
+    assert harness.analysed() == ["src/a.py"]
+    assert warm.parse_errors == []
+
+
+def test_a_file_the_run_never_re_read_keeps_its_error_while_another_is_cleared(
+    harness: Harness,
+) -> None:
+    """One selective pass, two files, opposite answers -- which is the whole of the merge rule."""
+    harness.builder.write("src/b.py", "def b():\n    return 1\n")
+    harness.builder.stage()
+    harness.builder.commit("second file")
+    harness.und.analyze_results.append(
+        AnalyzeResult(
+            parse_errors=[unreadable(harness, "src/a.py"), unreadable(harness, "src/b.py", 4)],
+            seconds=0.0,
+        )
+    )
+    harness.ensure()
+    harness.builder.write("src/b.py", "def b():\n    return 2\n")
+    harness.builder.stage()
+    harness.reset()
+
+    warm = harness.ensure()
+
+    assert harness.analysed() == ["src/b.py"]
+    assert [error.path.as_posix() for error in warm.parse_errors] == ["src/a.py"]
+
+
+def test_the_recorded_parse_errors_survive_a_new_process(harness: Harness) -> None:
+    """They are written to ``state.json``, so the next *commit* reads them and not this object."""
+    harness.und.analyze_results.append(
+        AnalyzeResult(parse_errors=[unreadable(harness, "src/a.py")], seconds=0.0)
+    )
+    harness.ensure()
+
+    recorded = harness.state()
+    warm = harness.restart().ensure()
+
+    assert [error.path.as_posix() for error in recorded.parse_errors["after"]] == ["src/a.py"]
+    assert [error.path.as_posix() for error in warm.parse_errors] == ["src/a.py"]
+
+
+def test_discarding_the_databases_forgets_what_they_could_not_read(harness: Harness) -> None:
+    """A record of a database that no longer exists would be re-reported forever.
+
+    The Understand version is what changes here, because that is one of the two things
+    :meth:`DatabaseManager._invalidate` discards **both** databases for. The next pass is a
+    full one, so whatever the new build cannot read it says for itself.
+    """
+    harness.und.analyze_results.append(
+        AnalyzeResult(parse_errors=[unreadable(harness, "src/a.py")], seconds=0.0)
+    )
+    harness.ensure()
+
+    upgraded = harness.restart(version_text="(Build 1300)")
+    fresh = upgraded.ensure()
+
+    assert upgraded.last("analyze").arguments["all"] is True
+    assert fresh.parse_errors == []
+    assert upgraded.state().parse_errors == {"after": []}
+
+
 # --- the cache directory (req 2.1, 2.2, 2.8, and the 7.2 handoff) ---------------
 
 

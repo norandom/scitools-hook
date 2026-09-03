@@ -182,7 +182,13 @@ before you touched it and is outside it now. When a commit is blocked:
 4. Stage the change and commit; the hook runs `scitools-hook check --staged` again.
 
 A `warning` never blocks, and a pre-existing violation blocks only in strict mode. Fixing
-either is welcome, but neither is what a blocked commit is asking you to do."""
+either is welcome, but neither is what a blocked commit is asking you to do.
+
+One blocking finding is not about a limit at all. `analysis.parse_error` means the analyser
+could not read a file your change is adding or editing, so nothing after the line it names
+was measured and no rule ran on it -- an empty report about that file is not a clean one. Its
+`hint` names the construct to rewrite. Do not silence it: a file that does not parse is a
+file nobody checked."""
 
 
 def render_rules(settings: Settings, effective: Sequence[EffectiveThreshold]) -> str:

@@ -82,6 +82,52 @@ class Limit(StrictModel):
         return self
 
 
+DECOMPOSITION_COUNTS: Final[frozenset[str]] = frozenset(
+    {
+        "file.CountDeclFunction",
+        "file.CountDeclClass",
+        "file.CountLineCode",
+        "class.CountDeclMethod",
+        "class.CountDeclMethodNonStub",
+        "class.CountDeclInstanceVariable",
+        "class.CountClassCoupled",
+        "class.CountClassDerived",
+    }
+)
+"""Rules whose ratchet is **off** unless a configuration switches it on (task 11.9).
+
+Each of these counts the declarations, collaborators or lines *of the container* -- and each
+one goes up when you split the container's contents, which is the remedy every one of the
+Gate's own hints names ("extract the inner block into its own routine", "move the methods
+that share a subset of the fields into a class of their own", "hold the base as a field and
+delegate to it"). Ratcheting them makes the Gate refuse the refactoring it just asked for,
+and the cheapest way past a refusal is to undo the extraction.
+
+The dividing line is **whether the entity being judged can show the improvement**. When a
+routine is extracted, the simplification lands on a routine that did not exist before, which
+has no pre-change value and is therefore judged by the absolute limits alone (req 4.5); the
+container it came out of has nothing left to show but the extra declaration. Where the
+improvement *is* visible on the same entity -- a routine flattened in place -- the ratchet
+stays on and ``analysis.ratchet`` exempts the measured decomposition instead.
+
+Measured through the installed CLI against Understand 6.5.1204 (task 11.9). Extracting two
+helpers out of a six-deep routine: ``file.CountDeclFunction`` 1 -> 3 and ``file.CountLineCode``
+10 -> 18 rose, while every routine metric of the routine that was split fell. Extracting two
+methods inside a class: ``class.CountDeclMethod`` and ``class.CountDeclMethodNonStub`` 2 -> 4.
+Replacing an inheritance layer with composition, which is exactly ``MaxInheritanceTree``'s own
+hint: ``class.CountDeclInstanceVariable`` 0 -> 1 and ``class.CountDeclMethod`` 1 -> 2.
+
+The absolute limits are untouched: a file with 40 functions still fails ``file.CountDeclFunction``
+at 25. What stops is the *comparison against HEAD*, which is what "worse than before" cannot
+answer for a count that decomposition raises by construction.
+
+``class.MaxInheritanceTree`` is deliberately **not** here even though extracting a superclass
+raises it (measured: 0 -> 1). No hint in the catalogue asks for another inheritance layer --
+``MaxInheritanceTree``'s own hint asks for one fewer -- so it is not a count this defect is
+about, and ``report.hints`` is where that claim can be checked.
+"""
+
+
 class ThresholdSpec(StrictModel):
     """One configured threshold; ``metric`` keeps the raw, possibly prefixed, name (req 3.4)."""
 
@@ -99,6 +145,34 @@ class ThresholdSpec(StrictModel):
         except ConfigError as err:
             raise ValueError(f"invalid metric name: {err.message}") from err
         return value
+
+    @model_validator(mode="after")
+    def _a_decomposition_count_does_not_ratchet_unless_asked(self) -> ThresholdSpec:
+        """Resolve the ``ratchet`` default from the metric (:data:`DECOMPOSITION_COUNTS`).
+
+        The default lives here rather than in ``config.defaults`` because it belongs to the
+        *metric*, not to the shipped limit: an operator who writes
+        ``[thresholds.file] CountDeclFunction = 40`` in their own file is asking the same
+        ambiguous question, and would otherwise silently get the ratchet back. ``ratchet``
+        written explicitly -- in TOML, or by a caller constructing the spec -- always wins,
+        in both directions, which is what ``model_fields_set`` is consulted for.
+
+        A metric name that does not parse leaves the plain default in place instead of
+        raising. ``_metric_name_parses`` makes that unreachable on the validated path, but a
+        spec built with ``model_construct`` skips it and is then re-validated when it is put
+        into a ``Settings`` (measured). ``config.validate`` is the step that exists to catch
+        exactly that spec and report it as ``thresholds.<scope>.<metric>``; a ``ConfigError``
+        thrown from here escapes pydantic's protocol and loses the dotted key.
+        """
+        if "ratchet" in self.model_fields_set:
+            return self
+        try:
+            rule = self.rule
+        except ConfigError:
+            return self
+        if rule in DECOMPOSITION_COUNTS:
+            self.ratchet = False
+        return self
 
     @property
     def ref(self) -> MetricRef:

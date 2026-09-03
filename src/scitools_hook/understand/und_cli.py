@@ -1,7 +1,7 @@
 """Run the ``und`` command-line tool and turn what it prints into typed results.
 
 Everything here is written against a **measured** ``und`` 6.5 (Build 1204), because this
-command line is full of behaviour no manual page implies. Four measurements shape the whole
+command line is full of behaviour no manual page implies. Five measurements shape the whole
 module:
 
 * **Global switches must precede the subcommand.** ``und create -db X -quiet`` answers
@@ -24,6 +24,13 @@ module:
   text is fixed English built into the executable (``Licensing Error: …``,
   ``No Und License Found``, ``NoApiLicense``). :data:`LICENSE_TEXT` matches those forms only,
   so a source path or a parse message cannot be mistaken for a licensing problem.
+* **``und`` executes a bare ``python`` off ``PATH`` to decide the Python dialect, and
+  analyses Python 2 when it finds none.** Same sources, same ``und``, only ``PATH`` differing:
+  ``Errors:0`` and both routines with one present, ``Errors:8`` and the routine after the
+  parse failure *gone from the database* without one. An absent entity has no metrics, so it
+  breaks no threshold and the run reports success — which is why the ``PATH`` handed to
+  ``und`` is decided here rather than inherited. :meth:`UndCli._execute` runs every
+  invocation under :func:`~scitools_hook.understand.locator.pinned_python`.
 
 Failure mapping follows the design: a non-zero status becomes
 :class:`~scitools_hook.errors.AnalysisFailedError` carrying the argv and stderr, licensing
@@ -41,6 +48,7 @@ numbers into the same ``--verbose`` stream and one convention cannot be spelled 
 
 from __future__ import annotations
 
+import os
 import re
 import stat
 import subprocess
@@ -57,6 +65,7 @@ from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.snapshot import ParseError
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
+from scitools_hook.understand.locator import pinned_python
 
 DEFAULT_TIMEOUT_S: Final = 900
 """Ceiling for one ``und`` call: a full analysis of a large repository still fits."""
@@ -295,12 +304,35 @@ class UndCli:
         return self._execute([*head, *argv])
 
     def _execute(self, argv: list[str]) -> CommandResult:
-        """Run ``argv``, record it whatever happens, and turn a non-answer into an error."""
+        """Run ``argv`` with a pinned ``python``, record it, and turn a non-answer into an error.
+
+        **Every** invocation runs under :func:`~scitools_hook.understand.locator.pinned_python`,
+        not only the ones that analyse: the fallback is decided per process, nothing about it
+        is remembered in the database, and a wrapper that pinned some calls and not others
+        would be a wrapper whose answer depends on which call did the parsing.
+
+        ``env`` is this process's own environment with ``PATH`` rewritten and nothing else
+        touched, which is the same environment ``und`` inherited before -- passing no ``env``
+        at all *is* ``os.environ``, so the ambient read is unchanged and only ``PATH`` is now
+        decided rather than accepted. That matters: ``und`` reads its licence from ``HOME``
+        and its Qt configuration from the rest, and a probe that handed it a clean
+        environment would be measuring a different program.
+
+        A pin that cannot be built raises before anything is started, so the command is not
+        recorded -- it never ran. That is the same treatment ``_list_file`` gives a list file
+        it cannot write, for the same reason.
+        """
         started = time.monotonic()
         try:
-            done = subprocess.run(
-                argv, capture_output=True, text=True, timeout=self._timeout_s, check=False
-            )
+            with pinned_python() as pinned:
+                done = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_s,
+                    check=False,
+                    env={**os.environ, "PATH": pinned.search_path(os.environ)},
+                )
         except subprocess.TimeoutExpired as expired:
             self._log.record(argv, time.monotonic() - started, TIMEOUT_RC)
             raise _timed_out(argv, expired, self._timeout_s) from expired

@@ -329,9 +329,9 @@ def make_harness(
     )
 
 
-def sample_repository(git_repo: MakeGitRepo) -> GitRepoBuilder:
+def sample_repository(git_repo: MakeGitRepo, name: str = "repo") -> GitRepoBuilder:
     """A repository holding the five paths the sample snapshots describe, plus a README."""
-    builder = git_repo()
+    builder = git_repo(name)
     for path in SAMPLE_FILES:
         builder.write(path, f"# {path}\n")
     builder.write("README.md", "# sample\n")
@@ -399,6 +399,7 @@ def staged_harness(git_repo: MakeGitRepo, tmp_path: Path) -> Harness:
 # --- a staged run over the sample fixtures --------------------------------------
 
 EXPECTED_STAGED: tuple[tuple[str, str, str], ...] = (
+    ("parse", "analysis.parse_error", "src/analysis/rules.py"),
     ("threshold", "routine.CyclomaticStrict", "app.build_parser"),
     ("threshold", "routine.CyclomaticModified", "app.build_parser"),
     ("threshold", "routine.MaxNesting", "app.build_parser"),
@@ -414,8 +415,6 @@ EXPECTED_STAGED: tuple[tuple[str, str, str], ...] = (
     ("ratchet", "routine.CountLineCode", "app.build_parser"),
     ("ratchet", "routine.CountStmt", "app.build_parser"),
     ("ratchet", "routine.CountPath", "app.build_parser"),
-    ("ratchet", "file.CountLineCode", "src/analysis/rules.py"),
-    ("ratchet", "file.CountLineCode", "src/cli/app.py"),
     ("ratchet", "file.MaxCyclomaticStrict", "src/cli/app.py"),
     ("ratchet", "file.RatioCommentToCode", "src/analysis/rules.py"),
     ("ratchet", "file.RatioCommentToCode", "src/cli/app.py"),
@@ -429,6 +428,20 @@ Derived from the two committed snapshots by hand and checked against the require
 routine ``app.build_parser`` doubles in size and complexity, ``src/cli/app.py`` gains a
 dependency on ``src/analysis/rules.py`` which closes a cycle with ``src/analysis/engine.py``,
 and both changed files lose comment ratio. Nothing else moved, so nothing else is reported.
+
+Both files also grew (``CountLineCode`` 90 -> 96 and 120 -> 160) and neither is reported for
+it: ``file.CountLineCode`` ships without a ratchet, because that count is what goes up when a
+file's contents are split (task 11.9). ``routine.CountLineCode`` on ``app.build_parser`` is
+still here -- the routine grew *and* got more complex, which is a regression and not a
+decomposition.
+
+The ``analysis.parse_error`` entry leads the list because the fixture's after-side analysis
+reports a parse error in ``src/analysis/rules.py``, which is one of the two staged files
+(task 11.11): a file in the selection that Understand could not read is a finding of its own,
+and it is produced before any rule because it says the rules below cover less than they
+appear to. The before side's error, in ``src/util/text.py``, produces none -- it is a file
+this change did not touch, and a before-side error is history rather than a verdict on the
+commit.
 """
 
 
@@ -453,7 +466,7 @@ def test_a_staged_run_counts_blocking_warning_and_preexisting_findings(
     """The counts the exit code and both summaries are derived from (req 7.9)."""
     result = staged_harness.run()
     warnings = [finding.rule for finding in result.findings if finding.severity == "warning"]
-    assert result.blocking_count == 19
+    assert result.blocking_count == 18
     assert result.warning_count == len(warnings) == 4
     assert result.preexisting_count == 0
 
@@ -510,6 +523,186 @@ def test_both_sides_parse_errors_reach_the_result_and_the_after_snapshot(
     assert [error.message for error in result.parse_errors] == ["bad token", "old"]
     first_after = staged_harness.extractor.targets[0]
     assert [error.message for error in first_after.parse_errors] == ["bad token"]
+
+
+# --- a selected file that could not be read (req 2.6, task 11.11) ---------------
+
+PEP695 = "def generic[T](x: T) -> T:\n    return x\n"
+"""One declaration Understand 6.5.1204 cannot parse, measured: ``expected token '(' at token [``."""
+
+UNREADABLE_MESSAGE = "expected token '(' at token ["
+"""What ``und analyze`` really printed for :data:`PEP695`, quoted rather than invented."""
+
+
+def unreadable_harness(
+    git_repo: MakeGitRepo,
+    tmp_path: Path,
+    after: Sequence[str] = (),
+    before: Sequence[str] = (),
+    content: str = "# changed\n",
+    name: str = "repo",
+) -> Harness:
+    """The staged sample change, with the named files failing to parse on the named side.
+
+    ``after`` and ``before`` are repository-relative names, made absolute against the
+    harness's **own** shadow trees once it exists -- which is what a real ``und`` reports
+    (measured: ``<cache>/<repo id>/after/pkg/generic.py``) and what the relativisation in the
+    database manager exists for. A name that is already absolute is passed through unchanged,
+    which is how a standard-library error outside the repository is written.
+
+    ``content`` is what the changed file holds in the shadow, because the pipeline reads that
+    line to name the construct the parse stopped at.
+    """
+    builder = sample_repository(git_repo, name)
+    builder.write("src/cli/app.py", "# changed\n")
+    builder.write("src/analysis/rules.py", content)
+    builder.stage("src/cli/app.py", "src/analysis/rules.py")
+    harness = make_harness(
+        builder,
+        tmp_path,
+        answers={
+            "after": [fixture_snapshot("after"), fixture_snapshot("after")],
+            "before": [fixture_snapshot("before"), fixture_snapshot("before")],
+        },
+        availability=dropped_availability(default_settings()),
+    )
+    harness.und.analyze_results.extend(
+        [
+            AnalyzeResult(
+                parse_errors=[_unreadable(harness, "after", n) for n in after], seconds=0.0
+            ),
+            AnalyzeResult(
+                parse_errors=[_unreadable(harness, "before", n) for n in before], seconds=0.0
+            ),
+        ]
+    )
+    return harness
+
+
+def _unreadable(harness: Harness, side: Side, name: str) -> ParseError:
+    """One parse error as ``und`` spells it: absolute, inside that side's shadow."""
+    tree = harness.paths.after_tree if side == "after" else harness.paths.before_tree
+    named = Path(name)
+    return ParseError(
+        path=named if named.is_absolute() else tree / name,
+        line=1,
+        message=UNREADABLE_MESSAGE,
+    )
+
+
+def parse_findings(result: RunResult) -> list[Finding]:
+    """Every finding the run raised about a file it could not read."""
+    return [finding for finding in result.findings if finding.rule == "analysis.parse_error"]
+
+
+def test_a_selected_file_that_could_not_be_read_blocks_the_commit(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Task 11.11: an entity that is not in the database breaks no rule, so the file must.
+
+    Measured on this repository before the fix: one PEP 695 declaration took
+    ``config/models.py`` from 15 classes to 3 in the database -- 12 findings hidden, 2
+    fabricated -- and the staged run exited 0 with ``blocking_count`` 0. A gate that certifies
+    a file it never read has the one failure mode a gate must not have.
+    """
+    harness = unreadable_harness(git_repo, tmp_path, after=["src/analysis/rules.py"])
+
+    result = harness.run()
+
+    found = parse_findings(result)
+    assert [(finding.path, finding.blocking, finding.severity) for finding in found] == [
+        ("src/analysis/rules.py", True, "error")
+    ]
+    assert UNREADABLE_MESSAGE in found[0].message
+    assert found[0].hint, "requirement 7.2: every finding says what to do about it"
+
+
+def test_a_repository_file_outside_the_selection_is_reported_and_does_not_block(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """A repository file this change did not touch: news about coverage, not a verdict on it.
+
+    The count is compared against the same run with nothing unparsed rather than asserted as a
+    bare "no finding": an absent finding proves nothing when the search itself is broken, and
+    the neighbouring test shows the same machinery producing one.
+    """
+    clean = unreadable_harness(git_repo, tmp_path / "a", name="clean").run()
+    harness = unreadable_harness(
+        git_repo, tmp_path / "b", after=["src/util/text.py"], name="unreadable"
+    )
+
+    result = harness.run()
+
+    assert [error.path.as_posix() for error in result.parse_errors] == ["src/util/text.py"]
+    assert parse_findings(result) == []
+    assert result.blocking_count == clean.blocking_count
+
+
+def test_a_parse_error_outside_the_repository_is_reported_and_does_not_block(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Task 10.4 measured four of these on a clean run, all in the interpreter's own stdlib.
+
+    A different input from the test above rather than a different name for it: that one is a
+    file of this repository that the change did not touch, this one is a file no commit of this
+    repository can reach at all. Both must be reported and neither may block, and they get
+    there by different halves of the rule -- ``in the selection`` and ``inside the shadow``.
+    """
+    stdlib = "/usr/lib/python3.12/inspect.py"
+    harness = unreadable_harness(git_repo, tmp_path, after=[stdlib])
+
+    result = harness.run()
+
+    assert [str(error.path) for error in result.parse_errors] == [stdlib]
+    assert parse_findings(result) == []
+
+
+def test_a_before_side_parse_error_does_not_block_the_commit_that_fixed_it(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The same staged file as the blocking case, failing on the other side: it must not block.
+
+    A parse error on the before side is history: the likeliest reason the after side parses and
+    the before side does not is that this very commit is the rewrite the hint asked for.
+    Blocking it would make the Gate refuse its own remedy. It is still reported, because the
+    comparison between the two sides is worth less than it looks (which is what the ratchet
+    reads out of ``ProjectSnapshot.unparsed_files``).
+    """
+    harness = unreadable_harness(git_repo, tmp_path, before=["src/analysis/rules.py"])
+
+    result = harness.run()
+
+    assert [error.path.as_posix() for error in result.parse_errors] == ["src/analysis/rules.py"]
+    assert parse_findings(result) == []
+
+
+def test_the_hint_names_the_construct_the_parse_stopped_at(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Requirement 7.2 for a parse error: the remedy is a rewrite, and which one depends."""
+    harness = unreadable_harness(
+        git_repo, tmp_path, after=["src/analysis/rules.py"], content=PEP695
+    )
+
+    result = harness.run()
+
+    finding = parse_findings(result)[0]
+    assert finding.details["construct"] == "type_params"
+    assert "TypeVar" in finding.hint
+
+
+def test_an_unrecognised_construct_falls_back_to_the_rule_level_hint(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The same file, a line naming no construct: still actionable, just not specific."""
+    harness = unreadable_harness(git_repo, tmp_path, after=["src/analysis/rules.py"])
+
+    result = harness.run()
+
+    finding = parse_findings(result)[0]
+    assert finding.details["construct"] == ""
+    assert "TypeVar" not in finding.hint
+    assert finding.hint
 
 
 def test_a_dropped_default_threshold_is_still_reported_as_unavailable(

@@ -20,7 +20,10 @@ from scitools_hook.models.change import (
     ImpactSet,
 )
 from scitools_hook.models.findings import (
+    ANALYSIS_RULES,
+    PARSE_ERROR_RULE,
     STRUCTURE_RULES,
+    AnalysisRuleName,
     EffectiveThreshold,
     Finding,
     FindingKind,
@@ -30,6 +33,7 @@ from scitools_hook.models.findings import (
     RunResult,
     StructureRuleName,
     TightenedLimit,
+    analysis_rule,
     build_rule_name,
     codecheck_rule,
     is_valid_rule_name,
@@ -66,9 +70,12 @@ from scitools_hook.models.understand import (
 )
 
 __all__ = [
+    "ANALYSIS_RULES",
     "APP_NAME",
+    "PARSE_ERROR_RULE",
     "STRUCTURE_RULES",
     "AffectedSet",
+    "AnalysisRuleName",
     "AnalyzeResult",
     "ArchNode",
     "Baseline",
@@ -113,6 +120,7 @@ __all__ = [
     "TightenedLimit",
     "UnderstandEnv",
     "WorktreeTarget",
+    "analysis_rule",
     "build_rule_name",
     "cache_root",
     "codecheck_rule",

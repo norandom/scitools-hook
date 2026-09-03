@@ -445,7 +445,7 @@ of them has to be rediscovered.
   - _Boundary: pyproject.toml, tests_
 
 
-- [ ] 11.9 The gate blocks the refactoring its own hints recommend (HIGHEST PRIORITY defect)
+- [x] 11.9 The gate blocks the refactoring its own hints recommend (HIGHEST PRIORITY defect)
   - **Measured end to end through the real CLI.** A file with one deeply nested routine draws
     `routine.MaxNesting ... hint: extract the inner block into its own routine`. Doing exactly
     that -- extracting a helper and flattening the loop -- is then **refused**:
@@ -473,7 +473,7 @@ of them has to be rediscovered.
   - _Boundary: config/defaults, analysis/ratchet_
 
 
-- [ ] 11.10 The gate silently analyses less code when `python` is not on PATH (FALSE NEGATIVES)
+- [x] 11.10 The gate silently analyses less code when `python` is not on PATH (FALSE NEGATIVES)
   - **Mechanism, measured by the controller with the language model itself as the discriminator.**
     Same sources, same `und`, same database recipe, only `PATH` differing:
     - `python` present -> `Errors:0`; routines from the file: `['after', 'before']`; Python-2-only
@@ -500,7 +500,7 @@ of them has to be rediscovered.
   - _Boundary: understand/database, runner/doctor, understand/locator_
 
 
-- [ ] 11.11 A PEP 695 declaration silently costs the rest of the file (FALSE NEGATIVES)
+- [x] 11.11 A PEP 695 declaration silently costs the rest of the file (FALSE NEGATIVES)
   - **Measured by task 10.4 on this repository's own source.** Understand 6.5.1204 cannot parse a
     type-parameter list: `def thresholds_from_tables[KeyT: str](` reports
     `expected token '(' at token [` and the parse never recovers -- every later line reports
@@ -522,7 +522,7 @@ of them has to be rediscovered.
   - _Boundary: understand/database, report/human, runner/doctor_
 
 
-- [ ] 11.12 The interpreter Understand runs is unpinned machine-global state, and one value
+- [~] 11.12 (HALF DONE -- global state closed, sys.path half open) The interpreter Understand runs is unpinned machine-global state, and one value
       turns off every structural rule (FALSE NEGATIVES)
   - **Two independent findings from one measurement (task 10.4), neither of them 11.10.** In both,
     Python 3 parses cleanly and the run reports the same four stdlib parse errors -- so nothing in
@@ -552,7 +552,7 @@ of them has to be rediscovered.
   - _Boundary: understand/database, understand/und_cli, runner/doctor_
 
 
-- [ ] 11.13 A warm run reports no parse errors even when the database still holds them
+- [x] 11.13 A warm run reports no parse errors even when the database still holds them
   - **Measured (task 10.4).** The cold staged run on this repository printed
     `9 files failed to parse, not fully checked`; three consecutive warm runs on the SAME two
     databases, with the same unparseable files still in them, printed none and dropped the segment
@@ -1151,3 +1151,19 @@ Raised during 9.1 round 3, deliberately NOT decided inside the task because it c
 - **10.4 gave 11.9 first-hand evidence and a NEW member of its family.** Every one of the five remediations -- each *lowering* a metric the gate had flagged, following the gate's own hint -- is refused by `check --staged`: `config/template.py` `file.CountDeclFunction worse than before, was 24`; `git/shadow.py` `rose from 31 to 33`; `analysis/thresholds.py` `routine.CountLineCode rose from 13 to 17` for the flattening that fixed its `MaxNesting`. The new member: **the ratchet cannot tell "the code got worse" from "the ANALYSIS got better"** -- fixing the PEP 695 parse error reads as `file.CountDeclClass rose from 3 to 15`. Nothing was inlined back to appease it.
 - **10.4 kept 65 findings visible that one regex would have removed.** A blanket `ignore.files = ["^tests/"]` was deliberately not taken, because it would also have hidden `tests/understand/test_worker.py` at **2598 lines**. That is real debt and it stays where it can be seen -- the whole point of a maintainability gate is defeated by an exclusion that is easier than the fix.
 - **10.4 timing on this repository, method stated: `/usr/bin/time` around the installed CLI, 12 files staged, cache deleted between series, no other load.** Cold staged **19.9 s** (both databases built); warm staged **7.8 / 8.7 / 7.9 s**; cold `--all` 8.9 s, warm `--all` 2.9 s. Requirement 4.11's 30 s is met. It is 4x task 10.2's 1.8-2.0 s **and that difference is explained rather than waved at**: 10.2 measured fixture repositories, this measures 185 files, and the cost is the two snapshot extractions, which scale with the tree rather than with the change.
+
+## The false-negative family and the ratchet, fixed (11.9-11.13)
+
+- **11.9 FIXED, and verified by the controller with the exact scenario that failed.** The gate flags `routine.MaxNesting` with `hint: extract the inner block into its own routine`; extracting it now gives **`0 blocking | exit 0`**, where it previously gave `error file.CountDeclFunction worse than before, was 1 | exit 1`. A routine grown more complex **in place** still blocks with 8 findings -- and `routine.CountLineCode` and `CountStmt` are among them, so the exemption correctly did not fire when nothing improved. **Precision, not loosening**, demonstrated in both directions.
+- **11.9's design is worth keeping as a principle: the ratchet is DROPPED where the entity being judged cannot show the improvement, and KEPT WITH AN EXEMPTION where it can.** Extraction moves the simplification onto an entity that did not exist before (req 4.5 already exempts a new entity), so the container it came out of has nothing left to show but the extra declaration -- eight container counts therefore ship unratcheted (`DECOMPOSITION_COUNTS`). A routine's *own* counts fall under extraction, so they keep the ratchet; only *flattening* raises them, and that case is identified exactly by the entity's own complexity metrics falling while none worsens. **Both halves are necessary and each is pinned separately**: with the baseline before the nesting existed, the file's `MaxCyclomaticStrict` is unchanged, so the exemption has no evidence to read and only the defaults change lets the extraction through; and the defaults change alone cannot serve the flattening branch of the same hint.
+- **11.9 CORRECTED THE RECORDED SCOPE IN BOTH DIRECTIONS, which is the part to trust it for.** `project.AVG:CountLineCode` was **never** ratcheted (project scope has no entities and `_is_ratcheted` already excluded it), so the list of 11 was 10; and the list **missed** `class.MaxInheritanceTree`, which rises 0->1 under extract-superclass. It left that one ratcheted on a checkable argument -- **no hint in `report/hints.py` asks for another inheritance layer; its own hint asks for one fewer.** A list handed to an implementer is a hypothesis, not an inventory.
+- **11.9's falsification test is the strongest evidence in the round**: the same repository, the same extraction, one configuration key (`ratchet = true` on the two counts) restores the refusal -- `file.CountDeclFunction rose from 1 to 3`, exit 1. **The fix is shown to be the cause, not a coincidence of the fixture.**
+- **`routine.Essential` is a member of this family that 11.9 deliberately did NOT fix**, stated open: adding two `continue` guards moves it 1->4 while its own hint says "extract the block that is jumped out of into a routine that returns early". A pure guard-clause flattening did not move it in measurement, so the hint's main path is not shown to trip it, and this repository's own config already demotes it to a warning. The right remedy is arguably the severity default, which needs a corpus this task did not have.
+- **11.10 FIXED by pinning the interpreter through a controlled `PATH`, never through `und settings`.** Verified: `python_exe` is **absent** from `~/.config/SciTools/Und.conf` -- the exact key task 10.4 contaminated -- and no `und settings` call exists in `src/`. Two measurements from the fix worth keeping: the fallback is **per invocation** (a database analysed as Python 3 reverts to the Python 2 model, builtins and all, on the next `analyze` without a `python`, and `settings.xml` says `version="Python2"` either way -- which is why `PythonSetVersion` is inert and why the pin must be per call); and a **decoy `python` that merely echoes "Python 2.7.18" still triggers the fallback**, so the shim being *first* on `PATH` is load-bearing rather than incidental.
+- **11.10's pin changes what the tool measures, and the change is correct.** A `python` reached through a symlink finds no `pyvenv.cfg`, so Understand's `use_installed_standard` enrols nothing: measured **365 files enrolled versus 2**. Those 365 were libraries from the **Gate's own virtualenv** -- not the user's code, not in the shadow tree, and their presence made project-wide metrics depend on how the Gate happened to be installed. The cost is real and stated: a `pydantic.BaseModel` subclass's true inheritance depth becomes invisible. **Determinism was chosen over third-party context, deliberately.**
+- **11.11 FIXED: a file in the selection that failed to parse is now a blocking `analysis.parse_error`.** Verified through the real CLI: a `def generic[T](x)` file staged gives `1 blocking | 1 file failed to parse, not fully checked | exit 1`, with a hint naming the construct **and the exact rewrite** (`T = TypeVar("T")`, `class Box(Generic[T])`). The same unparseable file **outside** the selection gives exit 0 while still being reported -- the distinction that keeps the interpreter's own stdlib from blocking every commit. Understand cannot be made to parse PEP 695; the fix is that the gate stops certifying files it could not read.
+- **11.11 also fixed the message that made requirement 4.9 indistinguishable** (10.2's finding): a run whose selection parsed only partly now says **"nothing to report in the code that was parsed: it breaks no rule"** rather than the unqualified line, so "clean" and "clean as far as I could see" are no longer the same sentence.
+- **11.13 FIXED: parse errors survive a warm run.** Verified: three consecutive warm runs each report the file, where before the fix cold reported 6 and every warm run reported 0 -- which meant **a hook, always warm, would never have seen them**, making 11.11's fix worthless exactly where it matters. The agent ran a **positive control** rather than only checking accumulation: fixing the file and re-running warm *clears* the record, so it is a live re-read and not a growing pile.
+- **11.11 CORRECTED ANOTHER OF THIS PROJECT'S OWN NOTES.** Understand parses `match`/`case`, PEP 701 f-strings, the walrus, positional-only parameters, parenthesised `with`, `X | None`, `{**a}` and `[a, *b]` **all cleanly under Python 3**. So the long-recorded "star-in-a-list-literal" hazard is **entirely a symptom of 11.10's Python 2 fallback**, not a 3.12 construct at all, and the new hint catalogue deliberately does not name it. Two of this project's recorded product findings have now turned out to be one environment defect wearing two costumes.
+- **11.12 is HALF closed.** The machine-global half is fixed with 11.10. The other half stands open and measured: this project's editable install puts `<repo>/src` on the interpreter's `sys.path`, so `import scitools_hook.x` resolves outside the analysed shadow and **110 structure findings vanish on an identical index**. 11.10's pin may well have changed this too -- a symlinked interpreter sees no `site-packages` -- but that was not measured, and an unmeasured improvement is not a fix.
+- **Cross-agent discipline this round, worth recording because three tasks shared one tree**: 11.11 self-reported that its repo-wide `ruff check . --fix` deleted `import os` from 11.10's `und_cli.py`, restored it immediately and said so; 11.9 named the exact rows it changed in a test file 11.11 was also editing, so a clobber would be re-appliable rather than mysterious. **A shared working tree needs each agent to report its edits outside its own boundary in terms the next writer can undo.**

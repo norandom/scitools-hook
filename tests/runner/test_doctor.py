@@ -26,6 +26,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -546,6 +547,154 @@ def test_the_interpreter_running_the_gate_is_reported(
     _, env = seam(tmp_path)
     report = run_doctor(options(repo.path, env, command_log))
     assert report.python.startswith(".".join(str(part) for part in sys.version_info[:2]))
+
+
+# --- the python und would analyse with (req 1.5, tasks 11.10/11.12) --------------
+
+# `und` decides the Python dialect by EXECUTING a bare `python` off `PATH` and analyses a
+# Python 2 model when it finds none, which drops every routine after the first Python 3
+# construct in a file. That is the one field of this report whose failure mode is a green
+# run, so it is reported on every run and is a problem whenever it is not healthy.
+
+NOT_PYTHON_THREE = "#!/bin/sh\necho '2.7.18'\n"
+"""An executable that answers like a Python 2. Its *path* looks like any other."""
+
+
+def test_the_python_und_would_analyse_with_is_reported(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """Named on a healthy machine too, because the defect it guards is invisible otherwise."""
+    repo = git_repo()
+    home = install(tmp_path / "scitools", api="stub")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    pin = report.understand.python
+    assert pin is not None
+    assert pin.ok, pin.detail
+    assert pin.interpreter == Path(sys.executable)
+    assert pin.version.startswith("3.")
+    assert not [problem for problem in report.problems if "analyse with" in problem]
+
+
+def test_an_interpreter_that_answers_python_two_is_a_problem(
+    tmp_path: Path,
+    git_repo: MakeGitRepo,
+    command_log: FakeCommandLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The check is a *measurement*, not a path inspection, and this is what proves it.
+
+    Nothing about the path of this executable says it is not a Python 3; only running it
+    does. A frozen build of the Gate itself is the case that matters -- there
+    ``sys.executable`` is not an interpreter at all -- and it is caught the same way.
+    """
+    repo = git_repo()
+    home = install(tmp_path / "scitools", api="stub")
+    pretender = executable(tmp_path / "pretender" / "python", NOT_PYTHON_THREE)
+    monkeypatch.setattr(sys, "executable", str(pretender))
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    pin = report.understand.python
+    assert pin is not None and not pin.ok
+    assert pin.version == "2.7.18"
+    reported = problem_about(report, "2.7.18")
+    assert "und would analyse Python 2" in reported
+
+
+def test_a_python_that_cannot_be_pinned_at_all_is_a_problem(
+    tmp_path: Path,
+    git_repo: MakeGitRepo,
+    command_log: FakeCommandLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No interpreter to pin is the worst case and must still produce a report, not a raise."""
+    repo = git_repo()
+    home = install(tmp_path / "scitools", api="stub")
+    monkeypatch.setattr(sys, "executable", "")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    pin = report.understand.python
+    assert pin is not None and not pin.ok and pin.interpreter is None
+    assert "sys.executable is empty" in problem_about(report, "unusable")
+
+
+def test_an_interpreter_that_refuses_to_run_is_a_problem(
+    tmp_path: Path,
+    git_repo: MakeGitRepo,
+    command_log: FakeCommandLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not every unusable interpreter answers wrongly; some do not answer at all."""
+    repo = git_repo()
+    home = install(tmp_path / "scitools", api="stub")
+    refuses = executable(tmp_path / "refuses" / "python", "#!/bin/sh\nexit 3\n")
+    monkeypatch.setattr(sys, "executable", str(refuses))
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    pin = report.understand.python
+    assert pin is not None and not pin.ok and pin.version == ""
+    assert "exited 3" in pin.detail
+    assert "exited 3" in problem_about(report, "unusable")
+
+
+def test_a_pin_that_cannot_be_built_is_reported_rather_than_raised(
+    tmp_path: Path,
+    git_repo: MakeGitRepo,
+    command_log: FakeCommandLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The interpreter is fine and the machine is not: no temporary directory to build in.
+
+    ``doctor`` is the command an operator runs when things are already broken, so this has to
+    arrive as a problem entry. It is provoked by a real cause -- a ``tempfile.tempdir`` that
+    does not exist -- rather than by an injected exception.
+    """
+    repo = git_repo()
+    home = install(tmp_path / "scitools", api="stub")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "no-such-tmp"))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    pin = report.understand.python
+    assert pin is not None and not pin.ok
+    assert pin.interpreter == Path(sys.executable), "the choice is known; building it failed"
+    assert "could not be created" in pin.detail
+
+
+def test_an_installation_that_was_not_found_still_reports_the_interpreter(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """It is a fact about this process, not about the install, so it survives a missing one."""
+    repo = git_repo()
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(tmp_path / "nowhere"))
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    assert report.understand.env is None
+    pin = report.understand.python
+    assert pin is not None and pin.ok
+    assert pin.interpreter == Path(sys.executable)
+
+
+def test_the_fixture_seam_reports_no_interpreter_because_it_runs_nothing(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The seam's promise is that no process starts; a probe here would break it."""
+    repo = git_repo()
+    _, env = seam(tmp_path)
+
+    report = run_doctor(options(repo.path, env, command_log))
+
+    assert report.understand.python is None
 
 
 # --- the forced mode, and what the probes are allowed to assume ------------------

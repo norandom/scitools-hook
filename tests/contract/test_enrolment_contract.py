@@ -15,17 +15,21 @@ CSV in it must never be read as "no violations".
 
 from __future__ import annotations
 
+import json
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from contract_project import (
+    TIMEOUT_S,
     a_symlink,
     build_database,
     extract,
     real_env,
     run_und,
+    upython,
     write_tree,
 )
 
@@ -167,17 +171,65 @@ def routines_of(db: Path, root: Path) -> dict[str, float]:
     }
 
 
-def test_whether_python_parses_at_all_depends_on_the_path_und_inherits(
+PY2_ONLY: tuple[str, ...] = ("has_key", "iteritems", "raw_input")
+"""Builtins that exist only in Python 2, and so name the language model of a database.
+
+**The discriminator is the model, not the error count.** ``Errors:0`` from ``und`` has been
+read as proof of a clean analysis four separate times on this project and was wrong every
+time; these three names are in the database or they are not, and nothing about the exit
+status or the banner can fake them.
+"""
+
+MODEL_SCRIPT = """
+import json
+import sys
+
+import understand
+
+db = understand.open(sys.argv[1])
+names = {ent.name() for ent in db.ents()}
+print(json.dumps(sorted(names.intersection(sys.argv[2:]))))
+db.close()
+"""
+"""Read straight from the database through Understand's own interpreter, not from output."""
+
+PRETEND_PYTHON_TWO = "#!/bin/sh\necho 'Python 2.7.18'\n"
+"""A ``python`` that answers like a Python 2. Measured: ``und`` falls back on this one."""
+
+
+def language_model_of(db: Path) -> list[str]:
+    """The Python-2-only builtins the database holds; empty means it was analysed as Python 3."""
+    done = subprocess.run(
+        [str(upython()), "-c", MODEL_SCRIPT, str(db), *PY2_ONLY],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_S,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return list(json.loads(done.stdout))
+
+
+def decoy_dir(base: Path) -> Path:
+    """A directory holding a ``python`` that is not one, under the name ``und`` looks for."""
+    base.mkdir(parents=True, exist_ok=True)
+    decoy = base / "python"
+    decoy.write_text(PRETEND_PYTHON_TWO, encoding="utf-8")
+    decoy.chmod(decoy.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return base
+
+
+def test_a_bare_und_analyses_python_2_when_the_path_carries_no_python(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The largest surprise this task found, measured in both directions on one database.
+    """The defect in the tool, measured on one database with nothing but ``PATH`` differing.
 
-    Understand 6.5.1204 runs a bare ``python`` from ``PATH`` while analysing Python sources.
-    With one present, ``["k", *xs]`` parses and both routines are recorded. With only
-    ``python3`` present -- which is every modern distribution's default, and what a git hook
+    Understand 6.5.1204 decides the Python dialect by **executing** a bare ``python`` from
+    ``PATH``. With one present, ``["k", *xs]`` parses and both routines are recorded. With
+    only ``python3`` -- which is every modern distribution's default, and what a git hook
     inherits from a login shell -- the same file, the same database and the same command
-    report **eight parse errors**, ``after_marker`` disappears from the database entirely, and
-    ``before_marker`` swallows the rest of the file (four code lines instead of two).
+    report **eight parse errors**, ``after_marker`` disappears from the database entirely,
+    and ``before_marker`` swallows the rest of the file (four code lines instead of two).
 
     Neither run is an error. Both exit 0, and the failing one prints its errors, so
     requirement 2.6's report is implementable either way. What is not implementable from
@@ -190,6 +242,11 @@ def test_whether_python_parses_at_all_depends_on_the_path_und_inherits(
 
     ``python3`` alone is the control. The link is to :data:`sys.executable`, so both
     directories hold the same real interpreter and only the *name* differs.
+
+    This runs ``und`` **directly**. The Gate's own wrapper no longer inherits this ``PATH``
+    at all -- see the test below -- so driving the defect through it would measure the fix
+    instead of the tool, and the day Understand changes this behaviour is the day this test
+    should say so.
     """
     root = write_tree(tmp_path / "tree", UNPACK_SOURCES)
     db = tmp_path / "unpack.und"
@@ -198,27 +255,77 @@ def test_whether_python_parses_at_all_depends_on_the_path_und_inherits(
         ["-quiet", "-db", str(db), "add", str(root)],
     ):
         assert run_und(*argv).returncode == 0
-    cli = UndCli(real_env("upython"), NullCommandLog())
 
     monkeypatch.setenv("PATH", str(interpreter_dir(tmp_path / "py3", "python3")))
-    without = cli.analyze(db, None, all=True)
+    without = run_und("-db", str(db), "analyze", "-all", "-errors", "-warnings")
     lost = routines_of(db, root)
+    lost_model = language_model_of(db)
 
     monkeypatch.setenv("PATH", str(interpreter_dir(tmp_path / "py", "python")))
-    with_python = cli.analyze(db, None, all=True)
+    recovery = run_und("-db", str(db), "analyze", "-all", "-errors", "-warnings")
     recovered = routines_of(db, root)
+    recovered_model = language_model_of(db)
 
-    assert without.parse_errors, "only python3 on PATH: the parser must say it failed"
-    assert {error.path.name for error in without.parse_errors} == {"broken.py"}
-    assert any("expected token ']'" in error.message for error in without.parse_errors)
+    assert without.returncode == 0 and recovery.returncode == 0
+    assert list(lost_model) == sorted(PY2_ONLY), "no python on PATH: a Python 2 model"
+    assert "expected token ']'" in without.stdout
     assert "broken.after_marker" not in lost, "the routine after the error must be gone"
     assert lost["broken.before_marker"] == 4.0, "it must have swallowed the rest of the file"
     assert "intact.intact_marker" in lost, "another file must be unaffected"
 
-    assert with_python.parse_errors == [], "a bare python on PATH: no error at all"
+    assert recovered_model == [], "a bare python on PATH: a Python 3 model"
     assert recovered["broken.after_marker"] == 2.0
     assert recovered["broken.before_marker"] == 2.0
     assert set(recovered) == set(lost) | {"broken.after_marker"}
+
+
+@pytest.mark.parametrize("hostile", ["python3-only", "python-2-decoy", "nothing-at-all"])
+def test_the_wrapper_pins_the_interpreter_whatever_the_path_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hostile: str
+) -> None:
+    """The fix, measured against the same discriminator: the ``PATH`` no longer decides.
+
+    Three environments that all produced a **Python 2** database before -- a distribution
+    with only ``python3``, a developer whose first ``python`` is a Python 2, and an empty
+    search path -- are driven through the production
+    :class:`~scitools_hook.understand.und_cli.UndCli` for *every* step, ``create`` and ``add``
+    included. All three must give the same Python 3 database: no Python-2-only builtin in it,
+    both routines present, no parse error.
+
+    This fails on the old behaviour. ``UndCli`` used to start ``und`` with no ``env`` at all,
+    which is the ambient ``PATH``, so each of these three cases produced ``has_key``,
+    ``iteritems`` and ``raw_input`` in the database and lost ``after_marker`` with it.
+
+    The parse-error assertion is last and is the *weakest* of the three on purpose. What
+    matters is the model and the entity set: a routine that is absent is not an error, it is
+    an absence, and an absence breaks no threshold.
+    """
+    directories = {
+        "python3-only": lambda: interpreter_dir(tmp_path / "py3", "python3"),
+        "python-2-decoy": lambda: decoy_dir(tmp_path / "decoy"),
+        "nothing-at-all": lambda: _empty_dir(tmp_path / "bare"),
+    }
+    monkeypatch.setenv("PATH", str(directories[hostile]()))
+    root = write_tree(tmp_path / "tree", UNPACK_SOURCES)
+    db = tmp_path / "pinned.und"
+    cli = UndCli(real_env("upython"), NullCommandLog())
+
+    cli.create(db, ["python"], local=True)
+    cli.add(db, root, [])
+    analysed_result = cli.analyze(db, None, all=True)
+
+    assert language_model_of(db) == [], "the wrapper must never leave a Python 2 database"
+    routines = routines_of(db, root)
+    assert "broken.after_marker" in routines, "the routine after the construct must be there"
+    assert routines["broken.before_marker"] == 2.0
+    assert routines["broken.after_marker"] == 2.0
+    assert analysed_result.parse_errors == []
+
+
+def _empty_dir(base: Path) -> Path:
+    """A search path with nothing on it at all: the strictest of the three hostile cases."""
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 # --- CodeCheck: a licence, a CSV, or a loud refusal -------------------------------

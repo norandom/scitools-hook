@@ -337,6 +337,17 @@ def test_blocked_commit_workflow_is_explained(snippet: str) -> None:
     assert "re-run" in lowered
 
 
+def test_the_one_blocking_finding_that_is_not_about_a_limit_is_named(snippet: str) -> None:
+    """An agent told only about limits would read an unreadable file as a clean one (11.11).
+
+    Every other blocking finding says a measured value left its limit. ``analysis.parse_error``
+    says there was no measurement at all, and the fix is a rewrite rather than a refactoring,
+    so the document has to say so or the agent's model of the gate is wrong in the one place
+    where being wrong is a false green.
+    """
+    assert "analysis.parse_error" in snippet
+
+
 def test_snippet_carries_no_trailing_newline(snippet: str) -> None:
     """Like the other renderers: the caller decides how the text is terminated."""
     assert snippet == snippet.rstrip("\n")

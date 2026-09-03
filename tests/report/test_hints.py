@@ -30,14 +30,25 @@ import pytest
 from scitools_hook.config.defaults import DEFAULT_THRESHOLDS
 from scitools_hook.config.metric_names import Scope
 from scitools_hook.models.findings import (
+    ANALYSIS_RULES,
+    PARSE_ERROR_RULE,
     STRUCTURE_RULES,
+    AnalysisRuleName,
     Finding,
     FindingKind,
     StructureRuleName,
+    analysis_rule,
     build_rule_name,
     structure_rule,
 )
-from scitools_hook.report.hints import DEFAULT_CATALOGUE, GENERIC_KEYS, HintCatalogue
+from scitools_hook.report.hints import (
+    DEFAULT_CATALOGUE,
+    GENERIC_KEYS,
+    PARSE_CONSTRUCTS,
+    VARIANT_SEPARATOR,
+    HintCatalogue,
+    construct_of,
+)
 
 ROUTINE_LINES: Final = "routine.CountLineCode"
 """A rule that has both a rule-level and a metric-level default: the precedence case."""
@@ -201,6 +212,82 @@ def test_every_structural_rule_has_a_specific_hint(name: StructureRuleName) -> N
 @pytest.mark.parametrize("kind", get_args(FindingKind))
 def test_every_finding_kind_has_a_generic_hint(kind: FindingKind) -> None:
     assert DEFAULT_CATALOGUE[GENERIC_KEYS[kind]].strip()
+
+
+@pytest.mark.parametrize("name", ANALYSIS_RULES)
+def test_every_analysis_rule_has_a_specific_hint(name: AnalysisRuleName) -> None:
+    catalogue = HintCatalogue({})
+    rule = analysis_rule(name)
+    got = catalogue.hint(rule, finding(kind="parse", rule=rule))
+    assert got
+    assert got != DEFAULT_CATALOGUE[GENERIC_KEYS["parse"]]
+
+
+# --- the construct a parse error stopped at (task 11.11) ------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("def generic[T](x: T) -> T:", "type_params"),
+        ("    async def generic[T](x: T) -> T:", "type_params"),
+        ("class Box[T]:", "type_params"),
+        ("type Alias = int", "type_alias"),
+        ("type Alias[T] = list[T]", "type_alias"),
+        ("    except* ValueError:", "except_star"),
+    ],
+)
+def test_the_constructs_understand_refuses_are_recognised(source: str, expected: str) -> None:
+    """Every line here was measured aborting the parse on Build 1204 with Python 3 selected."""
+    assert construct_of(source) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def plain(y):",
+        "class Plain:",
+        "mytype x = 1",
+        "    except ValueError:",
+        "    return [first, *rest]",
+        "",
+    ],
+)
+def test_a_line_that_declares_none_of_them_is_not_guessed_at(source: str) -> None:
+    """The negative side needs its own inputs, and three of these look like the positive ones.
+
+    ``[first, *rest]`` is the one worth keeping: it *does* abort the parse under the Python 2
+    dialect Understand falls back to with no ``python`` on ``PATH`` (task 11.10), which is how
+    it came to be recorded as a hazard -- but it is not a construct anyone should rewrite, so
+    naming it here would send an agent after the wrong thing.
+    """
+    assert construct_of(source) == ""
+
+
+def test_a_recognised_construct_wins_over_the_rule_level_hint() -> None:
+    """The variant level exists to say something the rule level cannot; so it must be reached."""
+    catalogue = HintCatalogue({})
+    plain = finding(kind="parse", rule=PARSE_ERROR_RULE)
+    named = plain.model_copy(update={"details": {"construct": "type_params"}})
+    assert catalogue.hint(PARSE_ERROR_RULE, named) != catalogue.hint(PARSE_ERROR_RULE, plain)
+    assert catalogue.hint(PARSE_ERROR_RULE, plain) == DEFAULT_CATALOGUE[PARSE_ERROR_RULE]
+
+
+def test_a_construct_the_catalogue_has_no_text_for_falls_back_to_the_rule() -> None:
+    """A classifier that grows a name before the catalogue does must not lose the hint."""
+    catalogue = HintCatalogue({})
+    unknown = finding(kind="parse", rule=PARSE_ERROR_RULE).model_copy(
+        update={"details": {"construct": "not_in_the_catalogue"}}
+    )
+    assert catalogue.hint(PARSE_ERROR_RULE, unknown) == DEFAULT_CATALOGUE[PARSE_ERROR_RULE]
+
+
+@pytest.mark.parametrize("name", [name for name, _ in PARSE_CONSTRUCTS])
+def test_every_recognised_construct_has_its_own_hint(name: str) -> None:
+    """A construct the classifier names but the catalogue cannot answer is a silent downgrade."""
+    key = f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}{name}"
+    assert DEFAULT_CATALOGUE[key].strip()
+    assert DEFAULT_CATALOGUE[key] != DEFAULT_CATALOGUE[PARSE_ERROR_RULE]
 
 
 def test_no_default_hint_is_blank_or_a_placeholder() -> None:

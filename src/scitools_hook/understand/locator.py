@@ -34,6 +34,20 @@ Discovery does touch the filesystem, because that is its whole job. It reads no 
 state while doing so: the environment mapping it is given is the only environment it knows,
 including for ``PATH`` and for expanding ``~``, which keeps both this module and its tests
 independent of the machine they run on.
+
+**A third question belongs here for the same reason as the first two: which Python
+Understand will analyse with.** ``und`` decides the Python dialect by *executing* a bare
+``python`` it finds on ``PATH``, and when there is none it analyses under a **Python 2**
+model — measured on identical sources, same ``und``, only ``PATH`` differing: ``Errors:0``
+and routines ``['after', 'before']`` with a ``python`` present, against ``Errors:8``,
+routines ``['before']`` and ``has_key``/``iteritems``/``raw_input`` in the database without
+one. The routine after the parse failure is not an error, it is an **absence**: it has no
+metrics, so it breaks no threshold and the commit passes. :func:`pinned_python` closes that
+by giving every ``und`` invocation a ``PATH`` whose first entry is a directory this tool
+created, holding one link named ``python`` and pointing at :func:`chosen_interpreter`. That
+is an installation-environment decision, which is what this module is for, and it is
+deliberately *not* ``und settings -PythonExe``: that lever writes machine-global state (see
+:func:`pinned_python`).
 """
 
 from __future__ import annotations
@@ -41,14 +55,17 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from collections.abc import Callable, Mapping, Sequence
+import tempfile
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
 from scitools_hook.config.models import ApiMode
-from scitools_hook.errors import UnderstandNotFoundError
+from scitools_hook.errors import AnalysisFailedError, UnderstandNotFoundError
 from scitools_hook.models.understand import UnderstandEnv
+from scitools_hook.paths import classify_file
 
 HOME_VAR: Final = "SCITOOLS_HOME"
 """The environment variable requirement 1.1 places second in the precedence list."""
@@ -251,6 +268,203 @@ class Locator:
         """The verified installation, or ``UnderstandNotFoundError`` saying what was tried."""
         found = discover(env, cli_home, settings_home, self.platform)
         return verify(found, self.preferred, self.probes)
+
+
+# --- the interpreter Understand analyses Python with ----------------------------
+
+
+PIN_PREFIX: Final = "scitools-hook-python-"
+"""Prefix of the throwaway directory the link lives in, so an orphan is identifiable."""
+
+PIN_HINT: Final = (
+    "und decides the Python dialect by executing a bare `python` from PATH and analyses "
+    "Python 2 when it finds none, so the Gate supplies its own. Run `scitools-hook doctor` "
+    "to see which interpreter it would use."
+)
+"""Every failure here is the same operator-visible fact, so it carries the same hint."""
+
+
+def pin_name(platform: str = sys.platform) -> str:
+    """The executable name Understand looks for: a bare ``python``, ``.exe`` on Windows.
+
+    Measured on Linux with Understand 6.5.1204: a directory holding only ``python3`` gives
+    the Python 2 model, and the *same real interpreter* linked under the name ``python``
+    gives the Python 3 model. The name is the whole difference, which is why it is a
+    constant rather than a search.
+    """
+    return _executable_name("python", platform)
+
+
+def chosen_interpreter() -> Path:
+    """The interpreter every ``und`` invocation is given as its bare ``python``.
+
+    **The choice is** :data:`sys.executable`, **and the reason is availability rather than
+    taste.** Understand decides the Python dialect by *executing* a bare ``python`` found on
+    ``PATH``; finding none, it analyses under a **Python 2** model, and a Python 3 file then
+    fails to parse from its first 3.x-only construct to the end of the file -- so every
+    routine after that point is simply absent from the database, no threshold fires on it,
+    and the commit passes. "Missing" is therefore the one input that must be impossible, and
+    the only interpreter guaranteed to exist, to be executable and to be Python 3 is the one
+    this process is already running. Every other candidate -- a ``python3`` found on
+    ``PATH``, a configured path, the installation's bundled ``upython`` -- can be absent on
+    the next machine, which is exactly the input that produces the silent fallback.
+
+    **The minor version is not decided here, and does not need to be.** Understand's fallback
+    is binary -- a Python 2 model or a Python 3 model -- and 3.12.3 and 3.14.4 were both
+    measured to produce the Python 3 model on identical sources. So a repository targeting
+    3.10 while the Gate runs on 3.14, or the reverse, is still parsed as Python 3, and the
+    dialect no longer varies with the machine.
+
+    **What a version mismatch does still cost, stated rather than glossed over.** Understand
+    parses with its own 6.5 parser, never with the pinned interpreter, so a construct that
+    parser cannot read is unreadable whichever interpreter is pinned -- a PEP 695
+    type-parameter list is the measured example, and it is task 11.11's defect, not this one.
+    And the pinned interpreter is what Understand asks for the *installed* standard library,
+    so the library entities enrolled are the Gate's interpreter's, not the analysed
+    repository's; see :func:`pinned_python`, where that is measured and deliberately reduced
+    to nothing.
+
+    A frozen build would make :data:`sys.executable` the Gate's own executable rather than an
+    interpreter. Nothing here can tell those apart from the path alone, which is why
+    ``doctor`` runs the pinned link and reports the version it answers with.
+    """
+    named = sys.executable
+    if not named:
+        raise AnalysisFailedError(
+            "this process reports no interpreter of its own (sys.executable is empty), so "
+            "the python und analyses with cannot be pinned",
+            hint=PIN_HINT,
+        )
+    interpreter = Path(named)
+    unusable = _unusable_interpreter(interpreter)
+    if unusable:
+        raise AnalysisFailedError(
+            f"the interpreter to pin, {interpreter}, {unusable}", hint=PIN_HINT
+        )
+    return interpreter
+
+
+@dataclass(frozen=True)
+class PinnedPython:
+    """One ``und`` invocation's private ``python``: the link, and the interpreter behind it."""
+
+    interpreter: Path
+    link: Path
+
+    @property
+    def directory(self) -> Path:
+        """The directory to put first on ``PATH``; it holds the link and nothing else."""
+        return self.link.parent
+
+    def search_path(self, env: Mapping[str, str]) -> str:
+        """``PATH`` with this directory ahead of everything the caller inherited.
+
+        Prepending rather than replacing is measured, in both directions. A decoy ``python``
+        printing ``Python 2.7.18`` placed *before* the link gives the Python 2 model; the
+        same two directories in the other order give the Python 3 model. So being first is
+        what makes the pin hold, and keeping the rest is what keeps every other tool ``und``
+        may reach for on the path it was given.
+        """
+        ambient = env.get("PATH", "")
+        return f"{self.directory}{os.pathsep}{ambient}" if ambient else str(self.directory)
+
+
+@contextmanager
+def pinned_python(interpreter: Path | None = None) -> Iterator[PinnedPython]:
+    """A directory holding one ``python`` link, for exactly as long as one command runs.
+
+    **Per invocation, not per process, because the fallback is per invocation.** Measured:
+    a database analysed under the Python 3 model reverts to the Python 2 model -- eight parse
+    errors, ``has_key``/``iteritems``/``raw_input`` back in the database, the routine after
+    the parse failure gone again -- on the very next ``analyze`` run without a ``python``.
+    Nothing is remembered in the database or in its settings, so nothing but pinning *every*
+    call can hold the dialect.
+
+    **No machine-global state is written, and that is the point of doing it this way.**
+    ``und settings -PythonExe <path>`` fixes the dialect too and writes
+    ``~/.config/SciTools/Und.conf``, which is the default for every database created
+    afterwards on the machine and is rewritten on every run -- task 10.4 measured two
+    consecutive runs of one identical command producing 316 and 231 findings before that key
+    was controlled. Measured here across a full create/add/analyze cycle in both directions:
+    the checksum of that file does not change.
+
+    The directory comes from :func:`tempfile.mkdtemp`, which is ``0700`` and unpredictably
+    named, so the link cannot be pre-empted by another user, and ``os.symlink`` into a
+    directory that has just been created exclusively cannot overwrite anything. The result is
+    classified through :mod:`scitools_hook.paths` before it is handed out: a link that leads
+    nowhere and a target that cannot be executed are both faults to name, and both answer
+    ``False`` to ``Path.exists()``.
+
+    **Measured consequence, recorded because it changes what the Gate sees.** A ``python``
+    reached through this link finds no ``pyvenv.cfg`` beside it, so it reports its base
+    prefix and no ``site-packages``. On one measured pair: the Gate's own venv ``python``
+    directly on ``PATH`` enrolled 365 files, 224 of them from ``site-packages``, and a class
+    deriving from ``pydantic.BaseModel`` scored ``MaxInheritanceTree`` 5; through this link
+    the same sources enrolled 2 files and the same class scored 1. Both are defensible and
+    only one is the same on every machine -- a maintainability metric must not depend on
+    which libraries happen to sit beside the Gate, and task 11.12 asks in as many words for
+    an interpreter that does not carry the analysed project on its ``sys.path``. The
+    deterministic one is therefore the one taken, and it is named here so the next reader
+    meets it as a decision rather than as a surprise.
+
+    Cleanup is best-effort: a directory that cannot be removed must not turn a finished
+    analysis into a failure, and it holds one symbolic link and nothing else.
+    """
+    chosen = chosen_interpreter() if interpreter is None else interpreter
+    try:
+        scratch = tempfile.mkdtemp(prefix=PIN_PREFIX)
+    except OSError as unmakeable:
+        raise _unpinnable(chosen, unmakeable) from unmakeable
+    try:
+        yield _linked(Path(scratch), chosen)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _linked(scratch: Path, chosen: Path) -> PinnedPython:
+    """Put the one link into the scratch directory, or say why it is not usable."""
+    link = scratch / pin_name()
+    try:
+        os.symlink(chosen, link)
+    except OSError as unmakeable:
+        raise _unpinnable(chosen, unmakeable) from unmakeable
+    unusable = _unusable_interpreter(link)
+    if unusable:
+        raise AnalysisFailedError(f"the python link pinning {chosen} {unusable}", hint=PIN_HINT)
+    return PinnedPython(interpreter=chosen, link=link)
+
+
+def _unusable_interpreter(interpreter: Path) -> str:
+    """Why ``interpreter`` cannot be executed, or ``""`` when it can.
+
+    ``classify_file`` rather than ``Path.is_file()`` for the reason its own module records:
+    the predicate answers ``False`` for a link that leads nowhere, for a target inside a
+    directory this user cannot search, and for a symlink loop, so "I could not find out"
+    would be reported as "there is nothing here" -- and here that would be reported as a
+    missing interpreter, which is the very state the pin exists to make impossible.
+    """
+    verdict = classify_file(interpreter)
+    if verdict.absent:
+        return "does not exist"
+    if not verdict.usable:
+        return verdict.reason
+    if not os.access(interpreter, os.X_OK):
+        return "cannot be executed by this user"
+    return ""
+
+
+def _unpinnable(chosen: Path, broken: OSError) -> AnalysisFailedError:
+    """The typed refusal a pin that could not be built becomes.
+
+    Refusing is deliberate, and it is the alternative task 11.10 names to running anyway:
+    an ``und`` given an uncontrolled ``PATH`` may analyse Python 2 and report success over
+    code it never read, and a failure an operator can see is worth more than a green run
+    nobody can question. A machine with no writable temporary directory cannot run this Gate
+    in any case -- ``analyze -files`` and ``codecheck`` both write their list file there.
+    """
+    return AnalysisFailedError(
+        f"the python link pinning {chosen} could not be created: {broken}", hint=PIN_HINT
+    )
 
 
 # --- layout helpers -------------------------------------------------------------

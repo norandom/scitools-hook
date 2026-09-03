@@ -131,7 +131,16 @@ class ArchNode(DataModel):
 
 
 class ParseError(DataModel):
-    """One parse error reported by ``und analyze`` (req 2.6)."""
+    """One parse error reported by ``und analyze`` (req 2.6).
+
+    ``path`` is **repository-relative** for a file inside the analysed shadow, and absolute
+    for anything else Understand parsed on the way -- the interpreter's own standard library
+    above all, which task 10.4 measured four errors in and which no commit can be blamed for.
+    :meth:`~scitools_hook.understand.database.DatabaseManager.ensure_side` is what makes it
+    so, and that one form is what lets the path be compared against an
+    :class:`EntityKey`'s and against the run's selection without any path arithmetic at the
+    other end.
+    """
 
     path: Path
     line: int | None = None
@@ -151,6 +160,27 @@ class ProjectSnapshot(DataModel):
     populations: dict[Scope, dict[str, list[float]]] = Field(default_factory=dict)
     unavailable: dict[str, list[str]] = Field(default_factory=dict)
     parse_errors: list[ParseError] = Field(default_factory=list)
+
+    @property
+    def unparsed_files(self) -> frozenset[str]:
+        """The repository-relative paths this side could not read in full (req 2.6).
+
+        **This is the fact a comparison between two sides cannot do without, and it is
+        published here so the ratchet can consume it rather than re-derive it.** An entity
+        after a parse error is absent from the database, so the *same file* measured on a
+        side that failed to parse and on a side that did not is not two measurements of the
+        same thing: fixing a parse error reads as ``file.CountDeclClass rose from 3 to 15``,
+        which is the analysis getting better and not the code getting worse. A rule that
+        compares a before value with an after one has to be able to ask whether the before
+        side was read at all, and ``key.path in before.unparsed_files`` is that question.
+
+        The paths are repository-relative because :class:`ParseError` is normalised that way
+        before it reaches a snapshot, which is what makes them comparable with
+        :attr:`EntityKey.path`. An error outside the shadow -- the interpreter's standard
+        library -- keeps its absolute path and therefore matches no entity, which is the
+        right answer: no entity of this project lives there.
+        """
+        return frozenset(error.path.as_posix() for error in self.parse_errors)
 
     @field_validator("entities", mode="before")
     @classmethod

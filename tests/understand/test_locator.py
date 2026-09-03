@@ -26,6 +26,7 @@ import os
 import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -33,7 +34,7 @@ from typing import Final
 import pytest
 
 from scitools_hook.config.models import ApiMode
-from scitools_hook.errors import UnderstandNotFoundError
+from scitools_hook.errors import AnalysisFailedError, UnderstandNotFoundError
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand.locator import (
@@ -41,8 +42,11 @@ from scitools_hook.understand.locator import (
     InstallLayout,
     Locator,
     candidates,
+    chosen_interpreter,
     discover,
     layout,
+    pin_name,
+    pinned_python,
     platform_bin,
     verify,
     well_known_homes,
@@ -721,6 +725,196 @@ def test_locator_reports_a_missing_installation_before_probing(tmp_path: Path) -
         located.resolve(None, {"HOME": str(tmp_path)}, None)
     assert probes.calls == []
     assert len(raised.value.tried) == 3
+
+
+# --- the pinned interpreter -----------------------------------------------------
+
+# `und` decides the Python dialect by EXECUTING a bare `python` off `PATH`, and analyses a
+# Python 2 model when it finds none -- which drops every routine after the first Python 3
+# construct in a file, so no threshold fires and the run is green. These tests pin the
+# directory the Gate hands `und` instead of that ambient `PATH`. The measurement that makes
+# them worth having is in `tests/contract/test_enrolment_contract.py`, where the discriminator
+# is the language model in a real database rather than an error count.
+
+
+def test_the_pin_names_the_bare_python_understand_looks_for() -> None:
+    """``python``, not ``python3``: measured, the name is the whole difference."""
+    assert pin_name(LINUX) == "python"
+    assert pin_name(MACOS) == "python"
+    assert pin_name(WINDOWS) == "python.exe"
+
+
+def test_the_chosen_interpreter_is_the_one_running_this_process() -> None:
+    """:data:`sys.executable` is the choice, and the only one guaranteed to exist."""
+    assert chosen_interpreter() == Path(sys.executable)
+
+
+def test_a_process_with_no_interpreter_of_its_own_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An embedded or frozen host can report no ``sys.executable``; that is a refusal.
+
+    Refusing beats carrying on: an ``und`` run with an uncontrolled ``PATH`` may analyse
+    Python 2 and report success over code it never read.
+    """
+    monkeypatch.setattr(sys, "executable", "")
+    with pytest.raises(AnalysisFailedError) as refused:
+        chosen_interpreter()
+    assert "sys.executable is empty" in str(refused.value)
+    assert refused.value.exit_code is ExitCode.ANALYSIS_FAILED
+
+
+def test_the_pin_links_a_python_at_the_chosen_interpreter() -> None:
+    """One link, named ``python``, pointing at the interpreter that was chosen."""
+    with pinned_python() as pinned:
+        assert pinned.link.name == "python"
+        assert pinned.link.is_symlink()
+        assert pinned.link.resolve() == Path(sys.executable).resolve()
+        assert pinned.interpreter == Path(sys.executable)
+
+
+def test_the_pinned_directory_holds_the_link_and_nothing_else() -> None:
+    """It goes on the front of ``PATH``, so anything else in it would shadow a real tool."""
+    with pinned_python() as pinned:
+        assert sorted(path.name for path in pinned.directory.iterdir()) == ["python"]
+        assert pinned.directory == pinned.link.parent
+
+
+def test_the_pinned_directory_is_removed_when_the_command_has_finished() -> None:
+    """Per invocation, so a hook running on every commit leaves nothing behind."""
+    with pinned_python() as pinned:
+        directory = pinned.directory
+        assert directory.is_dir()
+    assert not directory.exists()
+
+
+def test_the_pinned_directory_is_removed_even_when_the_command_fails() -> None:
+    """The cleanup is a ``finally``: a failing ``und`` must not leak a directory either."""
+    with pytest.raises(RuntimeError):
+        with pinned_python() as pinned:
+            directory = pinned.directory
+            raise RuntimeError("und failed")
+    assert not directory.exists()
+
+
+def test_the_pinned_directory_comes_first_on_the_search_path() -> None:
+    """Measured in both directions: first wins, so first is where it has to be.
+
+    A decoy ``python`` ahead of the link gives the Python 2 model and the same two entries in
+    the other order give the Python 3 model, so this ordering is the fix rather than a detail
+    of it.
+    """
+    with pinned_python() as pinned:
+        built = pinned.search_path({"PATH": f"/usr/bin{os.pathsep}/bin"})
+    assert built.split(os.pathsep) == [str(pinned.directory), "/usr/bin", "/bin"]
+
+
+def test_nothing_inherited_leaves_the_pinned_directory_alone_on_the_path() -> None:
+    """An empty ambient ``PATH`` must not produce a trailing empty entry, which means "here"."""
+    with pinned_python() as pinned:
+        assert pinned.search_path({}) == str(pinned.directory)
+        assert pinned.search_path({"PATH": ""}) == str(pinned.directory)
+
+
+def test_an_interpreter_that_is_not_there_is_refused_as_a_link_to_nowhere(
+    tmp_path: Path,
+) -> None:
+    """The classification comes from :mod:`scitools_hook.paths`, and the wording proves it.
+
+    ``Path.exists()`` answers ``False`` for a link that leads nowhere, so a pin built over a
+    missing interpreter would be reported as "no interpreter" -- the exact state the pin
+    exists to make impossible -- instead of as a broken link.
+    """
+    with pytest.raises(AnalysisFailedError) as refused:
+        with pinned_python(tmp_path / "no-such-python"):
+            pass
+    assert "is a symbolic link that leads nowhere" in str(refused.value)
+    assert "no-such-python" in str(refused.value)
+
+
+def test_an_interpreter_this_user_cannot_execute_is_refused(tmp_path: Path) -> None:
+    """A readable file that is not executable is not an interpreter, and ``und`` would fall back."""
+    not_executable = tmp_path / "python"
+    not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    not_executable.chmod(0o644)
+    with pytest.raises(AnalysisFailedError) as refused:
+        with pinned_python(not_executable):
+            pass
+    assert "cannot be executed by this user" in str(refused.value)
+
+
+def test_a_refusal_says_how_to_see_which_interpreter_would_be_used(tmp_path: Path) -> None:
+    """Requirement 1.3's shape: every refusal here names the command that shows the answer."""
+    with pytest.raises(AnalysisFailedError) as refused:
+        with pinned_python(tmp_path / "gone"):
+            pass
+    assert "scitools-hook doctor" in (refused.value.hint or "")
+
+
+def test_an_interpreter_this_process_no_longer_has_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``sys.executable`` can name a path that is gone -- a venv deleted under a running Gate."""
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "removed" / "python"))
+    with pytest.raises(AnalysisFailedError) as refused:
+        chosen_interpreter()
+    assert "does not exist" in str(refused.value)
+
+
+def test_a_temporary_directory_that_cannot_be_made_is_a_typed_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real ``OSError`` from the real call, not an injected one: ``TMPDIR`` points nowhere.
+
+    It becomes an ``AnalysisFailedError`` rather than escaping as an ``OSError``, because
+    ``OSError`` is caught in several places in this package as "the environment is broken"
+    and would be reported as something other than what it is.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "no-such-tmp"))
+    with pytest.raises(AnalysisFailedError) as refused:
+        with pinned_python():
+            pass
+    assert "could not be created" in str(refused.value)
+    assert refused.value.exit_code is ExitCode.ANALYSIS_FAILED
+
+
+def test_a_filesystem_that_refuses_symbolic_links_is_a_typed_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Injected, because the real cause cannot be built here: Windows without the privilege.
+
+    ``os.symlink`` needs an elevated process or Developer Mode on Windows, and this suite runs
+    on Linux. The failure is injected rather than left untested, so the mapping is pinned and
+    the platform limitation is written down where the next reader meets it.
+    """
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "symlink", refuse)
+    with pytest.raises(AnalysisFailedError) as refused:
+        with pinned_python():
+            pass
+    assert "could not be created" in str(refused.value)
+
+
+def test_the_pinned_python_really_runs_and_answers_as_python_three() -> None:
+    """The link is executed, not merely created: the dialect turns on it starting.
+
+    Run through the link rather than through ``sys.executable``, because the link is what
+    ``und`` executes -- and a symbolic link whose target cannot find its own standard library
+    would start there and fail here.
+    """
+    with pinned_python() as pinned:
+        done = subprocess.run(
+            [str(pinned.link), "-c", "import sys; print(sys.version_info[0])"],
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "3"
 
 
 # --- contract: the real installation --------------------------------------------

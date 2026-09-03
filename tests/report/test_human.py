@@ -830,6 +830,8 @@ PARSE_BLOCK_TEXT: Final = """\
 parse errors: these files were NOT fully checked
   Understand could not finish parsing them. Code after a parse error can be missing
   from the analysis, so no rule ran on it: what follows covers only the code that parsed.
+  A file in this run's selection that failed to parse is also a blocking analysis.parse_error
+  finding below; one outside it -- the interpreter's own standard library, say -- is not.
   src/analysis/engine.py
     line 12: expected token ']' at token *
     expected newline at token dedent

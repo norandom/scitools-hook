@@ -5,6 +5,13 @@ class with a bounded surface, a file that fits one review. They are the lowest-p
 layer of the configuration; a user or repository file overrides only the keys it defines.
 Project-scope thresholds with a stats prefix (``AVG:CyclomaticStrict``) are reduced over
 the routine population; plain project-scope names are project-level Understand metrics.
+
+**Every threshold here has a limit; not every one has a ratchet.** Eight of them count what
+a decomposition adds to the container it came out of, and are therefore shipped with the
+ratchet off -- the list, the measurements behind it and the reason are
+:data:`~scitools_hook.config.models.DECOMPOSITION_COUNTS`, which is where the default is
+resolved so that an operator's own threshold on the same metric inherits it. Nothing in this
+table says ``ratchet`` explicitly, so nothing here overrides that.
 """
 
 from __future__ import annotations

@@ -120,6 +120,8 @@ def _describe(rule: str, findings: Sequence[Finding]) -> str:
         return f"CodeCheck check {label}: {name}" if name else f"CodeCheck check {label}"
     if parsed.category == "structure":
         return f"structural rule {label}"
+    if parsed.category == "analysis":
+        return f"analysis rule {label}"
     return f"{parsed.scope} metric {label}"
 
 

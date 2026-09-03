@@ -19,6 +19,7 @@ from scitools_hook.models.findings import (
     ParsedRule,
     RunResult,
     TightenedLimit,
+    analysis_rule,
     build_rule_name,
     codecheck_rule,
     is_valid_rule_name,
@@ -103,6 +104,12 @@ def test_parse_rule_name_reads_a_structural_rule() -> None:
     )
 
 
+def test_parse_rule_name_reads_an_analysis_rule() -> None:
+    assert parse_rule_name("analysis.parse_error") == ParsedRule(
+        category="analysis", scope=None, metric=None, name="parse_error"
+    )
+
+
 def test_parse_rule_name_reads_a_codecheck_rule() -> None:
     assert parse_rule_name("codecheck.CPP_V001") == ParsedRule(
         category="codecheck", scope=None, metric=None, name="CPP_V001"
@@ -110,7 +117,15 @@ def test_parse_rule_name_reads_a_codecheck_rule() -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", ["routine", "", "module.CyclomaticStrict", "structure.unknown_rule", "codecheck."]
+    "raw",
+    [
+        "routine",
+        "",
+        "module.CyclomaticStrict",
+        "structure.unknown_rule",
+        "analysis.unknown_rule",
+        "codecheck.",
+    ],
 )
 def test_parse_rule_name_rejects_names_outside_the_grammar(raw: str) -> None:
     with pytest.raises(ConfigError):
@@ -122,6 +137,7 @@ def test_is_valid_rule_name_accepts_every_generated_name() -> None:
     generated = [
         build_rule_name("file", "CountLineCode"),
         structure_rule("layer"),
+        analysis_rule("parse_error"),
         codecheck_rule("PY_A001"),
     ]
     assert all(is_valid_rule_name(name) for name in generated)

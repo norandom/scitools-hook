@@ -11,6 +11,8 @@ ratio fell from 0.2 to 0.19.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -21,7 +23,14 @@ from scitools_hook.analysis.thresholds import evaluate_thresholds
 from scitools_hook.config.metric_names import Scope, parse_metric_name
 from scitools_hook.config.models import Limit, Severity, ThresholdSpec
 from scitools_hook.models.findings import EffectiveThreshold, Finding
-from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot
+from scitools_hook.models.snapshot import (
+    EntityKey,
+    EntityRecord,
+    EntityRef,
+    ParseError,
+    ProjectSnapshot,
+    Side,
+)
 
 APP = "src/cli/app.py"
 RULES = "src/analysis/rules.py"
@@ -53,8 +62,16 @@ def threshold(
     severity: Severity = "error",
     source: Literal["config", "baseline"] = "config",
 ) -> EffectiveThreshold:
-    """One configured threshold whose effective limit equals the configured one."""
-    spec = ThresholdSpec(scope=scope, metric=metric, limit=limit, severity=severity)
+    """One configured threshold whose effective limit equals the configured one.
+
+    ``ratchet`` is written out rather than left to the model, because eight rules now default
+    it *off* (``config.models.DECOMPOSITION_COUNTS``, task 11.9) and a helper that inherited
+    that would silently stop comparing anything the moment a test named one of them -- which
+    is how ``test_a_limit_with_both_bounds_ratchets_in_both_directions`` first passed for the
+    wrong reason. What the default is belongs to ``tests/config``; what the comparison does
+    once it is on belongs here, so this file says so on every threshold it builds.
+    """
+    spec = ThresholdSpec(scope=scope, metric=metric, limit=limit, severity=severity, ratchet=True)
     return EffectiveThreshold(
         spec=spec, metric=parse_metric_name(metric), limit=limit, source=source
     )
@@ -257,7 +274,223 @@ def test_the_severity_and_the_limit_source_of_the_spec_are_carried(
     assert finding.limit_source == "baseline"
 
 
+# --- the two before values that are not measurements of the change (task 11.9) -----
+
+DEEP = "pkg/deep.py"
+WALK = EntityKey(scope="routine", path=DEEP, longname="deep.walk", parameters="rows")
+STDLIB = "/usr/lib/python3.14/typing.py"
+"""A parse error outside the repository, in the absolute form ``ParseError`` keeps it in."""
+
+
+def one_routine(
+    side: Side, metrics: Mapping[str, float], unparsed: Sequence[str] = ()
+) -> ProjectSnapshot:
+    """A snapshot holding only ``deep.walk``, with exactly the metrics and parse errors given."""
+    record = EntityRecord(
+        ref=EntityRef(key=WALK, kind="Function", name="walk", line=1),
+        language="Python",
+        metrics=dict(metrics),
+    )
+    return ProjectSnapshot(
+        side=side,
+        entities={WALK: record},
+        parse_errors=[
+            ParseError(path=Path(path), line=4, message="expected token '(' at token [")
+            for path in unparsed
+        ],
+    )
+
+
+def walked(
+    was: Mapping[str, float],
+    now: Mapping[str, float],
+    *specs: EffectiveThreshold,
+    unparsed_before: Sequence[str] = (),
+    unparsed_after: Sequence[str] = (),
+) -> list[Finding]:
+    """Ratchet ``deep.walk`` from ``was`` to ``now`` under ``specs``."""
+    return evaluate_ratchet(
+        one_routine("after", now, unparsed_after),
+        one_routine("before", was, unparsed_before),
+        {WALK},
+        specs,
+    )
+
+
+# The four metric sets below are the measurement behind the exemption, taken through the
+# installed CLI against Understand 6.5.1204 on a real repository: rewriting a five-deep
+# routine as guard clauses ("invert the condition and return early", which is the second half
+# of MaxNesting's own hint) moved MaxNesting 5 -> 2 and left CyclomaticStrict at 5, while
+# CountLineCode and CountStmt both moved 8 -> 11.
+FLATTENED_BEFORE = {"CountLineCode": 8, "CountStmt": 8, "MaxNesting": 5, "CyclomaticStrict": 5}
+FLATTENED_AFTER = {"CountLineCode": 11, "CountStmt": 11, "MaxNesting": 2, "CyclomaticStrict": 5}
+GREW_BEFORE = {"CountLineCode": 8, "CountStmt": 8, "MaxNesting": 5, "CyclomaticStrict": 5}
+GREW_AFTER = {"CountLineCode": 11, "CountStmt": 11, "MaxNesting": 5, "CyclomaticStrict": 5}
+
+LINES = threshold("routine", "CountLineCode", Limit(max=60))
+STATEMENTS = threshold("routine", "CountStmt", Limit(max=40))
+
+
+def test_a_count_a_measured_simplification_raised_is_not_reported() -> None:
+    """The gate must not refuse the second remedy its own MaxNesting hint offers (11.9).
+
+    ``routine.CountLineCode`` and ``routine.CountStmt`` both rose, and both are dropped --
+    because the same routine's MaxNesting fell 5 -> 2 in the same change and nothing in
+    ``COMPLEXITY_EVIDENCE`` rose.
+    """
+    assert walked(FLATTENED_BEFORE, FLATTENED_AFTER, LINES, STATEMENTS) == []
+
+
+def test_a_count_that_rose_with_the_complexity_standing_still_is_still_reported() -> None:
+    """The sibling of the case above, differing only in MaxNesting: 5 -> 5 instead of 5 -> 2.
+
+    An entity that got longer and no simpler is exactly what the ratchet is for, so both
+    counts are reported with the values they moved between.
+    """
+    findings = walked(GREW_BEFORE, GREW_AFTER, LINES, STATEMENTS)
+
+    assert {(f.rule, f.before, f.value) for f in findings} == {
+        ("routine.CountLineCode", 8.0, 11.0),
+        ("routine.CountStmt", 8.0, 11.0),
+    }
+
+
+def test_a_count_that_rose_while_the_complexity_rose_too_is_still_reported() -> None:
+    """One rising evidence metric vetoes the exemption even when another one fell.
+
+    MaxNesting falls 5 -> 2 exactly as in the exempted case; CyclomaticStrict rises 5 -> 9,
+    which is the only difference and is enough.
+    """
+    findings = walked(
+        {"CountLineCode": 8, "MaxNesting": 5, "CyclomaticStrict": 5},
+        {"CountLineCode": 11, "MaxNesting": 2, "CyclomaticStrict": 9},
+        LINES,
+    )
+
+    assert [(f.rule, f.before, f.value) for f in findings] == [("routine.CountLineCode", 8.0, 11.0)]
+
+
+def test_a_count_that_rose_with_no_evidence_present_at_all_is_still_reported() -> None:
+    """No complexity metric in the snapshot is not the same as one that improved.
+
+    A configuration that thresholds only ``CountLineCode`` never asks for CyclomaticStrict or
+    MaxNesting, so neither side carries them. The exemption needs a measurement to point at,
+    and having none is not one.
+    """
+    findings = walked({"CountLineCode": 8}, {"CountLineCode": 11}, LINES)
+
+    assert [(f.rule, f.before, f.value) for f in findings] == [("routine.CountLineCode", 8.0, 11.0)]
+
+
+def test_a_rule_outside_the_decomposition_counts_is_never_forgiven() -> None:
+    """``routine.CountParams`` rises for no reason a decomposition explains, so it still fires.
+
+    The evidence here is as strong as the exempted case's -- MaxNesting 5 -> 2, nothing rising
+    -- and the only difference is which rule went up. Nothing good makes a parameter list
+    longer, so nothing forgives it.
+    """
+    findings = walked(
+        {"CountParams": 3, "MaxNesting": 5},
+        {"CountParams": 5, "MaxNesting": 2},
+        threshold("routine", "CountParams", Limit(max=5)),
+    )
+
+    assert [(f.rule, f.before, f.value) for f in findings] == [("routine.CountParams", 3.0, 5.0)]
+
+
+def test_an_entity_whose_file_did_not_parse_before_is_not_ratcheted() -> None:
+    """A before value read out of a file ``und`` could not parse is not a before value (11.9).
+
+    The numbers are a real regression -- MaxNesting 2 -> 6 -- and would fire on their own; the
+    parse error on the before side is what stops them, because the analysis getting better is
+    not the code getting worse.
+    """
+    nesting = threshold("routine", "MaxNesting", Limit(max=3))
+
+    assert walked({"MaxNesting": 2}, {"MaxNesting": 6}, nesting, unparsed_before=[DEEP]) == []
+
+
+def test_the_same_regression_still_fires_when_only_the_after_side_failed_to_parse() -> None:
+    """Only the *before* side's coverage can make a before value fictional.
+
+    Identical metrics to the case above, with the parse error moved to the after side: the
+    finding comes back, so the skip is about which side lost coverage and not about the
+    presence of a parse error anywhere in the run.
+    """
+    nesting = threshold("routine", "MaxNesting", Limit(max=3))
+
+    findings = walked({"MaxNesting": 2}, {"MaxNesting": 6}, nesting, unparsed_after=[DEEP])
+
+    assert [(f.rule, f.before, f.value) for f in findings] == [("routine.MaxNesting", 2.0, 6.0)]
+
+
+def test_a_parse_error_in_a_file_no_commit_owns_silences_nothing() -> None:
+    """The interpreter's own standard library fails to parse on both sides of every run.
+
+    Task 10.4 measured four such errors in a clean analysis. They arrive with absolute paths
+    while an entity's path is repository-relative, so they match no entity -- and this is the
+    case that says the matching is on the path and not on "were there any parse errors".
+    """
+    nesting = threshold("routine", "MaxNesting", Limit(max=3))
+
+    findings = walked({"MaxNesting": 2}, {"MaxNesting": 6}, nesting, unparsed_before=[STDLIB])
+
+    assert [(f.rule, f.before, f.value) for f in findings] == [("routine.MaxNesting", 2.0, 6.0)]
+
+
 # --- attach_before ---------------------------------------------------------------
+
+
+def test_attach_before_leaves_a_file_the_before_side_could_not_parse_unset() -> None:
+    """An inflated before value would excuse the violation it invented (task 11.9).
+
+    ``analysis.classify`` reads ``Finding.before`` to decide whether a violation was already
+    there, and a value read out of a file that failed to parse is not a reading of that file.
+    The finding therefore comes back with ``before`` still ``None``, which classify treats as
+    "not known" and leaves blocking, rather than as "was already worse".
+    """
+    before = one_routine("before", {"CountStmt": 66}, ["pkg/deep.py"])
+    finding = Finding(
+        kind="threshold",
+        rule="routine.CountStmt",
+        metric="CountStmt",
+        scope="routine",
+        entity=EntityRef(key=WALK, kind="Function", name="walk", line=1),
+        path=DEEP,
+        value=45.0,
+        severity="error",
+        blocking=True,
+        message="routine deep.walk CountStmt is 45, which exceeds the maximum 40",
+    )
+
+    (attached,) = attach_before([finding], before)
+
+    assert attached.before is None
+
+
+def test_attach_before_fills_the_same_finding_when_the_before_side_parsed() -> None:
+    """The sibling, differing only in whether the before snapshot names the file.
+
+    The metrics are identical, so a change that stopped filling ``before`` at all would pass
+    the case above and fail here.
+    """
+    before = one_routine("before", {"CountStmt": 66})
+    finding = Finding(
+        kind="threshold",
+        rule="routine.CountStmt",
+        metric="CountStmt",
+        scope="routine",
+        entity=EntityRef(key=WALK, kind="Function", name="walk", line=1),
+        path=DEEP,
+        value=45.0,
+        severity="error",
+        blocking=True,
+        message="routine deep.walk CountStmt is 45, which exceeds the maximum 40",
+    )
+
+    (attached,) = attach_before([finding], before)
+
+    assert attached.before == pytest.approx(66.0)
 
 
 def threshold_findings(after: ProjectSnapshot, *specs: EffectiveThreshold) -> list[Finding]:

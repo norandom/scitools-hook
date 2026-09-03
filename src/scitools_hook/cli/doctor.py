@@ -39,6 +39,7 @@ from scitools_hook.runner.doctor import (
     ApiProbe,
     DoctorReport,
     GitStatus,
+    PythonPin,
     UnderstandDiagnosis,
     run_doctor,
 )
@@ -50,6 +51,9 @@ HELP = (
 
 NOT_VERIFIED: Final = "not verified"
 """What the API mode says while no mode has been decided; never the layout's guess."""
+
+NOT_CHECKED: Final = "not checked (the fixture seam starts no processes)"
+"""Why the interpreter row can be empty: ``SCITOOLS_HOOK_FAKE_UNDERSTAND`` runs no ``und``."""
 
 NOT_FOUND: Final = "not found"
 NONE_FOUND: Final = "none"
@@ -111,6 +115,7 @@ def _understand_rows(diagnosis: UnderstandDiagnosis) -> list[tuple[str, str]]:
     rows.append(("license", _license(diagnosis)))
     rows.append(("api mode", diagnosis.api_mode or NOT_VERIFIED))
     rows.extend((f"probe {probe.mode}", _probe(probe)) for probe in diagnosis.probes)
+    rows.append(("analysis python", _python(diagnosis.python)))
     return rows
 
 
@@ -135,6 +140,20 @@ def _license(diagnosis: UnderstandDiagnosis) -> str:
 def _probe(probe: ApiProbe) -> str:
     """One probe's answer: the API version it reported, or why it reported none."""
     return f"ok ({probe.version})" if probe.ok else f"no ({probe.detail})"
+
+
+def _python(pin: PythonPin | None) -> str:
+    """Which interpreter ``und`` will analyse Python sources with (tasks 11.10, 11.12).
+
+    Printed on every run, not only the unhealthy ones. The whole defect this row exists for
+    is that two machines analyse one commit to different depths and *nothing in the output
+    says so*; a row that appeared only when something was wrong would leave the operator with
+    the same silence on the day the answer was quietly incomplete.
+    """
+    if pin is None:
+        return NOT_CHECKED
+    where = NOT_FOUND if pin.interpreter is None else str(pin.interpreter)
+    return f"{where} ({pin.version})" if pin.ok else f"{where} -- {pin.detail or NOT_VERIFIED}"
 
 
 def _git_rows(git: GitStatus) -> list[tuple[str, str]]:

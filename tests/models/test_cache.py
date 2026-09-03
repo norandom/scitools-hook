@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from scitools_hook.models.cache import APP_NAME, CachePaths, SyncState, cache_root, repo_id
+from scitools_hook.models.snapshot import ParseError
 
 # --- repo_id -------------------------------------------------------------------
 
@@ -134,8 +135,23 @@ def test_sync_state_round_trips_through_json() -> None:
         before_commit="0f1e2d3",
         languages=["Python", "C++"],
         created_with="6.5.1204",
+        parse_errors={
+            "after": [ParseError(path=Path("pkg/generic.py"), line=1, message="expected token")],
+            "before": [],
+        },
     )
     assert SyncState.model_validate(json.loads(state.model_dump_json())) == state
+
+
+def test_sync_state_carries_no_parse_errors_until_a_run_records_some() -> None:
+    """The default is empty, so a cache written before task 11.13 reads as "nothing recorded"."""
+    assert SyncState().parse_errors == {}
+
+
+def test_sync_state_rejects_a_side_that_is_not_a_side() -> None:
+    """The record is keyed by side; a third key would be a database nothing ever analyses."""
+    with pytest.raises(ValidationError):
+        SyncState(parse_errors={"sideways": []})  # type: ignore[dict-item]
 
 
 def test_a_supplied_cache_base_is_still_namespaced_under_the_application(tmp_path: Path) -> None:

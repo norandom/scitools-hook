@@ -50,6 +50,30 @@ case-sensitive, because the installed table is (``a.C`` is C++, ``a.PY`` is noth
 ``tests/contract/test_database_contract.py`` re-measures it against the installed build, in
 both directions, so a build whose table differs says so instead of quietly analysing less.
 
+**A parse error belongs to the database, not to the run that happened to do the parsing**
+(requirement 2.6, task 11.13). ``und analyze`` is incremental, so a warm run re-parses nothing
+and reports nothing: measured on this repository, a cold staged run named 9 unparsed files and
+three consecutive warm runs over the same two databases -- still holding the same unparseable
+files -- named none, which is the anti-silent-green report of 2.6 surviving exactly one run,
+and a git hook is always warm. :class:`~scitools_hook.models.cache.SyncState` therefore carries
+each side's errors between runs, and every analysis rewrites only the part of that record it
+actually re-read: a full pass replaces the side's whole set, a ``-files`` pass replaces the
+entries of the files it named (so fixing a file clears its errors) and carries the rest
+forward untouched.
+
+**The paths those errors carry are made repository-relative here**, against the shadow tree the
+side's database was built from, and nowhere else. ``und`` reports the absolute path inside the
+shadow (measured: ``…/<repo id>/after/pkg/generic.py``), which is a cache location no operator
+can act on and which no ``EntityKey`` or selection entry can be compared with. A path Understand
+parsed from *outside* the shadow -- the interpreter's own standard library, where task 10.4
+measured four errors -- is left absolute, and that is the distinction the check pipeline blocks
+on: a file in the selection failed to read, versus something the interpreter drags in.
+Relativising is a plain ``is_relative_to``/``relative_to`` with no realpath fallback, and that
+is deliberate: measured, ``und`` records files under their **resolved** path, so a shadow root
+reached through a symlink already fails loudly in the snapshot extractor (``no file of <db> is
+under the analysis root``) rather than reaching here. A fallback would only make that
+configuration fail more quietly.
+
 **The cache root is created ``0700`` before anything is written into it** (requirement 2.2's
 neighbour: the shadows and the databases are copies of the repository's source).
 ``mkdir(parents=True)`` gives a directory the process umask and ``exist_ok=True`` does not
@@ -66,7 +90,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Final, TypeVar
+from typing import Final, NamedTuple, TypeVar
 
 from scitools_hook.config.models import Settings
 from scitools_hook.errors import AnalysisFailedError, LicenseError
@@ -183,6 +207,20 @@ CACHE_HINT: Final = "Point understand.db_location or the cache directory somewhe
 """Every failure to create or clear the cache has the same one fix."""
 
 
+class _Pass(NamedTuple):
+    """One finished ``und analyze``, and which files it actually re-read.
+
+    ``reanalysed`` is ``None`` for a pass that read the whole project, and the absolute shadow
+    paths that were named otherwise. It exists so the recorded parse errors can be updated by
+    *what was re-read* rather than by what came back: a selective pass that reports no error
+    says nothing at all about the files it never opened, and treating its silence as "the
+    project parses cleanly now" is exactly the warm-run false green (task 11.13).
+    """
+
+    result: AnalyzeResult
+    reanalysed: frozenset[Path] | None
+
+
 class DatabaseManager:
     """The cache directory's owner: shadows, databases, ``state.json`` (requirements 2.1-2.8).
 
@@ -260,14 +298,25 @@ class DatabaseManager:
     # --- deciding what the change costs ------------------------------------------
 
     def _analyse(self, side: Side, state: SyncState, delta: SyncDelta) -> AnalyzeResult:
-        """Turn one sync's delta into the ``und`` commands that answer it."""
+        """Turn one sync's delta into the ``und`` commands that answer it.
+
+        What comes back names every file this side's **database** cannot read, not only what
+        this run happened to re-parse: ``SyncState.record_parse_errors`` merges the pass's own
+        answer into the record and hands the whole of it back, which is what makes a warm run
+        report what the cold one found (requirement 2.6, task 11.13). The pass says which
+        files it opened -- ``None`` for a whole-project one -- because that, and not the
+        errors it returned, is what the record may be updated from.
+        """
         db = self._paths.before_db if side == "before" else self._paths.after_db
         tree = self._paths.before_tree if side == "before" else self._paths.after_tree
         languages = self._languages(state, delta)
         self._invalidate(state, languages)
         if delta.full or not self._present(db):
-            return self._build(side, db, tree, state.languages)
-        return self._update(db, tree, delta, state.languages)
+            done = self._build(side, db, tree, state.languages)
+        else:
+            done = self._update(db, tree, delta, state.languages)
+        errors = state.record_parse_errors(side, tree, done.result.parse_errors, done.reanalysed)
+        return done.result.model_copy(update={"parse_errors": errors})
 
     def _languages(self, state: SyncState, delta: SyncDelta) -> list[str]:
         """Which languages this repository needs, from configuration or from its files (2.4).
@@ -306,6 +355,7 @@ class DatabaseManager:
         _discard(self._paths.after_db)
         state.languages = languages
         state.created_with = version
+        state.forget_parse_errors()
 
     def _present(self, db: Path) -> bool:
         """Whether ``db`` is there to be used; a path that is taken but unusable is raised.
@@ -326,7 +376,7 @@ class DatabaseManager:
 
     # --- the two ways to bring a database up to date -----------------------------
 
-    def _build(self, side: Side, db: Path, tree: Path, languages: list[str]) -> AnalyzeResult:
+    def _build(self, side: Side, db: Path, tree: Path, languages: list[str]) -> _Pass:
         """Create the database from nothing and analyse the whole shadow (req 2.1, 2.4).
 
         Whatever was at ``db`` is discarded first. ``und create`` over an existing database
@@ -349,11 +399,9 @@ class DatabaseManager:
             f"created the {side} analysis database with {', '.join(languages)} enabled"
         )
         self._und.add(db, tree, [])
-        return self._und.analyze(db, None, all=True)
+        return _Pass(self._und.analyze(db, None, all=True), None)
 
-    def _update(
-        self, db: Path, tree: Path, delta: SyncDelta, languages: list[str]
-    ) -> AnalyzeResult:
+    def _update(self, db: Path, tree: Path, delta: SyncDelta, languages: list[str]) -> _Pass:
         """Apply one delta to a database that already holds the previous shadow (req 2.3).
 
         Every path is checked against two questions before it is named to ``und``: does
@@ -388,7 +436,7 @@ class DatabaseManager:
         delta: SyncDelta,
         removals: list[Path],
         changed: list[Path],
-    ) -> AnalyzeResult:
+    ) -> _Pass:
         """Remove what left the shadow, enrol what arrived, analyse what changed.
 
         The order of the first two is **not** load-bearing and saying so is cheaper than
@@ -405,9 +453,11 @@ class DatabaseManager:
             self._und.remove_files(db, removals)
         if delta.added:
             self._und.add(db, tree, [])
-        return self._und.analyze(db, changed, all=False)
+        # A removal is a re-read too, in the only sense that matters here: the file has left
+        # the database, so whatever it could not parse is no longer this project's problem.
+        return _Pass(self._und.analyze(db, changed, all=False), frozenset({*removals, *changed}))
 
-    def _analyse_everything(self, db: Path, reason: str) -> AnalyzeResult:
+    def _analyse_everything(self, db: Path, reason: str) -> _Pass:
         """The fallback: one full pass, which is correct for every kind of change.
 
         Measured, each with a marker entity read back out of the database afterwards:
@@ -419,7 +469,7 @@ class DatabaseManager:
         way round for a gate.
         """
         self._progress.note(f"analysing the whole project rather than the change: {reason}")
-        return self._und.analyze(db, None, all=True)
+        return _Pass(self._und.analyze(db, None, all=True), None)
 
     # --- the cache directory and its state ---------------------------------------
 

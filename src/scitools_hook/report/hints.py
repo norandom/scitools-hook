@@ -5,11 +5,23 @@ it what to change. The catalogue is therefore written in the imperative and name
 refactoring ("extract the inner block into its own routine"), never a target number: raising
 the limit is never the remedy, and a hint that says "reduce complexity" is worth nothing.
 
-Lookup runs through three levels, most specific first::
+Lookup runs through four levels, most specific first::
 
+    variant "analysis.parse_error/type_params"               (only where a finding names one)
     rule    "routine.CountLineCode", "structure.file_cycle", "codecheck.CPP_F016"
     metric  "CountLineCode", "file_cycle", "CPP_F016"        (the name part of the rule)
     generic "generic.threshold" | "generic.ratchet" | "generic.structural" | "generic.codecheck"
+            | "generic.parse"
+
+The variant level exists for one rule and would not be worth having for a threshold. A parse
+error is the one finding whose remedy is not a refactoring at all but a **rewrite of a
+specific construct**, and which construct it is decides the whole of the answer: "rewrite the
+type-parameter list as an explicit TypeVar" and "write `X: TypeAlias = ...` instead of `type
+X = ...`" are different edits, and neither is guessable from "this file failed to parse". The
+pipeline identifies the construct from the analysed source and leaves it in
+``Finding.details["construct"]``; :data:`PARSE_CONSTRUCTS` is the classifier and the keys
+below carry one hint each. A construct nobody recognised simply falls through to the rule
+level, which is still actionable.
 
 The rule level exists because the same metric means different things per scope -- a routine
 over 60 lines is split into routines, a file over 500 lines is split into modules -- while the
@@ -29,20 +41,66 @@ text for the finding's kind, because a renderer must not fail on a badly configu
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from typing import Final
 
 from scitools_hook.config.metric_names import format_metric_name
 from scitools_hook.errors import ConfigError
-from scitools_hook.models.findings import Finding, FindingKind, parse_rule_name
+from scitools_hook.models.findings import (
+    PARSE_ERROR_RULE,
+    Finding,
+    FindingKind,
+    parse_rule_name,
+)
 
 GENERIC_KEYS: Final[dict[FindingKind, str]] = {
     "threshold": "generic.threshold",
     "ratchet": "generic.ratchet",
     "structural": "generic.structural",
     "codecheck": "generic.codecheck",
+    "parse": "generic.parse",
 }
 """Catalogue key of the last-level fallback per finding kind; overridable like any other."""
+
+VARIANT_SEPARATOR: Final = "/"
+"""Joins a rule to the construct a finding names: ``analysis.parse_error/type_params``.
+
+A ``/`` rather than a ``.``, so a variant key can never be mistaken for -- or collide with --
+a rule name: ``.`` is the rule grammar's own separator and ``analysis.parse_error.type_params``
+would parse as the analysis rule ``parse_error.type_params``, which does not exist.
+"""
+
+PARSE_CONSTRUCTS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    ("type_params", re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+\w+\s*\[")),
+    ("type_alias", re.compile(r"^\s*type\s+\w+\s*[\[=]")),
+    ("except_star", re.compile(r"^\s*except\s*\*")),
+)
+"""The constructs Understand 6.5.1204 refuses, matched against the line the parse stopped at.
+
+**Measured, one file per construct, with a Python 3 interpreter on ``PATH``** -- which matters,
+because without one Understand analyses Python 2 and a far wider set of ordinary code fails
+(task 11.10). Under Python 3 these four declarations, and no others of the thirteen tried,
+aborted the parse::
+
+    def generic[T](x: T) -> T:   expected token '(' at token [        line 1
+    class Box[T]:                expected token ':' at token [        line 1
+    type Alias = int             expected newline at token Alias      line 1
+    except* ValueError:          expected token ':' at token *        line 4
+
+The nine that parse cleanly are worth recording too, because three of them look like the same
+family and are not: ``match``/``case``, ``except`` without the star, an f-string with nested
+same quotes (PEP 701), ``[first, *rest]``, ``{**a, "b": b}``, the walrus, positional-only
+parameters, parenthesized context managers, and ``int | None`` annotations. ``[first, *rest]``
+is the one to remember: it *does* fail under the Python 2 dialect, which is how task 10.4 came
+to record it as a hazard, and it is not a 3.12 problem at all.
+
+Matched on the source line rather than on ``und``'s message because the message for the type
+alias names the alias (``at token Alias``) and not the construct, so three of the four would be
+identifiable from it and the fourth would not. The order is irrelevant -- no line can match two
+of these -- but the anchors are not: leading whitespace and then the keyword itself keeps
+``mytype x = 1`` out of it, as far as looking at one line can.
+"""
 
 _LAST_RESORT: Final = (
     "fix the code the finding names so the rule holds; do not relax the limit to hide it"
@@ -197,6 +255,38 @@ _SHARED_METRIC_HINTS: Final[dict[str, str]] = {
 }
 """Metrics that appear in several scopes and read the same way in all of them."""
 
+_PARSE_HINTS: Final[dict[str, str]] = {
+    PARSE_ERROR_RULE: (
+        "Understand stopped reading this file at the line named and never saw the rest of it, "
+        "so nothing below that line was checked: rewrite the construct there in a spelling "
+        "Understand 6.5 parses, then re-run. Suppressing the finding leaves the file "
+        "unmeasured, which is the state that lets a real violation through"
+    ),
+    f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}type_params": (
+        "PEP 695 type parameters: Understand 6.5 cannot parse a type-parameter list, and one "
+        "of them costs the rest of the file. Declare the variable explicitly instead -- "
+        '`T = TypeVar("T")` at module level, then `def generic(x: T) -> T:` and '
+        "`class Box(Generic[T]):` -- which is the same type with a spelling the analysis reads"
+    ),
+    f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}type_alias": (
+        "PEP 695 `type X = ...`: Understand 6.5 cannot parse the `type` statement, and it "
+        "costs the rest of the file. Write the alias as an assignment instead -- "
+        "`X: TypeAlias = ...`, or a plain `X = ...` -- which means the same thing to a type "
+        "checker and leaves the file readable"
+    ),
+    f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}except_star": (
+        "PEP 654 `except*`: Understand 6.5 cannot parse it, and it costs the rest of the "
+        "file. Catch the group with a plain `except ExceptionGroup as group:` and dispatch on "
+        "its `.exceptions` inside, until the analyser catches up"
+    ),
+}
+"""What to do about each construct :data:`PARSE_CONSTRUCTS` recognises (req 7.2).
+
+Every one of them names the *rewrite*, not the diagnosis, because the finding's message
+already carries Understand's own words. None of them says "ignore it": a file that does not
+parse is a file that was not checked, and the remedy for that is never a configuration key.
+"""
+
 _GENERIC_HINTS: Final[dict[str, str]] = {
     GENERIC_KEYS["threshold"]: (
         "the value is outside its limit: change the code until the metric falls back inside "
@@ -214,6 +304,10 @@ _GENERIC_HINTS: Final[dict[str, str]] = {
         "fix the flagged line as the check's description in Understand explains (the finding "
         "carries the check name); switch the check off in configuration only by team decision"
     ),
+    GENERIC_KEYS["parse"]: (
+        "this file was not read, so nothing in it was checked: make it parse before trusting "
+        "any result about it"
+    ),
 }
 
 DEFAULT_CATALOGUE: Final[dict[str, str]] = {
@@ -222,6 +316,7 @@ DEFAULT_CATALOGUE: Final[dict[str, str]] = {
     **_FILE_HINTS,
     **_PROJECT_HINTS,
     **_STRUCTURE_HINTS,
+    **_PARSE_HINTS,
     **_SHARED_METRIC_HINTS,
     **_GENERIC_HINTS,
 }
@@ -238,22 +333,37 @@ class HintCatalogue:
     def hint(self, rule: str, finding: Finding) -> str:
         """The remediation text for ``rule``, most specific level first.
 
-        ``finding`` supplies the kind that selects the generic fallback; the lookup itself
-        follows ``rule``, so a caller may ask for the text of a rule other than the one the
-        finding carries.
+        ``finding`` supplies the kind that selects the generic fallback and the construct that
+        selects a variant; the lookup itself follows ``rule``, so a caller may ask for the text
+        of a rule other than the one the finding carries.
         """
-        for key in _keys(rule, finding.kind):
+        for key in _keys(rule, finding):
             text = self._hints.get(key)
             if text:
                 return text
         return _LAST_RESORT
 
 
-def _keys(rule: str, kind: FindingKind) -> Iterator[str]:
-    """The catalogue keys to try, in order: the rule, its name part, then the generic key."""
+def construct_of(source_line: str) -> str:
+    """Which of :data:`PARSE_CONSTRUCTS` ``source_line`` declares, or ``""`` for none.
+
+    A pure function of one line of text, so the caller that has the analysed source -- the
+    check pipeline -- decides where the line comes from and this module stays a catalogue.
+    """
+    for name, pattern in PARSE_CONSTRUCTS:
+        if pattern.match(source_line):
+            return name
+    return ""
+
+
+def _keys(rule: str, finding: Finding) -> Iterator[str]:
+    """The catalogue keys to try: the variant, the rule, its name part, then the generic key."""
+    construct = finding.details.get("construct")
+    if isinstance(construct, str) and construct:
+        yield f"{rule}{VARIANT_SEPARATOR}{construct}"
     yield rule
     yield from _name_keys(rule)
-    yield GENERIC_KEYS[kind]
+    yield GENERIC_KEYS[finding.kind]
 
 
 def _name_keys(rule: str) -> tuple[str, ...]:

@@ -71,7 +71,13 @@ from scitools_hook.understand.fake import (
     fixture_env,
     fixture_problem,
 )
-from scitools_hook.understand.locator import WORKER_PATH, discover, verify
+from scitools_hook.understand.locator import (
+    WORKER_PATH,
+    chosen_interpreter,
+    discover,
+    pinned_python,
+    verify,
+)
 from scitools_hook.understand.und_cli import UndCli
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
@@ -92,6 +98,20 @@ NO_ANSWER: Final = "the probe ran but did not report an API version"
 NO_UPYTHON: Final = "this installation ships no upython executable"
 """Not a failure of the probe: there is nothing to probe. Reported as its own reason."""
 
+PYTHON_PROBE: Final = "import sys; print(sys.version.split()[0])"
+"""Asked of the pinned interpreter itself, because its path cannot answer for it.
+
+A frozen build makes ``sys.executable`` the Gate's own executable, and a path alone cannot
+tell that from an interpreter. Running it can, and the answer is the one thing that matters:
+a major version of 3 is what stops ``und`` analysing Python 2.
+"""
+
+PY3_PREFIX: Final = "3."
+"""What the pinned interpreter must report. Understand's fallback is binary, so this is too."""
+
+PIN_PROBLEM: Final = "the python und would analyse with is unusable"
+"""Requirement 1.5's newest field, and the one that produces false negatives when wrong."""
+
 Caught = (GateError, OSError, subprocess.SubprocessError)
 """How an environment breaks. A defect in the Gate is not in this tuple and is not caught."""
 
@@ -100,6 +120,27 @@ class ApiProbe(DataModel):
     """What one API mode answered when it was asked to load Understand (req 1.2, 1.5)."""
 
     mode: ApiModeName
+    ok: bool = False
+    version: str = ""
+    detail: str = ""
+
+
+class PythonPin(DataModel):
+    """The interpreter ``und`` will analyse Python sources with (req 1.5, tasks 11.10/11.12).
+
+    Reported whether it is healthy or not, and reported by *running* it: ``und`` decides the
+    Python dialect by executing a bare ``python`` off ``PATH`` and falls back to a **Python 2**
+    model when it cannot, which costs every routine after the first Python-3-only construct in
+    a file -- silently, because an absent entity breaks no threshold. The Gate supplies that
+    ``python`` itself (:func:`~scitools_hook.understand.locator.pinned_python`), so this row
+    says which interpreter is behind the link and what it answered when asked its version.
+
+    ``ok`` is false whenever the pin could not be built, could not be run, or answered
+    anything but a 3.x version; each of those is also a ``problems`` entry, because each of
+    them ends with a run that reports success over code it never read.
+    """
+
+    interpreter: Path | None = None
     ok: bool = False
     version: str = ""
     detail: str = ""
@@ -124,6 +165,7 @@ class UnderstandDiagnosis(DataModel):
     license: LicenseStatus | None = None
     probes: list[ApiProbe] = []
     api_mode: ApiModeName | None = None
+    python: PythonPin | None = None
 
 
 class GitStatus(DataModel):
@@ -329,12 +371,65 @@ def _understand(
             problems.append(unusable)
             return UnderstandDiagnosis(env=fixture_env(fixtures)), None
         return _fixture_diagnosis(fixtures), FixtureApiRunner(fixtures)
+    pin = _python_pin(problems)
     try:
         found = discover(options.env, options.scitools_home, settings.understand.home)
     except UnderstandNotFoundError as missing:
         problems.append(_missing_problem(missing))
-        return UnderstandDiagnosis(), None
-    return _diagnose(found, settings.understand.api_mode, options, problems)
+        return UnderstandDiagnosis(python=pin), None
+    return _diagnose(found, settings.understand.api_mode, options, problems, pin)
+
+
+def _python_pin(problems: list[str]) -> PythonPin:
+    """Which interpreter ``und`` will analyse Python with, decided *and* run (req 1.5).
+
+    Asked before the installation is even located, because it is a fact about this process
+    rather than about the install, and because it is the one field of the diagnosis whose
+    failure mode is a *green* run: with no usable ``python`` the analysis silently drops
+    every routine after the first Python-3-only construct in each file.
+
+    The fixture seam never reaches here -- it starts no processes at all -- so the probe
+    below is only ever run where a real ``und`` would be.
+    """
+    try:
+        interpreter = chosen_interpreter()
+    except GateError as unpinnable:
+        problems.append(f"{PIN_PROBLEM}: {unpinnable}")
+        return PythonPin(detail=str(unpinnable))
+    version, detail = _ask_interpreter(interpreter)
+    if not version.startswith(PY3_PREFIX):
+        problems.append(
+            f"{PIN_PROBLEM}: {interpreter} answered "
+            f"{version or detail or 'nothing'} rather than a 3.x version, so und would "
+            "analyse Python 2 and lose every routine after a Python 3 construct"
+        )
+        return PythonPin(interpreter=interpreter, version=version, detail=detail)
+    return PythonPin(interpreter=interpreter, ok=True, version=version)
+
+
+def _ask_interpreter(interpreter: Path) -> tuple[str, str]:
+    """Run the pin exactly as ``und`` will -- through the link -- and read its version back.
+
+    Through the link, not through ``interpreter`` itself, because the link is what ``und``
+    executes and it is the half that can be broken: an unwritable temporary directory, a
+    filesystem that refuses symbolic links, a target this user may read but not execute.
+    Asking the interpreter directly would certify a pin the run never uses.
+    """
+    try:
+        with pinned_python(interpreter) as pinned:
+            done = subprocess.run(
+                [str(pinned.link), "-c", PYTHON_PROBE],
+                input="",
+                capture_output=True,
+                text=True,
+                timeout=PROBE_TIMEOUT_S,
+                check=False,
+            )
+    except Caught as broken:
+        return "", str(broken)
+    if done.returncode != 0:
+        return "", f"exited {done.returncode}: {done.stderr.strip()}"
+    return done.stdout.strip(), done.stderr.strip()
 
 
 def _fixture_diagnosis(fixtures: Path) -> UnderstandDiagnosis:
@@ -356,7 +451,11 @@ def _missing_problem(missing: UnderstandNotFoundError) -> str:
 
 
 def _diagnose(
-    found: UnderstandEnv, preferred: ApiMode, options: ContextOptions, problems: list[str]
+    found: UnderstandEnv,
+    preferred: ApiMode,
+    options: ContextOptions,
+    problems: list[str],
+    pin: PythonPin,
 ) -> tuple[UnderstandDiagnosis, ApiRunner | None]:
     """Run everything a found installation can be asked, then replay the mode decision."""
     # A shorter ceiling than the wrapper's own 900 s: this is the command an operator runs
@@ -377,6 +476,7 @@ def _diagnose(
             license=license_status,
             probes=answers,
             api_mode=None if env is None else env.api_mode,
+            python=pin,
         ),
         None if env is None else ApiRunner(env, options.log),
     )
