@@ -101,7 +101,7 @@ superclass raises it. No hint in the catalogue asks for another inheritance laye
 | `structure.file_cycle` | error | A strongly connected component of two or more files in the after-side dependency graph, that is not contained in any before-side component |
 | `structure.arch_cycle` | error | The same, between architecture nodes |
 | `structure.layer` | error | A **new** edge that a declared layer rule does not allow |
-| `structure.new_dependencies` | error | A file that gained more than `max_new_dependencies_per_file` distinct new targets (default 5) |
+| `structure.new_dependencies` | error | A file that gained more than `max_new_dependencies_per_file` distinct new targets (default 5), not counting targets that hold no code |
 | `structure.coupling` | error | More references between two architecture nodes than a declared rule allows |
 | `structure.fan_in` | warning | A file or class depended on by more than the limit |
 | `structure.fan_out` | warning | A file or class depending on more than the limit, **and** any affected entity whose fan-out grew |
@@ -112,6 +112,23 @@ Fan defaults: `file_fan_in` 50, `file_fan_out` 20, `class_fan_in` 30, `class_fan
 Fan-out is ratcheted; **fan-in is not**, because being used more is not a regression. An
 entity that grew *and* broke its limit yields both findings. A direction with no configured
 limit is switched off entirely, ratchet included.
+
+### A target with no code in it is not a dependency
+
+`structure.new_dependencies` skips any target whose `CountLineCode` is 0 — a package
+initialiser an import merely *traverses*, rather than one it uses.
+
+Measured on this repository: a new test module importing four things scored **six**
+dependencies, two of which were `src/scitools_hook/__init__.py` and
+`src/scitools_hook/cli/__init__.py`. The second is one line of docstring; Understand reports
+`CountLineCode` 0, `CountStmt` 0 and no declaration of any kind for it. Counting it left a new
+file in a nested package a real budget of two or three imports against a limit of five, which
+made the rule refuse the ordinary act of adding a module with a test.
+
+The test is *no code*, not *named `__init__.py`*: it is language-agnostic, and an initialiser
+that re-exports an API has code and goes on counting. A file the analyser could not read is
+never treated as empty — its metrics are absent rather than zero, and dropping its edges would
+be a coupling the gate quietly stopped measuring.
 
 A cycle that grew a member is reported, because `{a, b, c}` is no subset of `{a, b}` — the
 change made it worse. Self-loops are excluded. Each cycle finding names its members and the

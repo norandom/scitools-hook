@@ -11,7 +11,27 @@ targets*, not references: Understand emits one edge per pair and reference kind,
 growing reference count on a dependency the file already had is not a new dependency. A new
 self-reference is not one either, for the same reason it is not a cycle (req 6.1). Only the
 files of the affected set are counted; another file's new dependencies are not this change's
-doing. ``before_edges = None`` is whole-project mode: there is no before side, so a file's
+doing.
+
+**A target holding no code at all does not count**, which :func:`namespace_targets` decides
+and the caller passes in. Measured on this repository: a new test module importing four things
+scored six dependencies, and two of the six were ``src/scitools_hook/__init__.py`` and
+``src/scitools_hook/cli/__init__.py`` -- package initialisers an import *traverses* rather
+than uses. ``cli/__init__.py`` is one line of docstring; Understand reports ``CountLineCode``
+0, ``CountStmt`` 0 and no declaration of any kind for it, and calling that a coupling makes
+the budget for a new file in a nested package two or three real imports rather than five. It
+is the same shape of correction as :attr:`~scitools_hook.models.snapshot.DepEdge.import_time`:
+the edge is still there and still reported everywhere else, and the one rule whose question it
+answers wrongly stops asking it.
+
+The test is "no code", not "is named ``__init__.py``": it is language-agnostic, and an
+initialiser that re-exports an API has code and goes on counting -- ``skills/__init__.py``,
+which is nothing but a package initialiser, keeps its edge because it declares a class and
+three functions. A file the analyser could not read is **never** treated as empty, because
+its metrics are absent rather than zero and silently dropping its edges would be a coupling
+the gate stopped measuring without saying so.
+
+``before_edges = None`` is whole-project mode: there is no before side, so a file's
 whole dependency set is reported as an inventory and the message drops the word *new*
 (req 4.8).
 
@@ -34,10 +54,49 @@ from collections.abc import Collection, Sequence
 from scitools_hook.analysis.structure.graph import DependencyGraph
 from scitools_hook.config.models import CouplingRule, Severity
 from scitools_hook.models.findings import Finding, structure_rule
-from scitools_hook.models.snapshot import DepEdge
+from scitools_hook.models.snapshot import DepEdge, ProjectSnapshot
 
 _NEW_DEPS_RULE = structure_rule("new_dependencies")
 _COUPLING_RULE = structure_rule("coupling")
+
+
+def namespace_targets(snapshot: ProjectSnapshot) -> frozenset[str]:
+    """The files in ``snapshot`` that hold no code, and so cannot be depended upon.
+
+    A package initialiser whose whole content is a docstring is a namespace: importing
+    through it couples the importer to nothing. Emptiness is read off ``CountLineCode``,
+    which is 0 for such a file and non-zero for any initialiser that actually declares or
+    executes something.
+
+    A file whose ``CountLineCode`` is *missing* is not empty -- it is unmeasured, which is
+    what a parse error looks like -- so the metric has to be present and zero. That
+    distinction is the whole guard: treating an unreadable file as empty would drop its edges
+    from the count and report a smaller number over code nobody analysed.
+    """
+    return frozenset(
+        record.key.path
+        for record in snapshot.entities.values()
+        if record.key.scope == "file" and record.metrics.get("CountLineCode") == 0
+    )
+
+
+def without_namespace_targets(
+    edges: Sequence[DepEdge] | None, namespaces: Collection[str]
+) -> list[DepEdge] | None:
+    """``edges`` with every edge into a namespace file removed; ``None`` stays ``None``.
+
+    Applied to **both** sides before :func:`new_dependencies` sees them. Filtering the after
+    side alone would make a file that already depended on a namespace report that target's
+    disappearance as a gain of something else -- the arithmetic of a set difference rather
+    than anything about the change.
+
+    ``None`` is whole-project mode and has to survive the filter as ``None``: it means "there
+    is no before side", which an empty list does not.
+    """
+    if edges is None:
+        return None
+    skip = frozenset(namespaces)
+    return [edge for edge in edges if edge.dst not in skip]
 
 
 def new_dependencies(
@@ -52,7 +111,9 @@ def new_dependencies(
     ``files`` is the affected set and ``max_new`` is
     ``structure.max_new_dependencies_per_file``; ``None`` there switches the rule off and the
     pipeline does not call this function at all. ``severity`` is
-    ``structure.new_dependencies_severity``. Findings come back in path order.
+    ``structure.new_dependencies_severity``. Edges to a target that holds no code are dropped
+    by :func:`without_namespace_targets` before they get here. Findings come back in path
+    order.
     """
     was = _targets_by_file(before_edges if before_edges is not None else [])
     now = _targets_by_file(after_edges)

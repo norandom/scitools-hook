@@ -69,7 +69,12 @@ from scitools_hook.analysis.structure.calls import (
     evaluate_reachable_complexity,
     find_call_cycles,
 )
-from scitools_hook.analysis.structure.coupling import evaluate_coupling, new_dependencies
+from scitools_hook.analysis.structure.coupling import (
+    evaluate_coupling,
+    namespace_targets,
+    new_dependencies,
+    without_namespace_targets,
+)
 from scitools_hook.analysis.structure.cycles import find_new_cycles
 from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
@@ -326,9 +331,10 @@ class CheckPipeline:
             rules.fan,
         )
         if rules.max_new_dependencies_per_file is not None:
+            empty = namespace_targets(after)
             findings += new_dependencies(
-                was_files,
-                after.file_edges,
+                without_namespace_targets(was_files, empty),
+                without_namespace_targets(after.file_edges, empty) or [],
                 affected.files,
                 rules.max_new_dependencies_per_file,
                 rules.new_dependencies_severity,
