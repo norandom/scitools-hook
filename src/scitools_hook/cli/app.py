@@ -32,6 +32,7 @@ from scitools_hook import __version__
 from scitools_hook.cli import agent_rules, baseline, check, common, config_cmd, db, doctor, hooks
 from scitools_hook.cli import explain as explain_cmd
 from scitools_hook.cli import recommend as recommend_cmd
+from scitools_hook.cli import skills as skills_cmd
 
 HELP = """Maintainability gate backed by SciTools Understand.
 
@@ -50,12 +51,17 @@ REGISTRARS = (
     db.register,
     hooks.register,
     agent_rules.register,
+    skills_cmd.register,
 )
-"""One registrar per module; requirement 12.1's ten subcommands come out of these nine.
+"""One registrar per module; requirement 12.1's ten subcommands come out of these ten.
 
 ``recommend`` is registered directly after ``baseline`` and that ordering is deliberate:
 ``--help`` lists commands in registration order, so the two measurements of a repository
 sit next to each other and their contrasting one-line help is read as a pair.
+
+``install-skills`` is registered last, beside ``agent-rules``: both hand something to an
+agent rather than measuring anything, and both are steps in enabling a repository rather
+than in running the gate.
 """
 
 

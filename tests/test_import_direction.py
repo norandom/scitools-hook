@@ -68,23 +68,26 @@ SUBPROCESS_TIMEOUT_S = 60.0
 
 # --- the matrix -------------------------------------------------------------------
 
-LEAF = frozenset({"__init__", "exit_codes", "errors", "paths"})
+LEAF = frozenset({"__init__", "exit_codes", "errors", "paths", "skills"})
 """The package leaf: modules that sit below every layer and may be imported by all of them.
 
 ``paths`` and ``exit_codes`` are here by decision, not by accident. ``paths`` was moved to
 the leaf because the same path-classification question is asked at four sites across
 ``config``, ``understand`` and ``runner``, and keeping one copy per layer is what let two of
 them go on using ``Path.exists()`` after the other two were fixed (tasks.md, 8.2 PLACEMENT).
-A leaf module earns its place by importing nothing from the package -- see
-:data:`ALLOWED`, where three of the four map to the empty set.
+``skills`` is here for the simplest reason of all: it is the two shipped SKILL.md documents
+and a reader for them, so it has nothing to import and nothing to be layered against.
+A leaf module earns its place by importing nothing from the package, which is why
+:data:`ALLOWED` derives their entries from this set rather than repeating them.
 """
 
 ALLOWED: dict[str, frozenset[str]] = {
     # The leaf tier. Empty means "no intra-package import at all": that is what makes a
-    # module safe to import from everywhere without creating a direction to enforce.
-    "__init__": frozenset(),
-    "exit_codes": frozenset(),
-    "paths": frozenset(),
+    # module safe to import from everywhere without creating a direction to enforce. Read
+    # off LEAF rather than listed again, so the membership and the allowance cannot drift
+    # apart -- a leaf added to one list and not the other used to be a silent hole.
+    # `errors` is the single leaf with an edge, so it keeps its own entry.
+    **dict.fromkeys(LEAF - {"errors"}, frozenset[str]()),
     "errors": frozenset({"exit_codes"}),
     # The layers, bottom to top. Every layer may also import itself; that is implicit.
     "config": LEAF,

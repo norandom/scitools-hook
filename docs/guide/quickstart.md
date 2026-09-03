@@ -57,6 +57,26 @@ changing a limit never means reinstalling it. If a `pre-commit` hook was already
 kept beside the shim as `pre-commit.scitools-hook-chained` and run at the end, so installing
 the gate does not switch off whatever you had.
 
+## Give the agents the rules and the skills
+
+Two more commands finish enabling a repository. Neither needs Understand:
+
+```bash
+scitools-hook agent-rules --write AGENTS.md   # the limits, where your agent already reads
+scitools-hook install-skills                  # the skills, at .agents/skills
+```
+
+```console
+wrote the rules block into AGENTS.md
+installed: scitools-gate at /tmp/pricing/.agents/skills/scitools-gate/SKILL.md
+installed: scitools-improve at /tmp/pricing/.agents/skills/scitools-improve/SKILL.md
+```
+
+`scitools-gate` drives the CLI on a change; `scitools-improve` works an already-complex
+repository back down, one commit at a time. Use `--dir .claude/skills` for Claude Code, or any
+other path your assistant reads. Both commands are idempotent, so they belong in whatever
+script sets a repository up. See [Working with agents](agents.md).
+
 ## Now write the change an agent writes
 
 Ask for order settlement, follow up twice, and you get `pricing/settle.py`:

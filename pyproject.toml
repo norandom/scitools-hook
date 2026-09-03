@@ -33,7 +33,7 @@ packages = ["src/scitools_hook"]
 # The sdist is a published file. Without this it carried the vendored Dagger SDK (52 files,
 # +320 KB, measured by diffing the tarball before and after `dagger develop`) plus the
 # agent-facing directories, none of which anyone installing this package needs.
-exclude = [".dagger/module/sdk", ".claude", ".kiro", "CLAUDE.md"]
+exclude = [".dagger/module/sdk", ".agents", ".claude", ".kiro", "CLAUDE.md"]
 
 [dependency-groups]
 dev = [

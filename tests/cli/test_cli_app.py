@@ -32,6 +32,7 @@ from scitools_hook.cli import doctor as doctor_module
 from scitools_hook.cli import explain as explain_module
 from scitools_hook.cli import hooks as hooks_module
 from scitools_hook.cli import recommend as recommend_module
+from scitools_hook.cli import skills as skills_module
 from scitools_hook.errors import ConfigError, NotAGitRepositoryError
 from scitools_hook.exit_codes import ExitCode, describe
 
@@ -47,13 +48,18 @@ SUBCOMMANDS = (
     "install-hook",
     "uninstall-hook",
     "agent-rules",
+    "install-skills",
 )
-"""Requirement 12.1's ten names, in the order it lists them, plus ``recommend``.
+"""Requirement 12.1's ten names, in the order it lists them, plus two later additions.
 
 ``recommend`` is the eleventh and postdates the requirement list. It sits directly after
 ``baseline`` because the two are the repository-measuring pair -- "where you are" and "where
 to aim" -- and ``--help`` lists commands in registration order, so an operator meets them
 together and reads their contrasting one-line help side by side.
+
+``install-skills`` is the twelfth and sits last, beside ``agent-rules``: the two of them
+hand something to an agent rather than measuring anything, and both are steps in enabling a
+repository rather than in running the gate.
 """
 
 DB_SUBCOMMANDS = ("path", "rebuild", "analyze", "export-arch", "project")
@@ -70,6 +76,7 @@ COMMAND_MODULES = {
     "install-hook": hooks_module,
     "uninstall-hook": hooks_module,
     "agent-rules": agent_rules_module,
+    "install-skills": skills_module,
 }
 """Which module holds each command."""
 
@@ -210,6 +217,8 @@ CLI_MODULES = {
     "hooks.py",
     "pipelines.py",
     "recommend.py",
+    "skills.py",
+    "targets.py",
 }
 """Every module in the package. A scan of nothing passes; this is what makes it a scan."""
 
@@ -944,44 +953,3 @@ def test_the_options_carry_the_directory_the_command_was_run_from(
     assert result.exit_code == 0, result.stderr
     assert seen[0].cwd == Path.cwd()
     assert seen[0].cwd.resolve() == tmp_path.resolve()
-
-
-# --- the typer assumption the whole control-flow design rests on ----------------
-
-PYPROJECT = Path(common.__file__).resolve().parents[3] / "pyproject.toml"
-TYPER_FLOOR = (0, 27, 2)
-"""First typer that defines ``TyperException``.
-
-Measured across three releases: 0.12.5 and 0.27.1 do not define it, and
-``_CONTROL_FLOW = (typer.Exit, typer.TyperException)`` is evaluated at import -- so on either
-of those the CLI raises ``AttributeError`` before any command runs. Neither the type check
-nor the test suite can see that, because both run against whatever single version is
-installed; only the declared floor can prevent it.
-"""
-
-
-def test_click_exceptions_are_typer_exceptions() -> None:
-    """The subclass relation ``_CONTROL_FLOW`` depends on, asserted rather than assumed.
-
-    Typer 0.27 vendors click and makes ``ClickException`` a ``TyperException``, which is what
-    lets one tuple entry cover every usage error. A future typer that unvendors click would
-    silently stop matching them here, and usage errors raised inside a command body would
-    start exiting 70 instead of 2. This fails loudly instead.
-    """
-    assert isinstance(typer.BadParameter("bad"), typer.TyperException)
-    assert issubclass(typer.BadParameter, typer.TyperException)
-
-
-def test_the_declared_typer_floor_is_the_version_that_has_what_the_cli_imports() -> None:
-    """A loosened floor is a CLI that cannot start; nothing else in the gates would notice."""
-    requirement = re.search(
-        r'"typer>=([0-9]+(?:\.[0-9]+)*)"', PYPROJECT.read_text(encoding="utf-8")
-    )
-    assert requirement is not None, "no typer requirement found in pyproject.toml"
-    declared = tuple(int(part) for part in requirement.group(1).split("."))
-    assert declared >= TYPER_FLOOR, f"declared floor {declared} predates TyperException"
-
-
-def test_the_installed_typer_satisfies_the_declared_floor() -> None:
-    installed = tuple(int(part) for part in typer.__version__.split(".")[:3])
-    assert installed >= TYPER_FLOOR

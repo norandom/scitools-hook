@@ -140,6 +140,27 @@ Options:
 Records the worst current value per ratcheted rule. Only useful with
 `baseline.adaptive = true`. Do not commit a baseline captured by accident.
 
+## `recommend`
+
+Measure this repository and propose thresholds that fit it, with the cost of each.
+
+```console
+Usage: scitools-hook recommend [OPTIONS]
+
+Options:
+  --target SHARE  Share of a scope's entities a limit must contain to fit (0 < share <= 1).
+  --toml          Print only the configuration lines to paste, without the evidence report.
+  --output PATH   Write the report here instead of standard output.
+```
+
+Not a baseline. `baseline` records **where you are** — today's worst value per rule, so
+existing debt reports as `pre-existing`. `recommend` says **where to aim**: for every ceiling
+in force, how much of the repository is already inside it, what each candidate limit would
+cost in entities reported, and who the worst offenders are. A limit that already fits is
+reported `keep`.
+
+It writes nothing and applies nothing. Paste what you agree with.
+
 ## `init`
 
 Write a configuration file for this repository.
@@ -231,6 +252,36 @@ Options:
 The markers are `<!-- scitools-hook:begin -->` and `<!-- scitools-hook:end -->`. Re-running
 replaces the block; everything else in the file is preserved. See
 [Working with agents](../guide/agents.md).
+
+## `install-skills`
+
+Install the agent skills that drive this tool into a repository.
+
+```console
+Usage: scitools-hook install-skills [OPTIONS]
+
+Options:
+  --dir DIR  Write the skills here instead of .agents/skills.
+  --force    Replace a SKILL.md that differs from the shipped one.
+```
+
+Writes two documents an agent host can load:
+
+| Skill | Answers |
+| --- | --- |
+| `scitools-gate` | *May this change land?* Preconditions, `check`, `explain`, the exit-code contract. |
+| `scitools-improve` | *How does this repository get easier to change?* The baseline loop, one entity per commit. |
+
+The default location is `.agents/skills`, which is vendor-neutral, and is resolved against
+the **repository root** so the command works from any subdirectory. `--dir` is resolved
+against the directory you typed it in, the same asymmetry `baseline --file` draws.
+
+Running it twice writes nothing the second time. A `SKILL.md` that differs from the shipped
+one is refused with exit 2 rather than overwritten — the skills are documents an operator may
+have edited — and `--force` takes the shipped version back.
+
+It needs no Understand installation and no repository. See
+[Working with agents](../guide/agents.md#the-skills).
 
 ## `db`
 

@@ -41,6 +41,21 @@ uv tool install ./scitools_hook-0.1.0a1-py3-none-any.whl
 `scitools-hook` needs an existing SciTools Understand installation (`und` and the
 bundled Python API). It never installs Understand for you.
 
+## Enable a repository
+
+```bash
+scitools-hook init --detect                   # a configuration, from evidence in the repo
+scitools-hook baseline                        # today's worst value per rule
+scitools-hook install-hook                    # the pre-commit shim
+scitools-hook agent-rules --write AGENTS.md   # the limits, where your agent already reads
+scitools-hook install-skills                  # the skills, at .agents/skills
+```
+
+The last one writes `scitools-gate` (drive the CLI on a change) and `scitools-improve` (work
+a grown-over repository back down, one commit at a time) as `SKILL.md` documents. They ship
+inside the package, so nothing here needs this project checked out. Use
+`--dir .claude/skills` for Claude Code. Every command above is idempotent.
+
 > **Note:** the PyPI package named `understand` is unrelated to SciTools Understand.
 > Do not `pip install understand`; this tool uses the API shipped inside your
 > Understand installation.

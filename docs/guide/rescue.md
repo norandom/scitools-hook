@@ -334,3 +334,24 @@ Do the same, and a year from now somebody can tell which of your overrides are s
 5. severity = "warning"  on project-scope rules     # a commit cannot act on them
 6. scitools-hook baseline && install-hook        # the ratchet carries the rest
 ```
+
+## After the rescue: working the number down
+
+Everything above is about stopping the bleeding — the repository is gated, existing debt is
+`pre-existing`, and nothing new gets worse. It leaves the debt in place, by design.
+
+Lowering it deliberately is a different loop, and it is what the `scitools-improve` skill
+does:
+
+```bash
+scitools-hook install-skills
+```
+
+Then `/scitools-improve` in your agent. It surveys once, picks one entity by value relative
+to its limit, changes it, runs **your** test suite, commits, and tightens the baseline with
+`check --all` — which can only narrow it. See
+[Working with agents](agents.md#scitools-improve) for the five phases and the two failures
+they are shaped around.
+
+The point is not to reach zero findings. It is that each commit leaves one routine easier to
+reason about than it was, and the ceiling can never drift back up.

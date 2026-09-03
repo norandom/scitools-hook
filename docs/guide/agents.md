@@ -5,8 +5,10 @@
 An agent that learns a limit from a rejected commit has already wasted the work. Give it the
 numbers before it writes the code, and a command it can run on its own output.
 
-Two things do that: `agent-rules`, which writes the effective limits into the file your agent
-already reads, and a skill that lets the agent drive the whole CLI.
+Three things do that: `agent-rules`, which writes the effective limits into the file your
+agent already reads, and two skills — `scitools-gate` to drive the CLI on a change, and
+`scitools-improve` to work a grown-over repository back down. `install-skills` puts both into
+the repository, so none of it depends on having this project checked out.
 
 ## `agent-rules --write`
 
@@ -226,10 +228,42 @@ The invariant to program against: **keep working until `blocking_count` is `0`.*
 count `findings`, because warnings and pre-existing violations are in there and neither
 decides a commit.
 
-## The Claude Code skill
+## The skills
 
-This repository ships a skill at `.claude/skills/scitools-gate/SKILL.md`. It gives an agent
-a protocol for driving the CLI rather than a list of commands:
+Two skills ship **inside the package**, so enabling a repository does not mean copying files
+out of a checkout you do not have:
+
+```bash
+scitools-hook install-skills
+```
+
+```console
+installed: scitools-gate at /your/repo/.agents/skills/scitools-gate/SKILL.md
+installed: scitools-improve at /your/repo/.agents/skills/scitools-improve/SKILL.md
+
+Your agent can now run /scitools-gate to check a change and /scitools-improve to lower this
+project's complexity one commit at a time.
+```
+
+`.agents/skills` is the vendor-neutral location. For a host that reads somewhere else, name
+it:
+
+```bash
+scitools-hook install-skills --dir .claude/skills
+```
+
+Running it twice writes nothing the second time, so it is safe in a setup script. A
+`SKILL.md` you have edited is refused rather than overwritten; `--force` takes the shipped
+version back.
+
+| Skill | Question it answers |
+| --- | --- |
+| `scitools-gate` | *May this change land?* |
+| `scitools-improve` | *How does this repository get easier to change?* |
+
+### `scitools-gate`
+
+It gives an agent a protocol for driving the CLI rather than a list of commands:
 
 - **Preconditions.** Run `doctor` and read three specific rows before trusting any result:
   the licence, the API mode, and the interpreter Understand will analyse with. An agent that
@@ -258,6 +292,56 @@ as a pass.
 | "The check exited 3, so there is nothing to fix." | Exit 3 means nothing was checked. It is not a pass. |
 | "Splitting the routine will trip `file.CountDeclFunction`." | It will not. Eight decomposition counts ship with the ratchet off. |
 | "The file has no findings, so it is clean." | Not if it is named in `parse_errors`. |
+
+### `scitools-improve`
+
+The gate stops a repository getting worse. It does not, on its own, make one better — and a
+project that has already grown past what an agent can reason about needs the second thing.
+
+`scitools-improve` is the iterative loop, and it is deliberately not a clean-up task. Its
+premise is the one on [The working set](../argument/working-set.md): every commit exists to
+shrink the neighbourhood a single change has to be understood in.
+
+Five phases, none of which assumes anything about your repository:
+
+1. **Record where you are.** `init --detect`, then `baseline`, committed on their own with no
+   code in the commit. It also checks `adaptive` under `[baseline]`, because **the default is
+   off and the loop does nothing without it** — off, the baseline is a fixed floor; on, the
+   effective limit is `min(configured, recorded)` and every whole-project run lowers a value
+   the code has beaten.
+2. **Decide where to aim.** `recommend`, whose output is proposed to a human and never
+   applied. The skill may not propose a line that *raises* a limit.
+3. **Survey, once per batch.** `check --all --show-highest`, plus a `jq` recipe that ranks by
+   value *relative to its limit*. Routine-scope metrics are picked before file-scope ones,
+   and churn (`git log`) breaks ties — complexity in a file nobody touches costs a model
+   nothing, because no model reads it.
+4. **One entity, one commit.** Read the `hint:`, change the code, **run the repository's own
+   tests** — the gate measures shape and has nothing to say about whether the code still
+   works — then `check --worktree`, stage, `check --staged`, commit with the movement in the
+   message.
+5. **Lock the gain in.** This is the part that is easy to get backwards:
+
+    | Command | What it does to the baseline |
+    | --- | --- |
+    | `check --all` (with `adaptive = true`) | **Narrows only.** Lowers every recorded value the run beat; never raises one. |
+    | `baseline` | **Replaces the file** — including values that got *worse*. |
+
+    So refinement tightens with `check --all`, and `git diff` on the baseline file is read
+    before it is staged. A value that went **up** in that diff is a limit you just relaxed.
+
+Two things in it exist to stop a specific failure:
+
+**The goal is not zero findings, and the skill says so before it says anything else.** An
+agent handed `1286 blocking` reads it as a to-do list and either grinds through it or gives
+up. `--all` is an inventory with no before side; the same findings are `pre-existing` under
+`--staged`. The framing it uses instead: *you are never asked to fix the 1286, you are
+forbidden from adding the 1287th.*
+
+**An explicit escape hatch.** Some routines cannot be simplified without a design change that
+is out of scope. Without permission to say so, an agent contorts the code until the number
+moves — three badly-named helpers that satisfy the metric and leave the repository worse. The
+skill's rule is that a short, honest list of what was not fixed beats a contorted change, and
+its per-session output format has a `NOT FIXED` field to put it in.
 
 ## The loop
 

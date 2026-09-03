@@ -33,12 +33,11 @@ from typing import Annotated, Final
 import typer
 
 from scitools_hook.analysis import baseline as baseline_rules
-from scitools_hook.cli import common
+from scitools_hook.cli import common, targets
 from scitools_hook.cli.config_cmd import effective_configuration
 from scitools_hook.config.models import Settings
-from scitools_hook.errors import ConfigError, ReportUndeliverableError
+from scitools_hook.errors import ConfigError
 from scitools_hook.models.findings import EffectiveThreshold
-from scitools_hook.paths import classify_file
 from scitools_hook.report.agent_rules import insert_between_markers, render_rules
 from scitools_hook.runner.baseline_store import BaselineStore, baseline_path
 from scitools_hook.runner.context import find_repository
@@ -108,26 +107,7 @@ def _merged(target: Path, snippet: str) -> str:
 def _existing(target: Path) -> str:
     """What is in ``target`` now, or ``""`` when it is not there yet.
 
-    A name that is taken by anything other than a regular file is refused rather than read:
-    a FIFO blocks in ``read_text`` with no writer, a directory raises where the message would
-    name the wrong problem, and a dangling symlink would have the block written wherever the
-    link points -- possibly outside the repository (req 2.2).
+    ``targets.read_existing`` holds the guard and the reason for it; ``insert_between_markers``
+    wants a string rather than an absence, so the two are distinguished only here.
     """
-    verdict = classify_file(target)
-    if verdict.absent:
-        return ""
-    if not verdict.usable:
-        raise ReportUndeliverableError(
-            f"cannot write to {target}: it {verdict.reason}",
-            key=WRITE_OPTION,
-            hint=UNUSABLE_HINT,
-        )
-    try:
-        return target.read_text(encoding="utf-8")
-    except (OSError, ValueError) as unreadable:
-        # ValueError covers a file that is not UTF-8 text: inserting into it would have to
-        # choose an error policy for bytes the operator wrote, and every choice is a silent
-        # edit of a file the Gate does not own.
-        raise ReportUndeliverableError(
-            f"cannot read {target}: {unreadable}", key=WRITE_OPTION, hint=UNUSABLE_HINT
-        ) from unreadable
+    return targets.read_existing(target, option=WRITE_OPTION, hint=UNUSABLE_HINT) or ""
