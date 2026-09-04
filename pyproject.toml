@@ -1,12 +1,11 @@
 [project]
 name = "scitools-hook"
-# 0.1.0a2: install-skills and the three shipped skills, the duplicate-definition rule,
-# and the new-dependency count no longer charging for package initialisers that hold no
-# code. src/scitools_hook/__init__.py carries its own literal
+# 0.1.0a3: a file that only just became readable no longer blocks on the violations it
+# revealed, and `--range A...B` compares from the merge base. src/scitools_hook/__init__.py carries its own literal
 # __version__, which the CLI prints for `--version`; the two are separate strings and
 # nothing in the tree ties them together (measured -- see the release notes in
 # .github/workflows/release.yml, whose verify step compares them and fails on a drift).
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Maintainability gate for git hooks and CI, backed by SciTools Understand."
 readme = "README.md"
 requires-python = ">=3.12"
