@@ -51,14 +51,13 @@ from scitools_hook.models.change import ChangeSummary
 from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot, Side
 from scitools_hook.report.markdown import Format, render_summary
 from scitools_hook.runner.context import RunContext
-from scitools_hook.runner.explain import (
+from scitools_hook.runner.explain import ExplainOptions, ExplainPipeline
+from scitools_hook.runner.pipeline import (
     OBJECT_ID,
     CommitRange,
-    ExplainOptions,
-    ExplainPipeline,
+    Selection,
     resolve_commit,
 )
-from scitools_hook.runner.pipeline import Selection
 from scitools_hook.understand.api_runner import Operation
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.fake import FixtureUndCli, fixture_env

@@ -49,7 +49,6 @@ and the GUI command of requirement 9.8, because both are true whether or not any
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,39 +64,21 @@ from scitools_hook.models.change import (
     GraphTarget,
     ImpactSet,
 )
-from scitools_hook.models.git import CommitTarget
-from scitools_hook.models.snapshot import DataModel, EntityKey
+from scitools_hook.models.git import CommitRange
+from scitools_hook.models.snapshot import EntityKey
 from scitools_hook.paths import classify_directory
 from scitools_hook.runner.context import RunContext
-from scitools_hook.runner.pipeline import AnalysisPlan, Engine, Selection, analysable, touched
+from scitools_hook.runner.pipeline import (
+    AnalysisPlan,
+    Engine,
+    Selection,
+    plan_range,
+)
 from scitools_hook.runner.pipeline import plan_selection as _plan_selection
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.graphs import GraphExporter
 from scitools_hook.understand.impact import ImpactExpander
 from scitools_hook.understand.snapshot import SnapshotExtractor
-
-RANGE_SEPARATOR: Final = ".."
-"""How requirement 9.1's ``--range A..B`` separates the two ends."""
-
-MERGE_BASE_SEPARATOR: Final = "..."
-"""``A...B``: the same question asked from the merge base, which is what reviewing a branch means.
-
-Refused by name until a session driving this tool reported it. The refusal's reasoning called
-``A...B`` git's *symmetric difference*, which is true of ``git log`` and **not** of ``git
-diff``: ``git diff A...B`` is ``merge-base(A, B)..B``, and that is exactly what a code review
-compares -- what this branch did, without the commits main gathered meanwhile. It is also
-what a pull request shows, and what this project's own documentation and agent skill told
-people to type, so the one form a reviewer reaches for first was the one form that failed.
-"""
-
-RANGE_KEY: Final = "range"
-"""The option a refusal about a range names, so the operator knows which one to fix."""
-
-RANGE_HINT: Final = (
-    "Write the range as BASE..HEAD, or BASE...HEAD to compare from the merge base, "
-    "where each end names one commit (a hash, a tag, a branch or a revision like HEAD~1)."
-)
-"""What an operator does about a range this module cannot read."""
 
 OUT_DIR_KEY: Final = "out"
 """The option a refusal about the graph destination names."""
@@ -105,40 +86,8 @@ OUT_DIR_KEY: Final = "out"
 OUT_DIR_HINT: Final = "Point --out at a writable directory, or leave it out to use the cache."
 """What an operator does about a graph destination the Gate will not write into."""
 
-OBJECT_ID: Final = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-"""A full git object id, sha-1 or sha-256; the same shape ``ShadowSync`` accepts as a key."""
-
 GRAPH_SCOPES: Final = frozenset({"routine", "class"})
 """What requirement 9.4 draws a butterfly graph of, and 9.5 expands the impact of."""
-
-
-class CommitRange(DataModel):
-    """The two commits requirement 9.1's ``--range BASE..HEAD`` names.
-
-    The ends are held as the operator typed them; :meth:`ExplainPipeline.run` resolves each to
-    an object id. Keeping the typed form is what lets a refusal quote it back.
-    """
-
-    base: str
-    head: str
-    from_merge_base: bool = False
-
-    @classmethod
-    def parse(cls, text: str) -> CommitRange:
-        """Read ``BASE..HEAD`` or ``BASE...HEAD``, or refuse with the forms expected (req 9.1).
-
-        The three-dot form is tried first, because ``"A...B".partition("..")`` yields a head
-        that begins with a dot and would otherwise be refused as malformed -- which is exactly
-        how this form used to fail.
-        """
-        for separator, merge_base in ((MERGE_BASE_SEPARATOR, True), (RANGE_SEPARATOR, False)):
-            base, found, head = text.partition(separator)
-            if not found:
-                continue
-            if not base or not head or "." in head[:1] or RANGE_SEPARATOR in head:
-                break
-            return cls(base=base, head=head, from_merge_base=merge_base)
-        raise ConfigError(f"{text!r} is not a commit range", key=RANGE_KEY, hint=RANGE_HINT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,20 +151,7 @@ class ExplainPipeline:
         knowing: the next ``check`` finds the after shadow synced from a commit rather than
         from the index, and a changed target kind forces a full re-sync of it.
         """
-        # Both ends are resolved first, in the order they were typed, so a typo is refused by
-        # name; the merge base is then taken from the two object ids, which leaves
-        # `merge-base` able to fail for one reason only -- histories that never met.
-        named = resolve_commit(repo, span.base)
-        head = resolve_commit(repo, span.head)
-        base = merge_base(repo, named, head) if span.from_merge_base else named
-        changes = tuple(repo.diff_names(base, head))
-        return AnalysisPlan(
-            mode="range",
-            changes=changes,
-            files=analysable(touched(changes), languages),
-            target=CommitTarget(commit=head),
-            before=base,
-        )
+        return plan_range(span, repo, languages)
 
     # --- the review aids ------------------------------------------------------------
 
@@ -307,57 +243,6 @@ class ExplainPipeline:
 
 
 # --- helpers ------------------------------------------------------------------------
-
-
-def merge_base(repo: GitRepo, left: str, right: str) -> str:
-    """The commit ``left`` and ``right`` diverged from, for ``--range A...B`` (req 9.1).
-
-    Resolved through ``git merge-base`` and then through :func:`resolve_commit`, so the answer
-    is checked to be a full object id by the same test every other end passes, and an
-    unrelated pair -- two histories with no common ancestor -- is refused with the range the
-    operator typed rather than failing later inside the shadow export.
-    """
-    result = repo._run(["merge-base", "--end-of-options", left, right])
-    answer = result.stdout.decode("utf-8", "replace").strip()
-    if result.rc != 0 or not answer:
-        raise ConfigError(
-            f"{left!r} and {right!r} have no common ancestor, so there is no merge base",
-            key=RANGE_KEY,
-            hint=RANGE_HINT,
-        )
-    return resolve_commit(repo, answer)
-
-
-def resolve_commit(repo: GitRepo, revision: str) -> str:
-    """The object id ``revision`` names, or the typed refusal naming what could not resolve.
-
-    ``^{commit}`` peels a tag or a tree to the commit the shadow will be exported from, so an
-    end that names something other than a commit is refused here rather than half-way through
-    a ``read-tree``. ``--end-of-options`` closes the argv against a revision that begins with a
-    dash (see the module docstring), and the *answer* is checked as well as the status: only a
-    full object id is accepted, because that is the only form ``ShadowSync`` will reuse as a
-    cache key, and because an option that slipped through would answer with something else.
-
-    A revision that does not resolve is a ``ConfigError`` rather than an analysis failure: the
-    operator typed a range that does not name two commits, and the exit code should say "fix
-    what you asked for", exactly as a ``--files`` entry outside the repository does.
-
-    This reaches through :class:`~scitools_hook.git.repo.GitRepo`'s own runner rather than
-    running git itself, so the call is still recorded for ``--verbose`` (req 12.8), still
-    bounded by the repository's timeout, and still made from the repository root. It belongs
-    on ``GitRepo`` as a method; task 8.4's boundary excludes ``git/repo.py`` while task 11.1
-    holds it, so it is written here and flagged for promotion.
-    """
-    result = repo._run(["rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"])
-    answer = result.stdout.decode("utf-8", "replace").strip()
-    if result.rc != 0 or not OBJECT_ID.fullmatch(answer):
-        raise ConfigError(
-            f"{revision!r} does not name a commit in {repo.root}: "
-            f"{result.stderr.strip() or 'git answered ' + (answer or 'nothing')}",
-            key=RANGE_KEY,
-            hint=RANGE_HINT,
-        )
-    return answer
 
 
 def _ranked(

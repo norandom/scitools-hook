@@ -89,6 +89,7 @@ Options:
   --worktree                   Analyse the working tree, staged or not.
   --all                        Analyse the whole project.
   --files PATH                 Analyse exactly these files; repeatable.
+  --range A..B                 Judge what happened between two commits.
   --format <human|json|sarif>  How to render the findings.  [default: human]
   --output PATH                Write the findings here instead of stdout.
   --sarif PATH                 Also write the findings here as SARIF 2.1.0.
@@ -239,16 +240,22 @@ process. Full output on the [Install](../guide/install.md#check-it-works) page.
 Usage: scitools-hook install-hook [OPTIONS]
 
 Options:
-  --force   Replace an existing pre-commit hook, keeping it and chaining to it.
-  --global  Use the user's global hooks path instead of this repository's.
+  --force     Replace an existing hook, keeping it and chaining to it.
+  --global    Use the user's global hooks path instead of this repository's.
+  --pre-push  Install the pre-push hook instead of the pre-commit one.
 ```
 
 ```console
 Usage: scitools-hook uninstall-hook [OPTIONS]
 
 Options:
-  --global  Use the user's global hooks path instead of this repository's.
+  --global    Use the user's global hooks path instead of this repository's.
+  --pre-push  Remove the pre-push hook instead of the pre-commit one.
 ```
+
+One hook per invocation, so each can be removed on its own. `--pre-push` runs
+`check --range <remote oid>..<local oid>` for every ref being pushed; see
+[the push boundary](../guide/hooks-and-ci.md#the-push-boundary).
 
 See [Hooks and CI](../guide/hooks-and-ci.md).
 

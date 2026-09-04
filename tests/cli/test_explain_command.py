@@ -21,11 +21,12 @@ from typer.testing import CliRunner
 from scitools_hook.cli import app as app_module
 from scitools_hook.cli import common, pipelines
 from scitools_hook.cli import explain as explain_module
+from scitools_hook.cli.change import flag_of
 from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.report.markdown import render_summary
-from scitools_hook.runner.explain import CommitRange, ExplainOptions
-from scitools_hook.runner.pipeline import Selection
+from scitools_hook.runner.explain import ExplainOptions
+from scitools_hook.runner.pipeline import CommitRange, Selection
 
 
 @pytest.fixture
@@ -160,7 +161,7 @@ def test_the_conflict_names_the_selection_flag_that_was_actually_given(
 
 def test_every_selection_mode_names_the_flag_the_shared_module_declares() -> None:
     """``flag_of`` derives the spelling; this is what makes the derivation a fact."""
-    derived = {explain_module.flag_of(mode) for mode in common.SelectionMode}
+    derived = {flag_of(mode) for mode in common.SelectionMode}
     assert derived == set(common.SELECTION_FLAGS.values())
 
 

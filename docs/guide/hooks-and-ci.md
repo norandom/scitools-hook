@@ -1,5 +1,46 @@
 # Hooks and CI
 
+## The push boundary
+
+`pre-commit` judges what is staged. `pre-push` judges what the commits being pushed did — at
+push time nothing is staged and the working tree is beside the point, so the only honest
+question is the range.
+
+```bash
+scitools-hook install-hook --pre-push
+```
+
+For each ref git offers, the shim runs `check --range <remote oid>..<local oid>`. Two cases
+carry no range and are reported rather than guessed at:
+
+| Case | What happens |
+| --- | --- |
+| A ref being **deleted** (local oid all zeros) | Nothing to judge; skipped silently. |
+| A branch the **remote does not have yet** (remote oid all zeros) | No before side. A note on stderr; not checked. Inventing a base would judge commits this push is not responsible for. |
+
+It is a separate hook from `pre-commit`, installed and removed on its own, so you can have
+either or both:
+
+```bash
+scitools-hook install-hook                 # the commit boundary
+scitools-hook install-hook --pre-push      # the push boundary
+scitools-hook uninstall-hook --pre-push    # and only that one
+```
+
+`SCITOOLS_HOOK_SKIP=1` and `SCITOOLS_HOOK_SOFT_FAIL=1` work as they do for `pre-commit`, and
+`git push --no-verify` skips every hook. Findings (exit 1) refuse the push whatever
+`SOFT_FAIL` says; only an infrastructure failure is downgradable.
+
+A chained `pre-push` hook is handed the ref list on its own standard input. The shim reads
+those lines with shell builtins and replays them — a hook that consumed them would leave the
+chained one believing nothing was pushed.
+
+!!! note "One ref's failure cannot mask another's"
+
+    The shim keeps *findings* and *could not run* apart rather than reducing them to a worst
+    status, so one ref's missing licence plus `SOFT_FAIL` cannot excuse another ref's real
+    findings.
+
 ## Two ways to install the hook
 
 ### Native git hook

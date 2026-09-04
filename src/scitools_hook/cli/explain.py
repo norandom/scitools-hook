@@ -37,25 +37,15 @@ from typing import Annotated, Final
 
 import typer
 
-from scitools_hook.cli import common, pipelines
+from scitools_hook.cli import change, common, pipelines
 from scitools_hook.errors import ConfigError
 from scitools_hook.report.markdown import Format, render_summary
-from scitools_hook.runner.explain import CommitRange, ExplainOptions
-from scitools_hook.runner.pipeline import Selection
+from scitools_hook.runner.explain import ExplainOptions
 
 HELP = "Explain what a change did to the code, for a reviewer or an agent."
 
-RANGE_OPTION: Final = "--range"
 OUT_OPTION: Final = "--out"
 GRAPHS_OPTION: Final = "--graphs"
-
-TARGET_KEY: Final = f"{RANGE_OPTION}/{common.SELECTION_KEY}"
-"""What a range-versus-selection conflict is about, carried on the error for a caller."""
-
-TARGET_HINT: Final = (
-    "a range explains what happened between two commits and the selection flags explain "
-    "what is happening now; pass one or the other"
-)
 
 OUT_KEY: Final = OUT_OPTION
 OUT_HINT: Final = (
@@ -93,7 +83,11 @@ FormatOption = Annotated[
 ]
 RangeOption = Annotated[
     str | None,
-    typer.Option(RANGE_OPTION, metavar="A..B", help="Explain what happened between two commits."),
+    typer.Option(
+        change.RANGE_OPTION,
+        metavar="A..B",
+        help="Explain what happened between two commits.",
+    ),
 ]
 GraphsOption = Annotated[
     bool,
@@ -139,41 +133,10 @@ def explain(
         env=options.env,
     )
     named = staged or worktree or all_ or bool(files) or bool(paths)
-    target = resolve_target(range_, selection, named=named)
+    target = change.resolve_target(range_, selection, named=named)
     asked = ExplainOptions(graphs=graphs, impact=impact, out_dir=graph_dir(out, graphs=graphs))
     summary = pipelines.assemble(options).explain().run(target, asked)
     common.emit_findings(render_summary(summary, VIEWS[output_format]), output)
-
-
-def resolve_target(
-    range_: str | None, selection: common.SelectionChoice, *, named: bool
-) -> Selection | CommitRange:
-    """The one change this run describes: a commit range, or a selection (req 9.1, 12.3).
-
-    ``named`` says whether a selection flag was actually given, which the resolved choice
-    cannot answer for itself -- it carries a *default* when none was. Without it, every
-    ``--range`` run would look like a conflict with the default selection.
-    """
-    if range_ is None:
-        return Selection(mode=selection.mode.value, files=list(selection.files))
-    if named:
-        raise ConfigError(
-            f"{RANGE_OPTION} cannot be combined with {flag_of(selection.mode)}: "
-            "they name different changes",
-            key=TARGET_KEY,
-            hint=TARGET_HINT,
-        )
-    return CommitRange.parse(range_)
-
-
-def flag_of(mode: common.SelectionMode) -> str:
-    """The option spelling that selects ``mode``.
-
-    Derived rather than looked up: every ``SelectionMode`` value is its flag without the
-    dashes, which is a relationship a test asserts against ``common.SELECTION_FLAGS`` rather
-    than a coincidence -- and deriving it leaves no branch that no input can reach.
-    """
-    return f"--{mode.value}"
 
 
 def graph_dir(out: Path | None, *, graphs: bool) -> Path | None:

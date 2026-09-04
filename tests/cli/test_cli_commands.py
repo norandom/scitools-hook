@@ -726,7 +726,7 @@ def test_uninstall_hook_on_a_clean_repository_is_a_success(
     builder = git_repo()
     result = invoke(["uninstall-hook"], cwd=builder.path, env=env_for(tmp_path))
     assert result.exit_code == int(ExitCode.OK), result.stderr
-    assert "no pre-commit hook" in result.stdout
+    assert "no scitools-hook shim" in result.stdout
 
 
 def test_uninstall_hook_refuses_a_hook_the_gate_did_not_write(

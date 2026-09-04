@@ -36,6 +36,7 @@ never saw answers with a valid, empty, entirely green document (live finding, 6.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -49,6 +50,9 @@ from scitools_hook.errors import ConfigError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.change import AffectedSet
 from scitools_hook.models.git import (
+    RANGE_HINT,
+    RANGE_KEY,
+    CommitRange,
     CommitTarget,
     IndexTarget,
     StagedChange,
@@ -153,6 +157,93 @@ def changes_of(selection: Selection, repo: GitRepo) -> list[StagedChange]:
     if selection.mode == "files":
         return [StagedChange(status="M", path=inside(name, repo.root)) for name in selection.files]
     return repo.staged_changes()
+
+
+# --- a range of commits (req 9.1), planned like a selection ------------------------
+
+OBJECT_ID: Final = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+"""A full git object id, sha-1 or sha-256; the same shape ``ShadowSync`` accepts as a key."""
+
+
+def merge_base(repo: GitRepo, left: str, right: str) -> str:
+    """The commit ``left`` and ``right`` diverged from, for ``--range A...B`` (req 9.1).
+
+    Resolved through ``git merge-base`` and then through :func:`resolve_commit`, so the answer
+    is checked to be a full object id by the same test every other end passes, and an
+    unrelated pair -- two histories with no common ancestor -- is refused with the range the
+    operator typed rather than failing later inside the shadow export.
+    """
+    result = repo._run(["merge-base", "--end-of-options", left, right])
+    answer = result.stdout.decode("utf-8", "replace").strip()
+    if result.rc != 0 or not answer:
+        raise ConfigError(
+            f"{left!r} and {right!r} have no common ancestor, so there is no merge base",
+            key=RANGE_KEY,
+            hint=RANGE_HINT,
+        )
+    return resolve_commit(repo, answer)
+
+
+def resolve_commit(repo: GitRepo, revision: str) -> str:
+    """The object id ``revision`` names, or the typed refusal naming what could not resolve.
+
+    ``^{commit}`` peels a tag or a tree to the commit the shadow will be exported from, so an
+    end that names something other than a commit is refused here rather than half-way through
+    a ``read-tree``. ``--end-of-options`` closes the argv against a revision that begins with a
+    dash (see the module docstring), and the *answer* is checked as well as the status: only a
+    full object id is accepted, because that is the only form ``ShadowSync`` will reuse as a
+    cache key, and because an option that slipped through would answer with something else.
+
+    A revision that does not resolve is a ``ConfigError`` rather than an analysis failure: the
+    operator typed a range that does not name two commits, and the exit code should say "fix
+    what you asked for", exactly as a ``--files`` entry outside the repository does.
+
+    This reaches through :class:`~scitools_hook.git.repo.GitRepo`'s own runner rather than
+    running git itself, so the call is still recorded for ``--verbose`` (req 12.8), still
+    bounded by the repository's timeout, and still made from the repository root. It belongs
+    on ``GitRepo`` as a method; task 8.4's boundary excludes ``git/repo.py`` while task 11.1
+    holds it, so it is written here and flagged for promotion.
+    """
+    result = repo._run(["rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"])
+    answer = result.stdout.decode("utf-8", "replace").strip()
+    if result.rc != 0 or not OBJECT_ID.fullmatch(answer):
+        raise ConfigError(
+            f"{revision!r} does not name a commit in {repo.root}: "
+            f"{result.stderr.strip() or 'git answered ' + (answer or 'nothing')}",
+            key=RANGE_KEY,
+            hint=RANGE_HINT,
+        )
+    return answer
+
+
+def plan_range(span: CommitRange, repo: GitRepo, languages: Sequence[str] | None) -> AnalysisPlan:
+    """What a run over ``span`` covers: both ends resolved, and the change between them.
+
+    Beside :func:`plan_selection` rather than in ``runner.explain``, because two commands ask
+    this question now. ``explain --range`` describes what a range did; ``check --range`` judges
+    it, which is what a pre-push hook needs -- at push time nothing is staged and the working
+    tree is irrelevant, so the only honest question is what the commits being pushed did.
+
+    Both ends are resolved in the order they were typed, so a typo is refused by name; the
+    merge base is then taken from the two object ids, which leaves ``merge-base`` able to fail
+    for one reason only -- histories that never met.
+
+    Both shadows are commit targets, which is what makes ``SyncState`` record
+    ``after_target = "commit"`` for this run. That is deliberate and it has a price worth
+    knowing: the next ``check`` finds the after shadow synced from a commit rather than from
+    the index, and a changed target kind forces a full re-sync of it.
+    """
+    named = resolve_commit(repo, span.base)
+    head = resolve_commit(repo, span.head)
+    base = merge_base(repo, named, head) if span.from_merge_base else named
+    changes = tuple(repo.diff_names(base, head))
+    return AnalysisPlan(
+        mode="range",
+        changes=changes,
+        files=analysable(touched(changes), languages),
+        target=CommitTarget(commit=head),
+        before=base,
+    )
 
 
 def plan_selection(

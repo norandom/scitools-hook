@@ -45,14 +45,13 @@ from typing import Annotated, Final
 
 import typer
 
-from scitools_hook.cli import common, pipelines
+from scitools_hook.cli import change, common, pipelines
 from scitools_hook.config.models import Settings
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.models.findings import RunResult
 from scitools_hook.report.human import render_human
 from scitools_hook.report.json_out import render_json
 from scitools_hook.report.sarif import render_sarif
-from scitools_hook.runner.pipeline import Selection
 
 HELP = "Check a change against the maintainability rules."
 
@@ -115,6 +114,7 @@ def check(
     worktree: common.WorktreeOption = False,
     all_: common.AllOption = False,
     files: common.FilesOption = None,
+    range_: change.RangeOption = None,
     output_format: FormatOption = CheckFormat.HUMAN,
     output: common.OutputOption = None,
     sarif: SarifOption = None,
@@ -133,10 +133,12 @@ def check(
         paths=paths,
         env=options.env,
     )
+    named = any((staged, worktree, all_, files, paths))
+    target = change.resolve_target(range_, selection, named=named)
     run = pipelines.assemble(
         options, overrides(strict=strict, adaptive=adaptive, show_highest=show_highest)
     )
-    result = run.check().run(Selection(mode=selection.mode.value, files=list(selection.files)))
+    result = run.check().run(target)
     common.emit_findings(render(result, output_format, run.ctx.settings, options, output), output)
     if sarif is not None:
         common.emit_findings(render_sarif(result, result.tool_version), sarif, option=SARIF_OPTION)

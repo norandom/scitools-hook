@@ -47,7 +47,21 @@ from scitools_hook.git.repo import GitRepo
 from scitools_hook.paths import classify_directory, classify_file
 
 HOOK_NAME: Final = "pre-commit"
-"""The one hook the Gate installs; requirement 11.1 is about the commit boundary."""
+"""The commit-boundary hook; requirement 11.1 is about that boundary."""
+
+PRE_PUSH_NAME: Final = "pre-push"
+"""The push-boundary hook, installed on its own so it can be removed on its own.
+
+A separate hook rather than a mode of the first one, because the two ask different
+questions: ``pre-commit`` judges what is staged, and ``pre-push`` judges what the commits
+being pushed did -- at push time nothing is staged and the working tree is beside the point.
+"""
+
+TEMPLATES: Final[dict[str, str]] = {
+    HOOK_NAME: "hook_template.sh",
+    PRE_PUSH_NAME: "pre_push_template.sh",
+}
+"""Which shipped template each hook is rendered from."""
 
 CHAINED_SUFFIX: Final = ".scitools-hook-chained"
 """Appended to the hook's name to store the hook that was there first (requirement 11.2)."""
@@ -59,8 +73,14 @@ It has to match a **whole line**: a hook that merely quotes the marker in a mess
 otherwise be deleted as if the Gate had written it.
 """
 
-TEMPLATE_PATH: Final = Path(__file__).with_name("hook_template.sh")
-"""The shipped shim, read at install time rather than embedded as a Python string."""
+TEMPLATE_PATH: Final = Path(__file__).with_name(TEMPLATES[HOOK_NAME])
+"""The shipped pre-commit shim, read at install time rather than embedded as a Python string."""
+
+
+def template_path(hook: str) -> Path:
+    """Where ``hook``'s shipped template lives."""
+    return Path(__file__).with_name(TEMPLATES[hook])
+
 
 RESOLVED_PLACEHOLDER: Final = "@SCITOOLS_HOOK_RESOLVED@"
 # This tool is distributed as a GitHub release, never on PyPI, so a bare `uvx scitools-hook`
@@ -125,7 +145,9 @@ class HookInstaller:
 
     # --- installing -------------------------------------------------------------
 
-    def install(self, force: bool = False, global_: bool = False) -> InstallReport:
+    def install(
+        self, force: bool = False, global_: bool = False, hook: str = HOOK_NAME
+    ) -> InstallReport:
         """Write the shim into the hooks directory (requirements 11.1, 11.2, 11.9).
 
         Refuses when a ``pre-commit`` hook is already there, unless ``force`` is given, in
@@ -133,7 +155,7 @@ class HookInstaller:
         and chains nothing -- see the module docstring for why that asymmetry is deliberate.
         """
         directory = self._directory(global_, create=True)
-        target = directory / HOOK_NAME
+        target = directory / hook
         chained = _chained_path(target)
         existing = classify_file(target)
         if not existing.absent and not existing.usable:
@@ -189,7 +211,7 @@ class HookInstaller:
 
     # --- uninstalling -----------------------------------------------------------
 
-    def uninstall(self, global_: bool = False) -> InstallReport:
+    def uninstall(self, global_: bool = False, hook: str = HOOK_NAME) -> InstallReport:
         """Remove the shim and put back what it replaced (requirement 11.6).
 
         Only ever touches a file carrying :data:`MARKER`. Anything else at that path belongs
@@ -199,7 +221,7 @@ class HookInstaller:
         directory this version would refuse must still be removable.
         """
         directory = self._directory(global_, create=False)
-        target = directory / HOOK_NAME
+        target = directory / hook
         chained = _chained_path(target)
         verdict = classify_file(target)
         if verdict.absent:
@@ -306,7 +328,7 @@ class HookInstaller:
 
         ``mkstemp`` creates ``0600``, so the mode is set explicitly rather than inherited.
         """
-        body = render(self._resolved())
+        body = render(self._resolved(), target.name)
         handle, name = tempfile.mkstemp(dir=target.parent, prefix=f"{target.name}.")
         scratch = Path(name)
         try:
@@ -369,12 +391,12 @@ class HookInstaller:
         return RESOLVED_MISSING
 
 
-def render(resolved: str) -> str:
-    """The shim's text, with the install-time note filled in."""
-    template = _template()
+def render(resolved: str, hook: str = HOOK_NAME) -> str:
+    """``hook``'s shim text, with the install-time note filled in."""
+    template = _template(hook)
     if RESOLVED_PLACEHOLDER not in template:
         raise GateError(
-            f"the shipped hook template at {TEMPLATE_PATH} has no {RESOLVED_PLACEHOLDER} "
+            f"the shipped hook template at {template_path(hook)} has no {RESOLVED_PLACEHOLDER} "
             "placeholder, so this installation of scitools-hook is incomplete",
             hint="Reinstall scitools-hook.",
         )
@@ -383,25 +405,26 @@ def render(resolved: str) -> str:
     )
 
 
-def _template() -> str:
-    """Read the shipped template, failing with a sentence rather than a traceback.
+def _template(hook: str = HOOK_NAME) -> str:
+    """Read ``hook``'s shipped template, failing with a sentence rather than a traceback.
 
     A missing template means the package was built or installed wrongly -- it is not the
     operator's configuration and not an analysis failure -- so it carries the unexpected-error
     code with a message that says what to do about it.
     """
-    verdict = classify_file(TEMPLATE_PATH)
+    path = template_path(hook)
+    verdict = classify_file(path)
     if not verdict.usable:
         raise GateError(
-            f"the shipped hook template is missing from {TEMPLATE_PATH}: "
+            f"the shipped hook template is missing from {path}: "
             f"{verdict.reason or 'it is not there'}",
             hint="Reinstall scitools-hook; the template ships inside the package.",
         )
     try:
-        return TEMPLATE_PATH.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except (OSError, ValueError) as broken:
         raise GateError(
-            f"the shipped hook template at {TEMPLATE_PATH} could not be read: {broken}",
+            f"the shipped hook template at {path} could not be read: {broken}",
             hint="Reinstall scitools-hook; the template ships inside the package.",
         ) from broken
 

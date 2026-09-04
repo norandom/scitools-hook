@@ -95,6 +95,7 @@ from scitools_hook.models.findings import (
     TightenedLimit,
     structure_rule,
 )
+from scitools_hook.models.git import CommitRange
 from scitools_hook.models.snapshot import ParseError, ProjectSnapshot, Side
 from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.paths import classify_file
@@ -107,6 +108,7 @@ from scitools_hook.runner.pipeline import (
     PlanMode,
     Selection,
     SelectionMode,
+    plan_range,
     plan_selection,
 )
 from scitools_hook.understand.codecheck import CodeCheckRunner, unusable_list_file_name
@@ -175,11 +177,22 @@ class CheckPipeline:
         self._before_unparsed: Sequence[str] = ()
         """Files the before side could not read; set per run, read by ``_finish``."""
 
-    def run(self, selection: Selection) -> RunResult:
-        """Evaluate ``selection`` and return everything the run produced (req 4.1-4.11)."""
+    def run(self, selection: Selection | CommitRange) -> RunResult:
+        """Evaluate ``selection`` and return everything the run produced (req 4.1-4.11).
+
+        A :class:`~scitools_hook.runner.pipeline.CommitRange` is judged exactly as a selection
+        is, against the same rules and the same ratchet. It is what a pre-push hook asks:
+        nothing is staged at push time and the working tree is beside the point, so the only
+        honest question is what the commits being pushed did to the code.
+        """
         started = time.monotonic()
         repo = self.ctx.require_repo()
-        plan = plan_selection(selection, repo, self.ctx.settings.project.languages)
+        languages = self.ctx.settings.project.languages
+        plan = (
+            plan_range(selection, repo, languages)
+            if isinstance(selection, CommitRange)
+            else plan_selection(selection, repo, languages)
+        )
         if not plan.files:
             return self._nothing_analyzed(selection, repo.root, started)
         analyses = self._engine.analyse(plan)
@@ -250,7 +263,9 @@ class CheckPipeline:
         findings.extend(outcome.findings)
         if before is not None:
             findings = attach_before(findings, before)
-            findings.extend(evaluate_ratchet(after, before, affected.keys, effective))
+            findings.extend(
+                evaluate_ratchet(after, before, affected.keys, effective, self.ctx.settings.scope)
+            )
         findings.extend(self._structure(after, before, affected))
         findings.extend(self._violations(affected.files & plan.files))
         # What the before side could not read decides which violations are newly *measured*
@@ -472,7 +487,9 @@ class CheckPipeline:
 
     # --- small services -------------------------------------------------------------
 
-    def _nothing_analyzed(self, selection: Selection, root: Path, started: float) -> RunResult:
+    def _nothing_analyzed(
+        self, selection: Selection | CommitRange, root: Path, started: float
+    ) -> RunResult:
         """The result of a run that found nothing to analyse (req 4.9).
 
         The configuration is still reported -- the effective thresholds and the metrics this
@@ -561,8 +578,11 @@ def _merge_parse_errors(analyses: Mapping[Side, AnalyzeResult]) -> list[ParseErr
     return merged
 
 
-def _describe(selection: Selection) -> str:
+def _describe(selection: Selection | CommitRange) -> str:
     """One line naming what the run covered, for the run metadata (req 7.4)."""
+    if isinstance(selection, CommitRange):
+        dots = "..." if selection.from_merge_base else ".."
+        return f"range: {selection.base}{dots}{selection.head}"
     if selection.mode == "files":
         return f"files: {', '.join(selection.files)}"
     return selection.mode

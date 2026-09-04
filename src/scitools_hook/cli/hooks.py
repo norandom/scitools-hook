@@ -33,20 +33,21 @@ import typer
 
 from scitools_hook.cli import common
 from scitools_hook.errors import ConfigError
-from scitools_hook.git.hooks import HookInstaller, InstallReport
+from scitools_hook.git.hooks import HOOK_NAME, PRE_PUSH_NAME, HookInstaller, InstallReport
 from scitools_hook.git.repo import GitRepo
 
-INSTALL_HELP = "Install the pre-commit shim into this repository's hooks directory."
-UNINSTALL_HELP = "Remove the pre-commit shim and restore whatever it replaced."
+INSTALL_HELP = "Install the pre-commit (or --pre-push) shim into this repository's hooks directory."
+UNINSTALL_HELP = "Remove the pre-commit (or --pre-push) shim and restore whatever it replaced."
 
-FORCE_HELP = "Replace an existing pre-commit hook, keeping it and chaining to it."
+FORCE_HELP = "Replace an existing hook, keeping it and chaining to it."
+PRE_PUSH_HELP = "Install the pre-push hook instead of the pre-commit one."
 GLOBAL_HELP = "Use the user's global hooks path instead of this repository's."
 
 DESCRIPTIONS: Final[dict[str, str]] = {
-    "installed": "installed the pre-commit shim at",
-    "uninstalled": "removed the pre-commit shim at",
-    "restored": "removed the pre-commit shim at",
-    "absent": "no pre-commit hook is installed at",
+    "installed": "installed the shim at",
+    "uninstalled": "removed the shim at",
+    "restored": "removed the shim at",
+    "absent": "no scitools-hook shim is installed at",
 }
 """What each successful action says; ``refused`` is a failure and has no entry."""
 
@@ -69,18 +70,29 @@ def install_hook(
     ctx: typer.Context,
     force: Annotated[bool, typer.Option("--force", help=FORCE_HELP)] = False,
     global_: Annotated[bool, typer.Option("--global", help=GLOBAL_HELP)] = False,
+    pre_push: Annotated[bool, typer.Option("--pre-push", help=PRE_PUSH_HELP)] = False,
 ) -> None:
-    """Install the pre-commit shim (req 11.1, 11.2, 11.9)."""
-    report = _installer(ctx).install(force=force, global_=global_)
+    """Install the pre-commit shim, or the pre-push one (req 11.1, 11.2, 11.9).
+
+    One hook per invocation rather than both at once, so each can be removed on its own and
+    an operator who wants only the push boundary is not given the commit one as well.
+    """
+    report = _installer(ctx).install(force=force, global_=global_, hook=_hook(pre_push))
     _report(report, hint=None)
+
+
+def _hook(pre_push: bool) -> str:
+    """Which hook the flag names."""
+    return PRE_PUSH_NAME if pre_push else HOOK_NAME
 
 
 def uninstall_hook(
     ctx: typer.Context,
     global_: Annotated[bool, typer.Option("--global", help=GLOBAL_HELP)] = False,
+    pre_push: Annotated[bool, typer.Option("--pre-push", help=PRE_PUSH_HELP)] = False,
 ) -> None:
-    """Remove the pre-commit shim and restore whatever it replaced (req 11.6)."""
-    report = _installer(ctx).uninstall(global_=global_)
+    """Remove a shim and restore whatever it replaced (req 11.6)."""
+    report = _installer(ctx).uninstall(global_=global_, hook=_hook(pre_push))
     _report(report, hint=FOREIGN_HINT)
 
 

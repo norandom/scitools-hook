@@ -29,8 +29,8 @@ from scitools_hook.models.baseline import Baseline
 from scitools_hook.models.change import ChangeSummary
 from scitools_hook.models.findings import Finding, HighestValue, RunResult
 from scitools_hook.runner.baseline_cmd import BaselineCapture
-from scitools_hook.runner.explain import CommitRange, ExplainOptions
-from scitools_hook.runner.pipeline import Selection
+from scitools_hook.runner.explain import ExplainOptions
+from scitools_hook.runner.pipeline import CommitRange, Selection
 
 TOOL_VERSION = "9.2.0-test"
 UNDERSTAND_VERSION = "Understand 6.5 (Build 1204)"

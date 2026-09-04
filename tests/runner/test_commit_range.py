@@ -16,7 +16,7 @@ from pathlib import Path
 from conftest import MakeGitRepo
 from test_explain_pipeline import make_harness
 
-from scitools_hook.runner.explain import CommitRange
+from scitools_hook.runner.pipeline import CommitRange
 
 
 def test_a_three_dot_range_compares_from_the_merge_base(

@@ -90,8 +90,9 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Self
 
+from scitools_hook.analysis.thresholds import resolve_for_path
 from scitools_hook.config.metric_names import ELEMENT_SCOPES, format_metric_name
-from scitools_hook.config.models import DECOMPOSITION_COUNTS, Limit
+from scitools_hook.config.models import DECOMPOSITION_COUNTS, Limit, PathScope
 from scitools_hook.models.findings import EffectiveThreshold, Finding, build_rule_name
 from scitools_hook.models.snapshot import EntityKey, EntityRecord, ProjectSnapshot
 
@@ -133,6 +134,7 @@ def evaluate_ratchet(
     before: ProjectSnapshot,
     keys: Collection[EntityKey],
     specs: Sequence[EffectiveThreshold],
+    scopes: Mapping[str, PathScope] | None = None,
 ) -> list[Finding]:
     """Report every entity of ``keys`` whose value got worse between the two snapshots.
 
@@ -147,12 +149,47 @@ def evaluate_ratchet(
     """
     findings: list[Finding] = []
     pre_change = _PreChange.of(after, before)
+    per_path = _thresholds_by_path(keys, specs, scopes or {})
     for threshold in specs:
         if not _is_ratcheted(threshold):
             continue
-        scoped = _in_scope(keys, threshold)
-        findings.extend(_compare_all(threshold, after, pre_change, scoped))
+        for key in _in_scope(keys, threshold):
+            here = per_path[key.path].get(threshold.rule)
+            if here is None:
+                continue
+            findings.extend(_compare_all(here, after, pre_change, [key]))
     return findings
+
+
+def _thresholds_by_path(
+    keys: Collection[EntityKey],
+    specs: Sequence[EffectiveThreshold],
+    scopes: Mapping[str, PathScope],
+) -> dict[str, dict[str, EffectiveThreshold]]:
+    """The thresholds each affected path is judged by, path scopes overlaid (req 3.2).
+
+    **Without this the ratchet judged every entity by the global limit while the absolute
+    check judged it by the scoped one**, which made a path scope half-applied: the region got
+    its own maximum, and an entity comfortably inside that maximum still blocked the moment it
+    grew -- ``analysis.classify``'s below-limit ceiling reads the limit off the finding, and
+    the finding carried the wrong one. Measured on this repository: a command body at 13
+    parameters, inside a scoped maximum of 13, reported ``rose from 12 to 13`` against a limit
+    of 5 and refused the commit.
+
+    A rule a scope switched off for a path is **absent** from that path's mapping, so the
+    ratchet stops asking about it there too. It used to go on asking, which is the same defect
+    from the other side: ``CountDeclFunction = false`` for tests turned the limit off and left
+    the growth check on.
+
+    Keyed by rule so the caller can iterate ``specs`` in their configured order -- the order
+    the report is specified in -- and still look up what this path makes of each one. With no
+    scopes configured, every path maps to the same specs and this costs one dictionary.
+    """
+    resolved: dict[str, dict[str, EffectiveThreshold]] = {}
+    for path in {key.path for key in keys}:
+        applicable = resolve_for_path(path, specs, scopes).thresholds if scopes else specs
+        resolved[path] = {threshold.rule: threshold for threshold in applicable}
+    return resolved
 
 
 def pair_changed_signatures(

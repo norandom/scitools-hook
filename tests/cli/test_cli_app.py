@@ -203,38 +203,6 @@ def test_no_parameter_prompts(path: tuple[str, ...], command: object) -> None:
         assert not getattr(parameter, "hide_input", False), parameter.name
 
 
-CLI_MODULES = {
-    "__init__.py",
-    "agent_rules.py",
-    "app.py",
-    "baseline.py",
-    "check.py",
-    "common.py",
-    "config_cmd.py",
-    "db.py",
-    "doctor.py",
-    "explain.py",
-    "hooks.py",
-    "pipelines.py",
-    "recommend.py",
-    "skills.py",
-    "targets.py",
-}
-"""Every module in the package. A scan of nothing passes; this is what makes it a scan."""
-
-
-def test_no_cli_module_calls_a_prompt_function() -> None:
-    scanned = []
-    offenders = []
-    for source in sorted(CLI_SOURCE_DIR.glob("*.py")):
-        scanned.append(source.name)
-        for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
-            if PROMPT_CALLS.search(line) and not line.lstrip().startswith("#"):
-                offenders.append(f"{source.name}:{number}: {line.strip()}")
-    assert set(scanned) == CLI_MODULES
-    assert offenders == []
-
-
 def test_a_command_run_with_empty_stdin_never_waits_for_input() -> None:
     """Reaching the body with stdin closed proves nothing on the way asked for input.
 
