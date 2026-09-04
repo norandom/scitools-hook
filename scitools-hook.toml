@@ -70,6 +70,23 @@ max_new_dependencies_per_file = 7
 # that references another module-level name is only really equal when that name is too.
 duplicate_definitions_ignore = ["log", "logger", "pytestmark", "FILES"]
 
+# --- limits measured from this repository, not assumed ---------------------------
+# `scitools-hook recommend` over 5180 routines, 268 classes and 210 files, reporting a
+# ceiling as fitting when it contains 95% of its population. Only the FILE scope moved:
+# every routine and class ceiling came back `keep`, which is the answer that matters most --
+# the shipped defaults fit this code, and only these three did not.
+#
+# `CountDeclFunction = 25` was not a limit here, it was noise: 69 of 210 files failed it, a
+# third of the codebase. A limit two thirds of the tree meets is one somebody deletes.
+
+[thresholds.file]
+# 210 files: p50 145, p95 832, max 2987; 22 outside (10.5%) at 500, 5 outside (2.4%) at 1000
+CountLineCode = { max = 1000, ratchet = false }
+# 210 files: p50 15, p95 80, max 321; 69 outside (32.9%) at 25, 10 outside (4.8%) at 80
+CountDeclFunction = { max = 80, ratchet = false }
+# 210 files: p50 0, p95 6, max 19; 21 outside (10.0%) at 3, 7 outside (3.3%) at 6
+CountDeclClass = { max = 6, ratchet = false }
+
 # --- regions whose numbers are different in kind ---------------------------------
 # Three files in src/ are held to file and class counts that they cannot meet, for reasons
 # that are structural rather than about their quality. Each block below records the reason
@@ -129,11 +146,3 @@ paths = ["src/scitools_hook/runner/check.py"]
 [scope.orchestrator.thresholds.class]
 CountClassCoupled = { max = 32 }
 
-[scope.rendered-config]
-# config/template.py renders the configuration file: one function per section, one line per
-# key. Adding any setting adds lines, and the file sat at 499 of 500 before this rule
-# existed. Measured 2026-09-04: 509.
-paths = ["src/scitools_hook/config/template.py"]
-
-[scope.rendered-config.thresholds.file]
-CountLineCode = { max = 700 }

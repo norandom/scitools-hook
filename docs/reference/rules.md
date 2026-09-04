@@ -174,6 +174,37 @@ The count is over the whole project; the finding is reported against the **affec
 So the commit that adds the sixteenth copy is told about the other fifteen, and a commit that
 touches none of them is told nothing.
 
+#### Before you collect anything: are these one decision?
+
+The rule sees that N files bind a name to the same text. It cannot see whether those copies
+are **supposed to move together**, and that is the question to answer first. Reported from a
+real cleanup pass on a 770-file project, where three groups were correctly *not* collapsed:
+
+| Binding | Why it stays | |
+| --- | --- | --- |
+| `_FACTOR_VERSION = 1` in 7 modules | Each factor's own version. Collapsing them makes a bug the moment one is bumped. |
+| `T = TypeVar("T")` in 6 modules | A per-module type variable. Sharing one would be wrong. |
+| `AS_OF = ...` in test modules | Test scenarios that happen to pick the same date. |
+
+What separates these from a real finding is not the value, it is intent: a name bound to a
+per-module **identity** reads differently from a name bound to a **threshold**, and the rule
+cannot tell them apart. So the first move on a finding is not "collapse it" but "decide
+whether these are one decision". When they are not, the name goes in
+`duplicate_definitions_ignore` — that is what the list is for, alongside the `log` /
+`pytestmark` idioms.
+
+The same pass collapsed six groups that *were* one decision — a type alias in 13 files, a
+re-select horizon in 15, a numeric floor in 5, a project root under three names in 29 test
+modules — so the rule's yield is real; it is the triage that needs a human or an agent.
+
+#### The most valuable finding is the one you leave open
+
+Reported from the same pass: `MIN_ACTIVE` named **two different thresholds** in one project —
+3 in four modules, 5 in five others. The rule correctly reports two same-value groups rather
+than one, which is exactly the `_HORIZON_DAYS` hazard above seen from the other side: one
+name, two meanings, and `grep` answers with whichever it finds first. Unifying them is a
+quantitative decision, not a refactor, so leaving it visible is the right call.
+
 #### What it cannot see
 
 - **A binding whose initialiser the lexer cannot recover** — an augmented assignment, a tuple

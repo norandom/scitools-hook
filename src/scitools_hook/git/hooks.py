@@ -42,6 +42,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel
 
+from scitools_hook import __version__
 from scitools_hook.errors import ConfigError, GateError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.paths import classify_directory, classify_file
@@ -87,8 +88,30 @@ RESOLVED_PLACEHOLDER: Final = "@SCITOOLS_HOOK_RESOLVED@"
 # resolves to nothing. The shim needs a `--from` source, and it is substituted at install time
 # rather than written into the template so a fork installs its own.
 SOURCE_PLACEHOLDER: Final = "@SCITOOLS_HOOK_SOURCE@"
-DEFAULT_SOURCE: Final = "git+https://github.com/norandom/scitools-hook"
-"""The single substitution point in the template, inside a comment."""
+REPOSITORY: Final = "git+https://github.com/norandom/scitools-hook"
+"""Where the tool is fetched from when it is not on PATH."""
+
+UNRELEASED: Final = "0+unknown"
+"""The version a source checkout reports when no distribution metadata is installed."""
+
+
+def default_source(version: str = __version__) -> str:
+    """The ``uvx --from`` source a shim is written with: this release, by tag.
+
+    **Pinned, and that is the whole point of this function.** The source used to be the bare
+    repository URL, which ``uvx`` resolves to the *default branch* -- so a repository that
+    fell through to the uvx path ran whatever had last been pushed to ``main``, including a
+    commit made minutes earlier and not released. A gate is the wrong thing to have tracking
+    a moving branch: it decides whether commits are allowed, so it has to be a version
+    somebody chose.
+
+    A checkout with no distribution metadata reports :data:`UNRELEASED` and has no tag to
+    pin, so it falls back to the unpinned URL rather than writing a reference that resolves
+    to nothing. That is the only case where a shim tracks a branch, and it is a case where
+    the installer is already running from an unreleased tree.
+    """
+    return REPOSITORY if version == UNRELEASED else f"{REPOSITORY}@v{version}"
+
 
 RESOLVED_DIRECT: Final = "scitools-hook, found on PATH"
 RESOLVED_UVX: Final = "uvx --from the release source (scitools-hook was not on PATH)"
@@ -401,7 +424,7 @@ def render(resolved: str, hook: str = HOOK_NAME) -> str:
             hint="Reinstall scitools-hook.",
         )
     return template.replace(RESOLVED_PLACEHOLDER, resolved).replace(
-        SOURCE_PLACEHOLDER, DEFAULT_SOURCE
+        SOURCE_PLACEHOLDER, default_source()
     )
 
 

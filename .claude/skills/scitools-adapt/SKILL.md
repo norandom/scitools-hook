@@ -169,11 +169,26 @@ duplicate_definitions = 3
 duplicate_definitions_ignore = ["log", "logger", "pytestmark"]
 ```
 
-Turn it on, measure, and read the top of the list before deciding anything. The ignore list is
-for the per-module idiom (`log = logging.getLogger(__name__)` is written out in every module
-on purpose) and is names rather than values, because the similar-looking
+Turn it on, measure, and read the top of the list before deciding anything.
+
+**The first question on a finding is not "collapse it" but "are these one decision?"** The
+rule sees that N files bind a name to the same text; it cannot see whether the copies are
+*supposed* to move together. From a real cleanup pass: `_FACTOR_VERSION = 1` in seven factor
+modules is each factor's own version and collapsing it makes a bug the moment one is bumped;
+`T = TypeVar("T")` in six modules is a per-module type variable; `AS_OF` in test modules is
+scenarios that happen to share a date. A name bound to a per-module **identity** reads
+differently from one bound to a **threshold**, and only a reader can tell them apart. Those
+go in the ignore list, which is what it is for.
+
+The list is names rather than values because the similar-looking
 `PROJECT_ROOT = Path(__file__).resolve().parents[2]` is a real finding when six other files
 write it with `parents[1]`.
+
+**The most valuable finding is often the one to leave open.** One name bound to two different
+values across a project -- `MIN_ACTIVE = 3` in four modules and `= 5` in five others -- is
+reported as two groups, which is correct: one name, two meanings, and `grep` answers with
+whichever it meets first. Unifying them is a quantitative decision, not a refactor. Leave it
+visible and say so.
 
 ### 5. A project-scope rule a commit cannot act on
 

@@ -325,9 +325,28 @@ def test_uvx_runs_the_gate_when_it_is_not_installed(shim: Shim) -> None:
     # `--from` is load-bearing, not decoration: this tool is not on PyPI and never will be, so
     # a bare `uvx scitools-hook` resolves to nothing. Asserting the whole argument string keeps
     # the source in the command rather than letting it be dropped as noise.
+    #
+    # The `@v...` is the other half, and it is the part with an incident behind it: the source
+    # used to be the bare URL, which uvx resolves to the DEFAULT BRANCH -- so a repository
+    # falling through to this path ran whatever had last been pushed to `main`, minutes old and
+    # unreleased. A gate decides whether commits are allowed; it may not track a moving branch.
     assert shim.arguments("uvx") == (
-        "--from git+https://github.com/norandom/scitools-hook scitools-hook check --staged"
+        f"--from {hooks.default_source()} scitools-hook check --staged"
     )
+
+
+def test_the_uvx_source_names_the_release_that_installed_the_shim() -> None:
+    """Pinned by tag, so two machines that installed the same version run the same code."""
+    assert hooks.default_source("0.1.0a5").endswith("@v0.1.0a5")
+
+
+def test_a_checkout_with_no_release_metadata_writes_an_unpinned_source() -> None:
+    """The one case that tracks a branch, and the installer is already on an unreleased tree.
+
+    Writing `@v0+unknown` would be worse than the branch: it resolves to nothing, so the
+    fallback that exists for "the tool is not installed" would itself fail to install.
+    """
+    assert hooks.default_source(hooks.UNRELEASED) == hooks.REPOSITORY
 
 
 def test_the_uvx_branch_reports_the_status_it_was_given(shim: Shim) -> None:
