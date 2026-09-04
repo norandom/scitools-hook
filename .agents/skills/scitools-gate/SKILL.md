@@ -64,6 +64,11 @@ scitools-hook check --staged             # what the commit hook will run
 scitools-hook check --files path/a path/b
 ```
 
+**`--files` and `--staged` measure the index, not your working tree.** Only `--worktree` reads
+the files as they are on disk. Editing a file and then running `check --files that/file.py`
+without staging it reports the problem you just fixed; this has cost real sessions several
+iterations. Stage it, or use `--worktree`.
+
 Exit 0 means nothing blocks. Exit 1 means the change is blocked. Anything else is an
 infrastructure failure, not a verdict about the code — see the exit-code table below.
 

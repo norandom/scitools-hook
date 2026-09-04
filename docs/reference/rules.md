@@ -114,6 +114,23 @@ Fan-out is ratcheted; **fan-in is not**, because being used more is not a regres
 entity that grew *and* broke its limit yields both findings. A direction with no configured
 limit is switched off entirely, ratchet included.
 
+### A file that only just became readable
+
+When the **before** side of a file could not be parsed and the after side can, every violation
+in it is reported as `pre-existing` and does **not** block, with the sentence *measured here
+for the first time*.
+
+The code was there; only the measurement is new. Blocking would mean that converting a file so
+Understand can finally read it costs one blocking finding per routine it revealed — for code
+the commit did not write. Nobody pays that twice, so the file stays unmeasured forever, which
+is the outcome the rule exists to prevent.
+
+The exemption is narrow. A file appears in the before side's parse errors only if it was there
+and was tried, so a file the change *added* is never in the set, and a violation introduced
+into a file that already parsed is untouched. What it does forgive is a new violation written
+into a file that also stopped parsing before — and the alternative was measured to make the
+fix impossible.
+
 ### Scattered definitions: one value, many files
 
 `structure.duplicate_definition` reports a module-level name bound to the **same value** in

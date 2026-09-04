@@ -69,6 +69,13 @@ Only 0 and 1 are statements about the code. Everything above 1 means nothing was
 
 ## `check`
 
+!!! warning "`--files` and `--staged` measure the **index**, not your working tree"
+
+    Only `--worktree` reads the files as they are on disk. If you fix a file and run
+    `check --files that/file.py` without staging it, the run measures the *staged* content and
+    reports the problem you just fixed. Stage it, or use `--worktree`.
+
+
 Check a change against the maintainability rules. This is the command the hook runs.
 
 ```console
@@ -108,6 +115,12 @@ highest values: the largest value per metric, whether or not it breaks a limit
 
 ## `explain`
 
+`--range A..B` compares the two commits. `--range A...B` compares from their **merge base** —
+what the branch did, without the commits the base gathered meanwhile. That is what
+`git diff A...B` shows and what a pull request shows, so it is usually the one you want for a
+review: `--range "origin/main...HEAD"`.
+
+
 Explain what a change did to the code. Never blocks anything.
 
 ```console
@@ -116,6 +129,7 @@ Usage: scitools-hook explain [OPTIONS] [PATH]...
 Options:
   --staged / --worktree / --all / --files PATH   as for check
   --range A..B                     Explain what happened between two commits.
+  --range A...B                    The same, measured from their merge base.
   --graphs                         Export callers/callees and depends-on graphs as SVG.
   --impact                         List what references each changed routine and class.
   --out DIR                        Directory the exported graphs are written into.

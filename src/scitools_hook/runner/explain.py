@@ -79,12 +79,23 @@ from scitools_hook.understand.snapshot import SnapshotExtractor
 RANGE_SEPARATOR: Final = ".."
 """How requirement 9.1's ``--range A..B`` separates the two ends."""
 
+MERGE_BASE_SEPARATOR: Final = "..."
+"""``A...B``: the same question asked from the merge base, which is what reviewing a branch means.
+
+Refused by name until a session driving this tool reported it. The refusal's reasoning called
+``A...B`` git's *symmetric difference*, which is true of ``git log`` and **not** of ``git
+diff``: ``git diff A...B`` is ``merge-base(A, B)..B``, and that is exactly what a code review
+compares -- what this branch did, without the commits main gathered meanwhile. It is also
+what a pull request shows, and what this project's own documentation and agent skill told
+people to type, so the one form a reviewer reaches for first was the one form that failed.
+"""
+
 RANGE_KEY: Final = "range"
 """The option a refusal about a range names, so the operator knows which one to fix."""
 
 RANGE_HINT: Final = (
-    "Write the range as BASE..HEAD, where each end names one commit "
-    "(a hash, a tag, a branch or a revision like HEAD~1)."
+    "Write the range as BASE..HEAD, or BASE...HEAD to compare from the merge base, "
+    "where each end names one commit (a hash, a tag, a branch or a revision like HEAD~1)."
 )
 """What an operator does about a range this module cannot read."""
 
@@ -110,20 +121,24 @@ class CommitRange(DataModel):
 
     base: str
     head: str
+    from_merge_base: bool = False
 
     @classmethod
     def parse(cls, text: str) -> CommitRange:
-        """Read ``BASE..HEAD``, or refuse with the form that was expected (req 9.1).
+        """Read ``BASE..HEAD`` or ``BASE...HEAD``, or refuse with the forms expected (req 9.1).
 
-        Only the two-dot form is accepted. ``A...B`` is git's *symmetric* difference, which
-        answers a different question from the one requirement 9.1 asks -- what one side did to
-        the other, from their merge base -- so it is refused by name rather than silently read
-        as ``A..`` and a head beginning with a dot.
+        The three-dot form is tried first, because ``"A...B".partition("..")`` yields a head
+        that begins with a dot and would otherwise be refused as malformed -- which is exactly
+        how this form used to fail.
         """
-        base, separator, head = text.partition(RANGE_SEPARATOR)
-        if not separator or not base or not head or RANGE_SEPARATOR in head or head.startswith("."):
-            raise ConfigError(f"{text!r} is not a commit range", key=RANGE_KEY, hint=RANGE_HINT)
-        return cls(base=base, head=head)
+        for separator, merge_base in ((MERGE_BASE_SEPARATOR, True), (RANGE_SEPARATOR, False)):
+            base, found, head = text.partition(separator)
+            if not found:
+                continue
+            if not base or not head or "." in head[:1] or RANGE_SEPARATOR in head:
+                break
+            return cls(base=base, head=head, from_merge_base=merge_base)
+        raise ConfigError(f"{text!r} is not a commit range", key=RANGE_KEY, hint=RANGE_HINT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,8 +202,12 @@ class ExplainPipeline:
         knowing: the next ``check`` finds the after shadow synced from a commit rather than
         from the index, and a changed target kind forces a full re-sync of it.
         """
-        base = resolve_commit(repo, span.base)
+        # Both ends are resolved first, in the order they were typed, so a typo is refused by
+        # name; the merge base is then taken from the two object ids, which leaves
+        # `merge-base` able to fail for one reason only -- histories that never met.
+        named = resolve_commit(repo, span.base)
         head = resolve_commit(repo, span.head)
+        base = merge_base(repo, named, head) if span.from_merge_base else named
         changes = tuple(repo.diff_names(base, head))
         return AnalysisPlan(
             mode="range",
@@ -288,6 +307,25 @@ class ExplainPipeline:
 
 
 # --- helpers ------------------------------------------------------------------------
+
+
+def merge_base(repo: GitRepo, left: str, right: str) -> str:
+    """The commit ``left`` and ``right`` diverged from, for ``--range A...B`` (req 9.1).
+
+    Resolved through ``git merge-base`` and then through :func:`resolve_commit`, so the answer
+    is checked to be a full object id by the same test every other end passes, and an
+    unrelated pair -- two histories with no common ancestor -- is refused with the range the
+    operator typed rather than failing later inside the shadow export.
+    """
+    result = repo._run(["merge-base", "--end-of-options", left, right])
+    answer = result.stdout.decode("utf-8", "replace").strip()
+    if result.rc != 0 or not answer:
+        raise ConfigError(
+            f"{left!r} and {right!r} have no common ancestor, so there is no merge base",
+            key=RANGE_KEY,
+            hint=RANGE_HINT,
+        )
+    return resolve_commit(repo, answer)
 
 
 def resolve_commit(repo: GitRepo, revision: str) -> str:

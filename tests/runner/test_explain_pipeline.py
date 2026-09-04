@@ -676,8 +676,8 @@ def test_resolving_a_revision_is_recorded_for_the_verbose_log(git_repo: MakeGitR
 
 @pytest.mark.parametrize(
     "text",
-    ["HEAD", "", "..", "a..", "..b", "a...b", "a..b..c"],
-    ids=["no-separator", "empty", "bare", "no-head", "no-base", "three-dot", "three-ends"],
+    ["HEAD", "", "..", "a..", "..b", "a....b", "a..b..c"],
+    ids=["no-separator", "empty", "bare", "no-head", "no-base", "four-dot", "three-ends"],
 )
 def test_the_range_grammar_refuses_everything_that_is_not_base_dot_dot_head(text: str) -> None:
     """Requirement 9.1 names one form; every other shape is refused rather than guessed at."""

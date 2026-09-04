@@ -64,7 +64,11 @@ from scitools_hook import __version__
 from scitools_hook.analysis import baseline as baseline_rules
 from scitools_hook.analysis.classify import classify
 from scitools_hook.analysis.codecheck import map_violations
-from scitools_hook.analysis.ratchet import attach_before, evaluate_ratchet
+from scitools_hook.analysis.ratchet import (
+    attach_before,
+    evaluate_ratchet,
+    unparsed_files,
+)
 from scitools_hook.analysis.structure.calls import (
     evaluate_reachable_complexity,
     find_call_cycles,
@@ -168,6 +172,8 @@ class CheckPipeline:
         self._codecheck = codecheck
         self._store = baseline_store
         self._hints = HintCatalogue(ctx.settings.hints)
+        self._before_unparsed: Sequence[str] = ()
+        """Files the before side could not read; set per run, read by ``_finish``."""
 
     def run(self, selection: Selection) -> RunResult:
         """Evaluate ``selection`` and return everything the run produced (req 4.1-4.11)."""
@@ -247,6 +253,11 @@ class CheckPipeline:
             findings.extend(evaluate_ratchet(after, before, affected.keys, effective))
         findings.extend(self._structure(after, before, affected))
         findings.extend(self._violations(affected.files & plan.files))
+        # What the before side could not read decides which violations are newly *measured*
+        # rather than newly written; `_finish` hands it to `classify`. Set here because this
+        # is where both snapshots are in hand, and cleared for a run with no before side --
+        # `check --all`, where every violation is absolute and nothing can be pre-existing.
+        self._before_unparsed = () if before is None else sorted(unparsed_files(before))
         return self._finish(findings, effective), outcome
 
     # --- the files that were never read --------------------------------------------
@@ -409,6 +420,7 @@ class CheckPipeline:
             self.ctx.settings.ratchet,
             self._severities(effective),
             self.ctx.settings.parse,
+            self._before_unparsed,
         )
         return [
             finding.model_copy(update={"hint": self._hints.hint(finding.rule, finding)})

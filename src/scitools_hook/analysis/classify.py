@@ -38,6 +38,23 @@ parse -- because the one thing an acknowledgement must never do is read as a pas
 mode does not override it: an acknowledgement is a statement about the *analyser*, not about
 whether a violation is old.
 
+There is a fourth answer, and it is what stops this gate punishing the one fix it most
+wants: **an entity whose file the before side could not parse.** ``attach_before``
+deliberately leaves ``before`` unset for those, because an inflated before value would
+forgive the very violation it invented -- and unset means "not known", which blocks. The
+consequence, reported by a session driving this tool, is that converting a file so that
+Understand can finally read it surfaces every routine in it at once as ``None -> value``,
+all blocking, for code the commit did not write. Nobody fixes a parse error twice under
+that, so the file stays unmeasured forever, which is the outcome this rule exists to
+prevent. ``before_unparsed`` names those files and :func:`classify` calls their threshold
+findings **pre-existing**: reported, counted, visible, and not blocking.
+
+The narrowness is what makes it safe. A file appears in the before side's parse errors only
+if it *was there and was tried*, so a file this change added is never in the set, and a
+violation the change genuinely introduced into a file that already parsed is untouched. What
+the exemption does forgive is a new violation written into a file that also stopped parsing
+before -- and the alternative, blocking, was measured to make the fix impossible.
+
 The before value the pre-existing test needs is filled in by ``analysis.ratchet``'s
 ``attach_before``, which sees both snapshots; ``classify`` works on findings alone, so it
 reads the direction of a limit from the finding itself: a violation exists because the value
@@ -49,7 +66,7 @@ no input is modified in place.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from typing import Final, Literal
 
 from scitools_hook.analysis.ratchet import within_limit
@@ -74,6 +91,7 @@ def classify(
     ratchet: RatchetSettings,
     severities: SeverityMap,
     parse: ParseSettings | None = None,
+    before_unparsed: Collection[str] = (),
 ) -> list[Finding]:
     """Apply the severity map, derive pre-existing status and set ``blocking`` accordingly.
 
@@ -82,12 +100,43 @@ def classify(
     finding blocks. Every finding is returned, in the order it was given; nothing is filtered
     here, because warnings and pre-existing findings are still reported, just not counted as
     blocking (req 7.9). ``parse`` is ``settings.parse``; omitting it is the shipped behaviour,
-    in which every unreadable file blocks.
+    in which every unreadable file blocks. ``before_unparsed`` names the files the *before*
+    side could not read, whose entities are newly measured rather than newly written.
     """
-    classified = [_classify_one(finding, ratchet, severities) for finding in findings]
+    blind = frozenset(before_unparsed)
+    classified = [_classify_one(_newly_measured(f, blind), ratchet, severities) for f in findings]
     if parse is None or not parse.acknowledged:
         return classified
     return [_acknowledge(finding, parse) for finding in classified]
+
+
+def _newly_measured(finding: Finding, before_unparsed: frozenset[str]) -> Finding:
+    """Mark a threshold finding whose file the before side could not read as pre-existing.
+
+    The code was there; only the measurement is new. The message says so, because a finding
+    that quietly stopped blocking would read as a pass, and this one is the opposite: it is
+    the first honest look at a file the gate has never seen.
+
+    Only ``threshold`` findings are touched. A parse finding for the same file is the report
+    that the analysis failed and keeps its own judgement; a structural finding is derived from
+    edges that both sides have, whether or not a file's interior parsed.
+    """
+    if finding.kind != "threshold" or finding.preexisting or finding.path not in before_unparsed:
+        return finding
+    return Finding.model_validate(
+        finding.model_dump()
+        | {
+            "preexisting": True,
+            "message": f"{finding.message} -- {FIRST_MEASURED}",
+        }
+    )
+
+
+FIRST_MEASURED: Final = (
+    "measured here for the first time: the before side of this file could not be parsed, so "
+    "this violation is reported rather than blocking. It may predate the change"
+)
+"""What a finding says when the file it belongs to only just became readable."""
 
 
 def _acknowledge(finding: Finding, parse: ParseSettings) -> Finding:

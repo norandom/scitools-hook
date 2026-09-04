@@ -105,13 +105,21 @@ def test_a_range_is_parsed_into_the_two_commits_it_names(assembler: StubAssemble
     assert assembler.assembly.explain_pipeline.targets == [CommitRange(base="v1.0", head="HEAD")]
 
 
-def test_a_symmetric_difference_is_refused_by_name(assembler: StubAssembler) -> None:
-    """``A...B`` answers a different question; ``CommitRange.parse`` owns that refusal."""
+def test_a_three_dot_range_reaches_the_pipeline_asking_for_the_merge_base(
+    assembler: StubAssembler,
+) -> None:
+    """``A...B`` is what reviewing a branch means, and it used to be refused by name.
+
+    ``git diff A...B`` is ``merge-base(A, B)..B`` -- what this branch did, without the commits
+    main gathered meanwhile. It is what a pull request shows and what this project's own
+    documentation told people to type, so it was the one form a reviewer reaches for first
+    and the one form that failed.
+    """
     result = run("explain", "--range", "main...HEAD")
-    assert result.exit_code == int(ExitCode.CONFIG_ERROR)
-    assert result.stdout == ""
-    assert "not a commit range" in result.stderr
-    assert assembler.assembly.explain_pipeline.targets == []
+
+    assert result.exit_code == int(ExitCode.OK)
+    (target,) = assembler.assembly.explain_pipeline.targets
+    assert (target.base, target.head, target.from_merge_base) == ("main", "HEAD", True)
 
 
 def test_a_range_that_is_not_a_range_is_refused_before_anything_is_assembled(
