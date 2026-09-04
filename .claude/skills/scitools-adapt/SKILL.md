@@ -157,6 +157,24 @@ rule. Check what a file actually gets:
 scitools-hook config --why tests/cli/test_app.py
 ```
 
+### 4b. A rule that is off by default and worth turning on
+
+Not every adaptation is a relaxation. `structure.duplicate_definition` ships **off**, and a
+project that has grown by copying is exactly where it earns its keep — a module-level name
+bound to the same value in many files:
+
+```toml
+[structure]
+duplicate_definitions = 3
+duplicate_definitions_ignore = ["log", "logger", "pytestmark"]
+```
+
+Turn it on, measure, and read the top of the list before deciding anything. The ignore list is
+for the per-module idiom (`log = logging.getLogger(__name__)` is written out in every module
+on purpose) and is names rather than values, because the similar-looking
+`PROJECT_ROOT = Path(__file__).resolve().parents[2]` is a real finding when six other files
+write it with `parents[1]`.
+
 ### 5. A project-scope rule a commit cannot act on
 
 `[thresholds.project]` reduces over the whole repository — `AVG:CyclomaticStrict`,

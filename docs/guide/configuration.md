@@ -225,6 +225,22 @@ A layer rule reports a *new* edge that the rule does not allow. An edge that was
 there before the change is not a new edge, and a growing reference count on an existing edge
 is not one either — newness is a property of the pair.
 
+### Scattered definitions
+
+Off by default. It reports a module-level name bound to the same value in more files than the
+limit — a constant that was copied instead of shared.
+
+```toml
+[structure]
+duplicate_definitions = 3
+duplicate_definitions_ignore = ["log", "logger", "pytestmark"]
+```
+
+Turn it on when a project has grown by copying: type aliases, tolerance constants, test
+fixtures and project-root computations are where it earns its keep. The ignore list is for the
+per-module idiom, which is written out in every file on purpose. See
+[Scattered definitions](../reference/rules.md#scattered-definitions-one-value-many-files).
+
 ## Severities
 
 Every rule has a severity. `error` can block; `warning` never does, in any mode.

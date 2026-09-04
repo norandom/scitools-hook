@@ -229,6 +229,9 @@ class StructureRules(StrictModel):
     arch_cycles: Severity = "error"
     max_new_dependencies_per_file: int | None = Field(default=5, ge=0)
     new_dependencies_severity: Severity = "error"
+    duplicate_definitions: int | None = Field(default=None, ge=1)
+    duplicate_definitions_severity: Severity = "warning"
+    duplicate_definitions_ignore: list[str] = Field(default_factory=list)
     fan: dict[FanKey, Limit] = Field(default_factory=dict)
     fan_severity: Severity = "warning"
     layers: list[LayerRule] = Field(default_factory=list)

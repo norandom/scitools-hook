@@ -90,6 +90,7 @@ class SnapshotExtractor:
             architecture=self.settings.structure.architecture,
             depth=self.settings.structure.depth,
             include_edges=self.include_edges,
+            include_definitions=self.settings.structure.duplicate_definitions is not None,
         )
 
     def wire_request(self, target: SnapshotTarget) -> dict[str, object]:

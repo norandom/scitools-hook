@@ -70,6 +70,7 @@ class ExtractRequest(DataModel):
     architecture: str
     depth: int = Field(ge=1)
     include_edges: bool = True
+    include_definitions: bool = False
 
     @field_validator("kinds_by_scope")
     @classmethod

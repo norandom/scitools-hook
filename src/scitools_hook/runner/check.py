@@ -76,6 +76,7 @@ from scitools_hook.analysis.structure.coupling import (
     without_namespace_targets,
 )
 from scitools_hook.analysis.structure.cycles import find_new_cycles
+from scitools_hook.analysis.structure.definitions import find_duplicate_definitions
 from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
 from scitools_hook.analysis.thresholds import ThresholdOutcome, evaluate_thresholds
@@ -338,6 +339,14 @@ class CheckPipeline:
                 affected.files,
                 rules.max_new_dependencies_per_file,
                 rules.new_dependencies_severity,
+            )
+        if rules.duplicate_definitions is not None:
+            findings += find_duplicate_definitions(
+                after.definitions,
+                affected.files,
+                rules.duplicate_definitions,
+                rules.duplicate_definitions_severity,
+                rules.duplicate_definitions_ignore,
             )
         # Call-graph rules, both off unless configured. Without these two statements the whole
         # feature is inert: the settings parse, validate and print, and change no finding --

@@ -247,6 +247,11 @@ _STRUCTURE_HINTS: Final[dict[str, str]] = {
         "the change adds too many dependencies to one file: keep the new code in a module of "
         "its own, or depend on an existing abstraction instead of on each collaborator"
     ),
+    "structure.duplicate_definition": (
+        "this value is written out in several files, so changing the policy means finding "
+        "every copy: move it to one module and import it, and check the copies agree before "
+        "you do -- a disagreeing copy is a decision somebody made and did not write down"
+    ),
     "structure.coupling": (
         "these two architecture nodes reference each other too often: move the code that does "
         "the referencing next to what it uses, or narrow the traffic to one interface"

@@ -105,6 +105,7 @@ superclass raises it. No hint in the catalogue asks for another inheritance laye
 | `structure.coupling` | error | More references between two architecture nodes than a declared rule allows |
 | `structure.fan_in` | warning | A file or class depended on by more than the limit |
 | `structure.fan_out` | warning | A file or class depending on more than the limit, **and** any affected entity whose fan-out grew |
+| `structure.duplicate_definition` | warning | A module-level name bound to the **same value** in more files than `duplicate_definitions` (off by default) |
 | `codecheck.<id>` | warning | A finding from an Understand CodeCheck configuration, if one is named |
 
 Fan defaults: `file_fan_in` 50, `file_fan_out` 20, `class_fan_in` 30, `class_fan_out` 12.
@@ -112,6 +113,62 @@ Fan defaults: `file_fan_in` 50, `file_fan_out` 20, `class_fan_in` 30, `class_fan
 Fan-out is ratcheted; **fan-in is not**, because being used more is not a regression. An
 entity that grew *and* broke its limit yields both findings. A direction with no configured
 limit is switched off entirely, ratchet included.
+
+### Scattered definitions: one value, many files
+
+`structure.duplicate_definition` reports a module-level name bound to the **same value** in
+more files than the limit. It is **off by default** — set `duplicate_definitions` to turn it
+on, because collecting the bindings costs one extra pass over the database.
+
+```toml
+[structure]
+duplicate_definitions = 3
+duplicate_definitions_severity = "warning"
+duplicate_definitions_ignore = ["log", "logger", "pytestmark"]
+```
+
+#### What it is for
+
+No limit in the tables above catches this. Every file involved is small, simple and reads
+perfectly well on its own; the cost lands on whoever has to *change* the value. Measured on a
+770-file project:
+
+| Binding | Files |
+| --- | ---: |
+| `_HORIZON_DAYS = 20` | 15 — and a sixteenth file binds the same name to `5` |
+| `PROJECT = Path(__file__).resolve().parents[2]` | 14 — and six more use `parents[1]` |
+| `FloatArray = NDArray[np.float64]` | 12 |
+| `_ZERO = Decimal("0")` | 9 |
+| `_ONE = Decimal("1")` | 7 — and one file binds it to the float `1.0` |
+
+The first row is the shape worth understanding. Changing the re-select horizon means finding
+fifteen files, one of which deliberately disagrees, and **no amount of reading any one of them
+reveals either fact**. That is the working-set problem in its purest form: the definition is
+distributed, so the change is too.
+
+#### Why it keys on the value, not the name
+
+A name repeated with a *different* value in each file is usually deliberate local vocabulary —
+`HELP` in every subcommand module of this project, `__all__` in every package. Reporting those
+would bury the real finding under the idiom. A name repeated with the *same* value is a
+decision that was copied instead of shared.
+
+The count is over the whole project; the finding is reported against the **affected** files.
+So the commit that adds the sixteenth copy is told about the other fifteen, and a commit that
+touches none of them is told nothing.
+
+#### What it cannot see
+
+- **A binding whose initialiser the lexer cannot recover** — an augmented assignment, a tuple
+  unpacking, a bare annotation, a value that does not close within twelve lines — is skipped,
+  never grouped. Two unreadable initialisers are not evidence that two definitions agree.
+- **Semantic equality.** `Decimal("0")` and `Decimal(0)` are different text and so different
+  definitions. The rule under-reports; it does not guess.
+- **The per-module idiom.** `log = logging.getLogger(__name__)` and `pytestmark` are written
+  out in every module on purpose. Put them in `duplicate_definitions_ignore`. That list is
+  names rather than values deliberately: the similar-looking
+  `PROJECT_ROOT = Path(__file__).resolve().parents[2]` — which the same project also writes
+  with `parents[1]` in six other files — is a real finding, not an idiom.
 
 ### A target with no code in it is not a dependency
 

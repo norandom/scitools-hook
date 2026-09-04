@@ -18,12 +18,12 @@
       },
       "language": "Python",
       "metrics": {
-        "CountDeclMethod": 6,
-        "CountDeclMethodNonStub": 5,
-        "CountDeclInstanceVariable": 4,
-        "MaxInheritanceTree": 1,
-        "CountClassDerived": 0,
-        "CountClassCoupled": 4
+        "CountDeclMethod": 6.0,
+        "CountDeclMethodNonStub": 5.0,
+        "CountDeclInstanceVariable": 4.0,
+        "MaxInheritanceTree": 1.0,
+        "CountClassDerived": 0.0,
+        "CountClassCoupled": 4.0
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -44,12 +44,12 @@
       },
       "language": "Python",
       "metrics": {
-        "CountDeclMethod": 3,
-        "CountDeclMethodNonStub": 3,
-        "CountDeclInstanceVariable": 2,
-        "MaxInheritanceTree": 1,
-        "CountClassDerived": 0,
-        "CountClassCoupled": 2
+        "CountDeclMethod": 3.0,
+        "CountDeclMethodNonStub": 3.0,
+        "CountDeclInstanceVariable": 2.0,
+        "MaxInheritanceTree": 1.0,
+        "CountClassDerived": 0.0,
+        "CountClassCoupled": 2.0
       },
       "archs": [
         "Directory Structure/src/understand"
@@ -70,10 +70,10 @@
       },
       "language": "Python",
       "metrics": {
-        "CountLineCode": 210,
-        "CountDeclFunction": 2,
-        "CountDeclClass": 1,
-        "MaxCyclomaticStrict": 7,
+        "CountLineCode": 210.0,
+        "CountDeclFunction": 2.0,
+        "CountDeclClass": 1.0,
+        "MaxCyclomaticStrict": 7.0,
         "RatioCommentToCode": 0.15
       },
       "archs": [
@@ -95,10 +95,10 @@
       },
       "language": "Python",
       "metrics": {
-        "CountLineCode": 90,
-        "CountDeclFunction": 1,
-        "CountDeclClass": 0,
-        "MaxCyclomaticStrict": 8,
+        "CountLineCode": 90.0,
+        "CountDeclFunction": 1.0,
+        "CountDeclClass": 0.0,
+        "MaxCyclomaticStrict": 8.0,
         "RatioCommentToCode": 0.2
       },
       "archs": [
@@ -120,10 +120,10 @@
       },
       "language": "Python",
       "metrics": {
-        "CountLineCode": 120,
-        "CountDeclFunction": 3,
-        "CountDeclClass": 0,
-        "MaxCyclomaticStrict": 6,
+        "CountLineCode": 120.0,
+        "CountDeclFunction": 3.0,
+        "CountDeclClass": 0.0,
+        "MaxCyclomaticStrict": 6.0,
         "RatioCommentToCode": 0.18
       },
       "archs": [
@@ -145,10 +145,10 @@
       },
       "language": "Python",
       "metrics": {
-        "CountLineCode": 140,
-        "CountDeclFunction": 1,
-        "CountDeclClass": 1,
-        "MaxCyclomaticStrict": 6,
+        "CountLineCode": 140.0,
+        "CountDeclFunction": 1.0,
+        "CountDeclClass": 1.0,
+        "MaxCyclomaticStrict": 6.0,
         "RatioCommentToCode": 0.16
       },
       "archs": [
@@ -170,10 +170,10 @@
       },
       "language": "Python",
       "metrics": {
-        "CountLineCode": 60,
-        "CountDeclFunction": 1,
-        "CountDeclClass": 0,
-        "MaxCyclomaticStrict": 4,
+        "CountLineCode": 60.0,
+        "CountDeclFunction": 1.0,
+        "CountDeclClass": 0.0,
+        "MaxCyclomaticStrict": 4.0,
         "RatioCommentToCode": 0.22
       },
       "archs": [
@@ -195,14 +195,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 5,
-        "CyclomaticModified": 5,
-        "Essential": 2,
-        "MaxNesting": 2,
-        "CountLineCode": 28,
-        "CountStmt": 20,
-        "CountParams": 2,
-        "CountPath": 10
+        "CyclomaticStrict": 5.0,
+        "CyclomaticModified": 5.0,
+        "Essential": 2.0,
+        "MaxNesting": 2.0,
+        "CountLineCode": 28.0,
+        "CountStmt": 20.0,
+        "CountParams": 2.0,
+        "CountPath": 10.0
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -223,14 +223,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 7,
-        "CyclomaticModified": 7,
-        "Essential": 2,
-        "MaxNesting": 3,
-        "CountLineCode": 45,
-        "CountStmt": 33,
-        "CountParams": 2,
-        "CountPath": 24
+        "CyclomaticStrict": 7.0,
+        "CyclomaticModified": 7.0,
+        "Essential": 2.0,
+        "MaxNesting": 3.0,
+        "CountLineCode": 45.0,
+        "CountStmt": 33.0,
+        "CountParams": 2.0,
+        "CountPath": 24.0
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -251,14 +251,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 8,
-        "CyclomaticModified": 8,
-        "Essential": 3,
-        "MaxNesting": 3,
-        "CountLineCode": 52,
-        "CountStmt": 38,
-        "CountParams": 2,
-        "CountPath": 30
+        "CyclomaticStrict": 8.0,
+        "CyclomaticModified": 8.0,
+        "Essential": 3.0,
+        "MaxNesting": 3.0,
+        "CountLineCode": 52.0,
+        "CountStmt": 38.0,
+        "CountParams": 2.0,
+        "CountPath": 30.0
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -279,14 +279,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 6,
-        "CyclomaticModified": 6,
-        "Essential": 2,
-        "MaxNesting": 2,
-        "CountLineCode": 40,
-        "CountStmt": 30,
-        "CountParams": 0,
-        "CountPath": 12
+        "CyclomaticStrict": 6.0,
+        "CyclomaticModified": 6.0,
+        "Essential": 2.0,
+        "MaxNesting": 2.0,
+        "CountLineCode": 40.0,
+        "CountStmt": 30.0,
+        "CountParams": 0.0,
+        "CountPath": 12.0
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -307,14 +307,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 4,
-        "CyclomaticModified": 4,
-        "Essential": 1,
-        "MaxNesting": 2,
-        "CountLineCode": 22,
-        "CountStmt": 15,
-        "CountParams": 0,
-        "CountPath": 6
+        "CyclomaticStrict": 4.0,
+        "CyclomaticModified": 4.0,
+        "Essential": 1.0,
+        "MaxNesting": 2.0,
+        "CountLineCode": 22.0,
+        "CountStmt": 15.0,
+        "CountParams": 0.0,
+        "CountPath": 6.0
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -335,14 +335,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 3,
-        "CyclomaticModified": 3,
-        "Essential": 1,
-        "MaxNesting": 1,
-        "CountLineCode": 18,
-        "CountStmt": 12,
-        "CountParams": 1,
-        "CountPath": 4
+        "CyclomaticStrict": 3.0,
+        "CyclomaticModified": 3.0,
+        "Essential": 1.0,
+        "MaxNesting": 1.0,
+        "CountLineCode": 18.0,
+        "CountStmt": 12.0,
+        "CountParams": 1.0,
+        "CountPath": 4.0
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -363,14 +363,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 6,
-        "CyclomaticModified": 6,
-        "Essential": 2,
-        "MaxNesting": 2,
-        "CountLineCode": 34,
-        "CountStmt": 24,
-        "CountParams": 2,
-        "CountPath": 14
+        "CyclomaticStrict": 6.0,
+        "CyclomaticModified": 6.0,
+        "Essential": 2.0,
+        "MaxNesting": 2.0,
+        "CountLineCode": 34.0,
+        "CountStmt": 24.0,
+        "CountParams": 2.0,
+        "CountPath": 14.0
       },
       "archs": [
         "Directory Structure/src/understand"
@@ -391,14 +391,14 @@
       },
       "language": "Python",
       "metrics": {
-        "CyclomaticStrict": 4,
-        "CyclomaticModified": 4,
-        "Essential": 1,
-        "MaxNesting": 2,
-        "CountLineCode": 20,
-        "CountStmt": 14,
-        "CountParams": 2,
-        "CountPath": 8
+        "CyclomaticStrict": 4.0,
+        "CyclomaticModified": 4.0,
+        "Essential": 1.0,
+        "MaxNesting": 2.0,
+        "CountLineCode": 20.0,
+        "CountStmt": 14.0,
+        "CountParams": 2.0,
+        "CountPath": 8.0
       },
       "archs": [
         "Directory Structure/src/util"
@@ -613,91 +613,91 @@
   "populations": {
     "routine": {
       "CyclomaticStrict": [
-        5,
-        7,
-        8,
-        6,
-        4,
-        3,
-        6,
-        4
+        5.0,
+        7.0,
+        8.0,
+        6.0,
+        4.0,
+        3.0,
+        6.0,
+        4.0
       ],
       "CountLineCode": [
-        28,
-        45,
-        52,
-        40,
-        22,
-        18,
-        34,
-        20
+        28.0,
+        45.0,
+        52.0,
+        40.0,
+        22.0,
+        18.0,
+        34.0,
+        20.0
       ],
       "MaxNesting": [
-        2,
-        3,
-        3,
-        2,
-        2,
-        1,
-        2,
-        2
+        2.0,
+        3.0,
+        3.0,
+        2.0,
+        2.0,
+        1.0,
+        2.0,
+        2.0
       ],
       "CountParams": [
-        2,
-        2,
-        2,
-        0,
-        0,
-        1,
-        2,
-        2
+        2.0,
+        2.0,
+        2.0,
+        0.0,
+        0.0,
+        1.0,
+        2.0,
+        2.0
       ]
     },
     "class": {
       "CountDeclMethod": [
-        6,
-        3
+        6.0,
+        3.0
       ],
       "CountClassCoupled": [
-        4,
-        2
+        4.0,
+        2.0
       ]
     },
     "file": {
       "CountLineCode": [
-        210,
-        90,
-        120,
-        140,
-        60
+        210.0,
+        90.0,
+        120.0,
+        140.0,
+        60.0
       ]
     },
     "project": {
       "CyclomaticStrict": [
-        5,
-        7,
-        8,
-        6,
-        4,
-        3,
-        6,
-        4
+        5.0,
+        7.0,
+        8.0,
+        6.0,
+        4.0,
+        3.0,
+        6.0,
+        4.0
       ],
       "CountLineCode": [
-        28,
-        45,
-        52,
-        40,
-        22,
-        18,
-        34,
-        20
+        28.0,
+        45.0,
+        52.0,
+        40.0,
+        22.0,
+        18.0,
+        34.0,
+        20.0
       ],
       "MaxCyclomaticStrict": [
-        8
+        8.0
       ],
       "MaxNesting": [
-        3
+        3.0
       ]
     }
   },
@@ -706,5 +706,6 @@
       "PercentLackOfCohesion"
     ]
   },
-  "parse_errors": []
+  "parse_errors": [],
+  "definitions": []
 }

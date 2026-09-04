@@ -224,11 +224,18 @@ def _structure_body(cfg: StructureRules) -> str:
         if max_new is not None
         else "# max_new_dependencies_per_file = 5  # unset: no limit"
     )
+    dupes = (
+        _line("duplicate_definitions", cfg.duplicate_definitions)
+        if cfg.duplicate_definitions is not None
+        else "# duplicate_definitions = 3  # unset: off, and costs no analysis"
+    )
     return _section(
         "[structure]",
         [
             "Architecture nodes come from Understand; the directory tree at `depth` by default.",
             "Cycle, fan and new-dependency rules each carry an error/warning severity.",
+            "duplicate_definitions = N reports a name bound to the SAME value in more than N",
+            "  files. Off by default; put the per-module idiom in the ignore list.",
         ],
         [
             _line("architecture", cfg.architecture),
@@ -238,6 +245,9 @@ def _structure_body(cfg: StructureRules) -> str:
             new_deps,
             _line("new_dependencies_severity", cfg.new_dependencies_severity),
             _line("fan_severity", cfg.fan_severity),
+            dupes,
+            _line("duplicate_definitions_severity", cfg.duplicate_definitions_severity),
+            _line("duplicate_definitions_ignore", cfg.duplicate_definitions_ignore),
         ],
     )
 

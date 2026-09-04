@@ -390,6 +390,95 @@ def _project_path(ent: Any, root: str = "") -> str | None:
     return path
 
 
+MODULE_VARIABLE_KIND: Final = "Variable ~Local ~Unknown, Object ~Local ~Unknown, Global Object"
+"""Entity kinds a module-level binding can have, across the languages Understand parses.
+
+Written as one string with negations rather than per language: ``db.ents`` takes a kind
+filter and answers nothing for a language that has no such kind, so a project in any one
+language pays for the others only in the filter. ``~Local`` is what keeps function bodies
+out -- a local of the same name in forty routines is not a scattered definition -- and
+``~Unknown`` drops the bindings Understand infers for imports it could not resolve.
+
+Whether a binding is really at module level is decided by its ``Definein`` owner rather
+than by this string, because Understand gives a class attribute the same kind as a module
+variable in several languages.
+"""
+
+DEFINITION_SPAN: Final = 12
+"""How many lines past the binding the lexer will look for the end of its initialiser.
+
+A value that does not close within twelve lines is left unread rather than truncated: a
+half-read initialiser would compare equal to another half-read one and report two unrelated
+definitions as copies of each other.
+"""
+
+
+def _is_file_kind(ent: Any) -> bool:
+    """Whether ``ent`` is the file that holds a binding, rather than a class or a routine.
+
+    Understand names the containing kind differently per language -- ``Module File`` for
+    Python, ``File`` elsewhere -- so the test is on the word rather than on an enumeration
+    that would silently answer ``False`` for a language nobody listed.
+    """
+    return "File" in str(ent.kindname())
+
+
+def _initialiser(file_ent: Any, line: int) -> str | None:
+    """The text bound to a name at ``line``, normalised, or ``None`` when it cannot be read.
+
+    Comments and whitespace are dropped so that two spellings of one constant compare equal;
+    ``_HORIZON_DAYS = 20  # monthly re-select`` and a bare ``_HORIZON_DAYS = 20`` are the same
+    definition and a rule that said otherwise would miss every copy anybody commented.
+
+    ``None`` is returned for a binding with no readable right-hand side -- an augmented
+    assignment, a tuple unpacking, a bare annotation, an initialiser that does not close
+    within :data:`DEFINITION_SPAN` lines. It is deliberately *not* an empty string: the caller
+    never compares two unknown values, because "both unreadable" is not "both the same".
+    """
+    try:
+        lexemes = list(file_ent.lexer().lexemes(line, line + DEFINITION_SPAN))
+    except Exception:  # noqa: BLE001 -- a file with no lexer is a file with no definitions
+        return None
+    rest = _after_assignment(lexemes, line)
+    return None if rest is None else "".join(_value_tokens(rest)) or None
+
+
+def _after_assignment(lexemes: list[Any], line: int) -> list[Any] | None:
+    """What follows the ``=`` that binds the name on ``line``, or ``None`` when there is none.
+
+    The search stops at the end of ``line``: a name with no assignment operator on its own
+    line is an annotation, a loop target or a tuple unpacking, and none of those is a value
+    this rule can compare.
+    """
+    for index, lexeme in enumerate(lexemes):
+        if lexeme.line_begin() > line:
+            return None
+        if lexeme.token() == "Operator" and lexeme.text() == "=":
+            return lexemes[index + 1 :]
+    return None
+
+
+def _value_tokens(lexemes: list[Any]) -> list[str]:
+    """The initialiser's text, comments and whitespace dropped, up to the end of the statement.
+
+    Bracket depth is what decides where the statement ends: a newline inside an open bracket
+    continues the value, and one outside it finishes it.
+    """
+    parts: list[str] = []
+    depth = 0
+    for lexeme in lexemes:
+        token, text = lexeme.token(), lexeme.text()
+        if token in ("Comment", "Whitespace"):
+            continue
+        if token == "Newline":
+            if depth <= 0:
+                break
+            continue
+        depth += (text in ("(", "[", "{")) - (text in (")", "]", "}"))
+        parts.append(text)
+    return parts
+
+
 def _count_params(ent: Any) -> float | None:
     """The synthetic ``CountParams`` (req 3.5): Understand's native metric is unset (verified)."""
     return float(len(ent.ents("Define", PARAMETER_KIND)))
@@ -474,6 +563,7 @@ class _Plan:
     architecture: str
     depth: int
     include_edges: bool
+    include_definitions: bool
     parse_errors: list[dict[str, object]]
 
 
@@ -589,6 +679,7 @@ def _plan(request: Mapping[str, object]) -> _Plan:
         architecture=_require_str(request, "architecture"),
         depth=_require_depth(request),
         include_edges=_require_bool(request, "include_edges", True),
+        include_definitions=_require_bool(request, "include_definitions", False),
         parse_errors=_require_objects(request, "parse_errors"),
     )
 
@@ -827,9 +918,42 @@ class _Extractor:
                 language: sorted(metrics) for language, metrics in sorted(self.unavailable.items())
             },
             "parse_errors": self.plan.parse_errors,
+            "definitions": self._definitions(),
         }
         document.update(self._edges())
         return document
+
+    # --- module-level definitions (the duplicate-definition rule) ------------------
+
+    def _definitions(self) -> list[dict[str, object]]:
+        """Every module-level binding in the project, with the text it is bound to.
+
+        Whole-project, not the affected files: the rule's question is "how many files define
+        this name with this value", and an answer computed over the changed files alone would
+        report the second copy of a constant and stay silent about the twentieth.
+
+        A binding is module-level when its ``Definein`` owner is a file. That is the test
+        rather than the entity kind, because Understand gives a class attribute the same kind
+        as a module variable in several of the languages it parses, and a field initialised
+        in one class is not a scattered definition.
+        """
+        if not self.plan.include_definitions:
+            return []
+        found: list[dict[str, object]] = []
+        for ent in self.db.ents(MODULE_VARIABLE_KIND):
+            for ref in ent.refs("Definein"):
+                path = _project_path(ref.file(), self.plan.root)
+                if path is None or not _is_file_kind(ref.ent()):
+                    continue
+                found.append(
+                    {
+                        "name": ent.name(),
+                        "path": path,
+                        "line": ref.line(),
+                        "value": _initialiser(ref.file(), ref.line()),
+                    }
+                )
+        return sorted(found, key=lambda row: (row["path"], row["line"], row["name"]))
 
     # --- architecture (req 6.7, 6.8, 9.7) -----------------------------------------
 

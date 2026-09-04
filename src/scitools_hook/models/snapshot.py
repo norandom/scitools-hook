@@ -423,6 +423,25 @@ class ParseError(DataModel):
     message: str
 
 
+class Definition(DataModel):
+    """One module-level name bound to a value, and where that binding is written.
+
+    ``value`` is the initialiser as the analyser's own lexer read it, with comments and
+    whitespace removed so that two spellings of one constant compare equal. It is ``None``
+    when the binding has no initialiser the lexer could recover -- an augmented assignment, a
+    tuple unpacking, a bare annotation -- and a definition without a value is never compared
+    against another, because "both unknown" is not "both the same".
+
+    ``path`` is repository-relative and ``line`` is where the name is bound, so a finding can
+    point at the copy the commit touched rather than at the concept in the abstract.
+    """
+
+    name: str
+    path: str
+    line: int
+    value: str | None = None
+
+
 class ProjectSnapshot(DataModel):
     """Immutable view of one database side; every rule works on these, never on live objects."""
 
@@ -439,6 +458,7 @@ class ProjectSnapshot(DataModel):
     populations: dict[Scope, dict[str, list[float]]] = Field(default_factory=dict)
     unavailable: dict[str, list[str]] = Field(default_factory=dict)
     parse_errors: list[ParseError] = Field(default_factory=list)
+    definitions: list[Definition] = Field(default_factory=list)
 
     @property
     def call_graph_holds(self) -> frozenset[str]:
