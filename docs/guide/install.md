@@ -20,8 +20,8 @@ wheel to the GitHub release for every `v*` tag, and flags the release as a pre-r
 automatically when the tag contains `a`, `b` or `rc`:
 
 ```bash
-gh release download v0.1.0a5 --repo norandom/scitools-hook --pattern '*.whl'
-uv tool install ./scitools_hook-0.1.0a5-py3-none-any.whl
+gh release download v0.1.0a6 --repo norandom/scitools-hook --pattern '*.whl'
+uv tool install ./scitools_hook-0.1.0a6-py3-none-any.whl
 ```
 
 There is no trusted publisher, no API token, and nothing to configure outside the
