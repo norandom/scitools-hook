@@ -210,6 +210,13 @@ For every ceiling in force it reports how much of the repository is already insi
 each candidate limit would cost in entities reported, and who the worst offenders are. A limit
 that already fits is reported `keep`. It writes nothing and applies nothing.
 
+**Do not derive limits from a codebase you are still reshaping.** `recommend` measures the
+shape the project has, so running it mid-refactor bakes in the shape somebody is working to
+change -- and the metric most affected is the one a routine-level cleanup moves most,
+`file.CountDeclFunction`, which goes up every time a long routine becomes several named
+helpers. Wait until the splits stop. This is a precondition, not a preference: a limit derived
+from a transitional state is one the project will have to argue with later.
+
 Two rules on what you take from it:
 
 - **A recommendation is not a baseline.** `baseline` records *where you are* — today's worst

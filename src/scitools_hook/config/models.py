@@ -106,6 +106,15 @@ that share a subset of the fields into a class of their own", "hold the base as 
 delegate to it"). Ratcheting them makes the Gate refuse the refactoring it just asked for,
 and the cheapest way past a refusal is to undo the extraction.
 
+**The ratchet is only half of that tension, and the other half is not solved here.** Turning
+the growth check off stops *this* extraction being refused; the absolute ceiling still refuses
+the twentieth. A file of twelve small named helpers is the outcome the routine limits ask for,
+so when the two pull against each other the file-level one should yield -- reported by a
+session using the Gate on a 770-file project, and measured on this one, where every routine
+and class ceiling fits at 99% while 69 of 210 files were outside `CountDeclFunction = 25`.
+Whether the shipped 25 is simply too low is a question for a second repository's measurement,
+not for this docstring.
+
 The dividing line is **whether the entity being judged can show the improvement**. When a
 routine is extracted, the simplification lands on a routine that did not exist before, which
 has no pre-change value and is therefore judged by the absolute limits alone (req 4.5); the

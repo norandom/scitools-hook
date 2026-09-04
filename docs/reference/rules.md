@@ -131,6 +131,32 @@ into a file that already parsed is untouched. What it does forgive is a new viol
 into a file that also stopped parsing before — and the alternative was measured to make the
 fix impossible.
 
+### When two limits pull against each other, the file-level one yields
+
+The routine limits ask for extraction — every hint for `MaxNesting`, `CyclomaticStrict` and
+`CyclomaticModified` says to move a block into its own named routine. Doing that raises
+`file.CountDeclFunction` and `file.CountLineCode` by construction.
+
+Half of that tension is already handled: those counts, and six others, ship with the
+**ratchet off**, so a single extraction can never be refused for making its container bigger.
+The other half is not. The ceiling still refuses the twentieth extraction, and **a file of
+twelve small named helpers is the outcome the routine limits are asking for**.
+
+So when the two disagree, raise the file-level limit rather than undoing the split. Measured
+on this repository: every routine and class ceiling contains at least 99% of its population,
+while **69 of 210 files** were outside `CountDeclFunction = 25` — the two rules disagreeing,
+in numbers.
+
+If your project is mid-cleanup, do not derive limits from it at all yet; see
+[the timing precondition](#a-note-on-timing) below.
+
+### A note on timing
+
+`recommend` measures the shape a project *has*. Run it while a routine-level cleanup is in
+flight and it bakes in the shape somebody is working to change — most of all
+`file.CountDeclFunction`, which rises with every long routine that becomes several named
+helpers. Wait until the splits stop.
+
 ### Scattered definitions: one value, many files
 
 `structure.duplicate_definition` reports a module-level name bound to the **same value** in
