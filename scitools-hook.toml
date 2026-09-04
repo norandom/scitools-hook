@@ -54,6 +54,15 @@ exclude = [
 # findings, all of them the synthetic project's vocabulary copied into up to fourteen test
 # modules each. They now live in tests/fixtures/.
 duplicate_definitions = 3
+# Raised from the default 5, with the measurement. A new test module for a feature in this
+# package scores 7: five modules it actually names -- analysis.ratchet, config.metric_names,
+# config.models, models.findings, models.snapshot -- plus src/scitools_hook/__init__.py and
+# src/scitools_hook/models/__init__.py, which it never names and which Python executes on the
+# way to the ones it does. 0.1.0a3 already stopped the rule charging for initialisers that
+# hold NO code; these two hold some (a version string and a re-export list), so they are
+# still counted, and the rule over-counts by about two for any file importing across this
+# package. Measured 2026-09-04, on the third test module in a row that it refused.
+max_new_dependencies_per_file = 7
 # `log` and `pytestmark` are the per-module idiom: written out in every module on purpose.
 # `FILES` is a false positive this rule produced on this repository and is worth recording:
 # `FILES = tuple(sorted(SOURCES))` is textually identical in four contract modules, but each
