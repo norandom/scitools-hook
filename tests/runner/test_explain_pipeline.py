@@ -37,6 +37,8 @@ import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes.api import FakeApiRunner, FakeRun
 from fakes.runner import ScriptedExtractor, UndStub, scripted
+from fixtures import CLI_NODE
+from fixtures.constants import BUILD, STARTED_AT
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import OutputSettings, Provenance, Settings
@@ -61,16 +63,9 @@ from scitools_hook.understand.api_runner import Operation
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.fake import FixtureUndCli, fixture_env
 
-STARTED_AT = "2026-01-02T03:04:05+00:00"
-"""One fixed instant, so a run is comparable between runs (``RunContext`` reads the clock)."""
-
-BUILD = "(Build 1204)"
-"""What ``und version`` prints on the machine the database manager was measured against."""
-
 SVG = "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
 """What the graph double writes; the pipeline never reads it, the assertions only stat it."""
 
-CLI_NODE = "Directory Structure/src/cli"
 UTIL_NODE = "Directory Structure/src/util"
 """Two architecture nodes, so a dependency between them crosses a boundary (req 9.2)."""
 

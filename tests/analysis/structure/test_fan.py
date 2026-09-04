@@ -21,7 +21,7 @@ import json
 from collections.abc import Sequence
 from typing import Final
 
-from fixtures import snapshot_fixture
+from fixtures import ADAPTER, APP, ENGINE, RULES, TEXT, snapshot_fixture
 
 from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.config.models import FanKey, Limit
@@ -34,12 +34,6 @@ from scitools_hook.models.snapshot import (
     ProjectSnapshot,
     Side,
 )
-
-APP: Final = "src/cli/app.py"
-ENGINE: Final = "src/analysis/engine.py"
-RULES: Final = "src/analysis/rules.py"
-ADAPTER: Final = "src/understand/adapter.py"
-TEXT: Final = "src/util/text.py"
 
 ALPHA: Final = EntityKey(scope="class", path="src/a.py", longname="a.Alpha")
 BETA: Final = EntityKey(scope="class", path="src/b.py", longname="b.Beta")

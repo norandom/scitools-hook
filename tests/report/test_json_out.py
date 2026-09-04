@@ -29,13 +29,13 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from fixtures import ENGINE
 
 from scitools_hook.config.models import Limit, ThresholdSpec
 from scitools_hook.models.findings import Finding, HighestValue, RunResult, TightenedLimit
 from scitools_hook.models.snapshot import EntityKey, EntityRef, ParseError
 from scitools_hook.report.json_out import render_json
 
-ENGINE: Final = "src/analysis/engine.py"
 BUILTINS: Final = "/opt/scitools/conf/understand/python/python3/builtins.py"
 
 _REMOTE_RENDER: Final = """\

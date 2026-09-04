@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from fixtures import APP, ENGINE
 
 from scitools_hook.config.metric_names import Scope
 from scitools_hook.config.models import Severity
@@ -47,8 +48,6 @@ from scitools_hook.report.human import (
     resolve_color,
 )
 
-ENGINE: Final = "src/analysis/engine.py"
-APP: Final = "src/cli/app.py"
 TEXT: Final = "src/util/text.cpp"
 
 ANSI: Final = re.compile(r"\x1b\[[0-9;]*m")

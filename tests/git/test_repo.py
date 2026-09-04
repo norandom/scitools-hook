@@ -71,6 +71,7 @@ from pathlib import Path
 
 import pytest
 from conftest import FakeCommandLog, GitRepoBuilder, MakeGitRepo
+from fixtures.constants import SHELL_COMMAND_NOT_FOUND_STATUS, TIMEOUT_KILLED_STATUS
 
 from scitools_hook.errors import AnalysisFailedError, ConfigError, NotAGitRepositoryError
 from scitools_hook.git.repo import (
@@ -85,25 +86,6 @@ from scitools_hook.models.progress import NullCommandLog
 FIVE_LINES = "one\ntwo\nthree\nfour\nfive\n"
 """Long enough that git scores a rename at 100% similarity rather than ignoring it."""
 
-TIMEOUT_KILLED_STATUS = 124
-"""GNU ``timeout(1)``'s status for a command it had to kill (requirement 12.8).
-
-Written here as a literal and **deliberately not** taken from
-:data:`~scitools_hook.git.repo.TIMEOUT_RC`: a test that reads a constant back out of the
-module under test asserts nothing about its value. Measured under exactly that spelling,
-``124 -> 125`` and ``124 -> 0`` both survived all 118 tests in this file and the whole
-2830-test suite besides. The number matters because it is the one an operator already
-associates with "this was killed at its limit"; recording 0 would report a git that never
-finished as a success.
-"""
-
-SHELL_COMMAND_NOT_FOUND_STATUS = 127
-"""The shell's status for an executable that could not be started (requirement 12.8).
-
-The counterpart of :data:`TIMEOUT_KILLED_STATUS`, held to the same rule for the same measured
-reason: ``127 -> 128`` and ``127 -> 0`` both survived this file while it compared the log
-against :data:`~scitools_hook.git.repo.MISSING_RC`.
-"""
 
 SLOW_GIT_SLEEP_S = 0.3
 """How long the stand-in ``git`` sleeps when a test needs a duration it knows independently.

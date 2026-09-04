@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Literal
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import APP, BUILD_PARSER, ENGINE, ENGINE_CLASS, snapshot_fixture
 
 from scitools_hook.analysis.thresholds import (
     ThresholdOutcome,
@@ -24,11 +24,6 @@ from scitools_hook.config.metric_names import Scope, parse_metric_name
 from scitools_hook.config.models import IgnoreRules, Limit, PathScope, Severity, ThresholdSpec
 from scitools_hook.models.findings import EffectiveThreshold, Finding
 from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot
-
-APP = "src/cli/app.py"
-ENGINE = "src/analysis/engine.py"
-BUILD_PARSER = EntityKey(scope="routine", path=APP, longname="app.build_parser", parameters="")
-ENGINE_CLASS = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
 
 
 @pytest.fixture

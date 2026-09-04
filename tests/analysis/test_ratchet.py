@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import APP, BUILD_PARSER, ENGINE_CLASS, RULES, snapshot_fixture
 
 from scitools_hook.analysis.ratchet import (
     attach_before,
@@ -37,15 +37,10 @@ from scitools_hook.models.snapshot import (
     Side,
 )
 
-APP = "src/cli/app.py"
-RULES = "src/analysis/rules.py"
-ENGINE = "src/analysis/engine.py"
-BUILD_PARSER = EntityKey(scope="routine", path=APP, longname="app.build_parser", parameters="")
 CHECK_COMMAND = EntityKey(
     scope="routine", path=APP, longname="app.check_command", parameters="args"
 )
 LEGACY_ENTRY = EntityKey(scope="routine", path=APP, longname="app.legacy_entry", parameters="")
-ENGINE_CLASS = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
 
 
 @pytest.fixture

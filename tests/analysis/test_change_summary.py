@@ -18,7 +18,17 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import (
+    ADAPTER,
+    APP,
+    BUILD_PARSER,
+    CLI_NODE,
+    ENGINE,
+    ENGINE_CLASS,
+    RULES,
+    TEXT,
+    snapshot_fixture,
+)
 
 from scitools_hook.analysis.change_summary import (
     DEFAULT_TOP_N,
@@ -39,25 +49,16 @@ from scitools_hook.models.change import (
 )
 from scitools_hook.models.snapshot import DepEdge, EntityKey, EntityRef, ProjectSnapshot
 
-APP = "src/cli/app.py"
-RULES = "src/analysis/rules.py"
-ENGINE = "src/analysis/engine.py"
-ADAPTER = "src/understand/adapter.py"
-TEXT = "src/util/text.py"
-
-CLI_NODE = "Directory Structure/src/cli"
 ANALYSIS_NODE = "Directory Structure/src/analysis"
 UNDERSTAND_NODE = "Directory Structure/src/understand"
 
 AFFECTED_FILES = frozenset({APP, RULES, ENGINE})
 """The change's files: the two it edited plus the one whose class moved with them."""
 
-BUILD_PARSER = EntityKey(scope="routine", path=APP, longname="app.build_parser", parameters="")
 CHECK_COMMAND = EntityKey(
     scope="routine", path=APP, longname="app.check_command", parameters="args"
 )
 LEGACY_ENTRY = EntityKey(scope="routine", path=APP, longname="app.legacy_entry", parameters="")
-ENGINE_CLASS = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
 
 
 @pytest.fixture

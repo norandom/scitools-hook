@@ -15,6 +15,7 @@ import inspect
 from enum import IntEnum
 
 import pytest
+from fixtures.constants import SHELL_COMMAND_NOT_FOUND_STATUS, TIMEOUT_KILLED_STATUS
 
 from scitools_hook import errors
 from scitools_hook.errors import (
@@ -103,19 +104,6 @@ def test_describe_rejects_an_unknown_code() -> None:
 
 
 # --- the two statuses recorded for child processes (req 12.8) ----------------
-
-TIMEOUT_KILLED_STATUS = 124
-"""GNU ``timeout(1)``'s status for a command it had to kill.
-
-The literal, written here rather than imported from the module under test: comparing a
-constant against itself asserts nothing about its value, and that exact tautology was measured
-surviving the **entire 3067-test suite** at four sites (``git/repo``, ``understand/und_cli``,
-``understand/api_runner`` and their tests) before task 11.2. A build recording 0 for a command
-that had to be killed would have reported a hang as a success with every gate green.
-"""
-
-SHELL_COMMAND_NOT_FOUND_STATUS = 127
-"""The shell's status for a command that could never be started, held to the same rule."""
 
 
 def test_the_recorded_child_statuses_are_the_conventional_numbers() -> None:

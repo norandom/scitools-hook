@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
+from fixtures import APP, ENGINE
 
 # jsonschema ships no type information and ``types-jsonschema`` is not a dev dependency.
 from jsonschema.validators import validator_for  # type: ignore[import-untyped]
@@ -52,8 +53,6 @@ from scitools_hook.report.sarif import (
     render_sarif,
 )
 
-ENGINE: Final = "src/analysis/engine.py"
-APP: Final = "src/cli/app.py"
 SPACED: Final = "src/legacy code/old parser.cpp"
 BUILTINS: Final = "/opt/scitools/conf/understand/python/python3/builtins.py"
 REPO_ROOT: Final = "/home/dev/repo"

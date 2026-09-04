@@ -33,9 +33,40 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
-from scitools_hook.models.snapshot import ProjectSnapshot
+from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot
+
+# --- the synthetic project's vocabulary -------------------------------------------
+#
+# The five paths, the four architecture nodes and the two entity keys below describe the
+# project the snapshots encode. They were written out in up to fourteen test modules each
+# until `structure.duplicate_definition` counted them; collecting them here is what that rule
+# asks for, and it is why a rename of the fixture project is now one edit rather than thirty.
+#
+# Only the values that were *identical* everywhere moved. Several modules bind these same
+# names to something else on purpose -- `APP` is an `EntityKey` in the threshold tests and
+# `TEXT` is a block of source in the contract project -- and those stay where they are.
+
+APP: Final = "src/cli/app.py"
+RULES: Final = "src/analysis/rules.py"
+ENGINE: Final = "src/analysis/engine.py"
+ADAPTER: Final = "src/understand/adapter.py"
+TEXT: Final = "src/util/text.py"
+
+CLI_NODE: Final = "Directory Structure/src/cli"
+ANALYSIS_NODE: Final = "Directory Structure/src/analysis"
+UNDERSTAND_NODE: Final = "Directory Structure/src/understand"
+UTIL_NODE: Final = "Directory Structure/src/util"
+
+BUILD_PARSER: Final = EntityKey(
+    scope="routine", path=APP, longname="app.build_parser", parameters=""
+)
+"""The routine the change makes worse: CyclomaticStrict 6 -> 12, MaxNesting 2 -> 4."""
+
+ENGINE_CLASS: Final = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
+"""The class that is affected without its own file changing (CountClassCoupled 4 -> 6)."""
+
 
 FIXTURES_DIR = Path(__file__).resolve().parent
 """Directory holding every static test fixture."""

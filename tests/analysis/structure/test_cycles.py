@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import json
 
-from fixtures import snapshot_fixture
+from fixtures import ENGINE, RULES, snapshot_fixture
 
 from scitools_hook.analysis.structure.cycles import find_new_cycles
 from scitools_hook.models.findings import Finding
 from scitools_hook.models.snapshot import DepEdge
-
-ENGINE = "src/analysis/engine.py"
-RULES = "src/analysis/rules.py"
 
 
 def edge(src: str, dst: str, refs: int = 1) -> DepEdge:

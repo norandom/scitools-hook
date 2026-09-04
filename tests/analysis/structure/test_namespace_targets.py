@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from fixtures import APP, ENGINE
+
 from scitools_hook.analysis.structure.coupling import (
     namespace_targets,
     new_dependencies,
@@ -26,9 +28,6 @@ from scitools_hook.models.snapshot import (
     EntityRef,
     ProjectSnapshot,
 )
-
-APP: Final = "src/cli/app.py"
-ENGINE: Final = "src/analysis/engine.py"
 
 
 def edge(src: str, dst: str, refs: int = 1) -> DepEdge:

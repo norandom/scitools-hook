@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
-from fixtures import snapshot_fixture
+from fixtures import ADAPTER, APP, ENGINE, RULES, TEXT, snapshot_fixture
 
 from scitools_hook.analysis.affected import resolve
 from scitools_hook.models.change import AffectedSet
@@ -26,12 +26,6 @@ from scitools_hook.models.snapshot import (
     ProjectSnapshot,
     Side,
 )
-
-APP = "src/cli/app.py"
-ENGINE = "src/analysis/engine.py"
-RULES = "src/analysis/rules.py"
-ADAPTER = "src/understand/adapter.py"
-TEXT = "src/util/text.py"
 
 
 def edge(src: str, dst: str, refs: int = 1) -> DepEdge:

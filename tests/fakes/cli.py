@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from fixtures.constants import STARTED_AT
+
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import Settings
 from scitools_hook.models.baseline import Baseline
@@ -32,7 +34,6 @@ from scitools_hook.runner.pipeline import Selection
 
 TOOL_VERSION = "9.2.0-test"
 UNDERSTAND_VERSION = "Understand 6.5 (Build 1204)"
-STARTED_AT = "2026-01-02T03:04:05+00:00"
 DB_PATH = "/cache/repo/after.und"
 
 

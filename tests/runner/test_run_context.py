@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 from conftest import FakeCommandLog, MakeGitRepo
+from fixtures.constants import SHELL_COMMAND_NOT_FOUND_STATUS, TIMEOUT_KILLED_STATUS
 
 from scitools_hook.config import loader as loader_module
 from scitools_hook.config.defaults import DEFAULT_THRESHOLDS
@@ -738,18 +739,6 @@ reads only standard output: a stub with a plan file would add a fixture layout t
 whole subject is what reaches the command log.
 """
 
-TIMEOUT_KILLED_STATUS = 124
-"""GNU ``timeout(1)``'s status for a probe that had to be killed (requirement 12.8).
-
-The literal, deliberately not :data:`~scitools_hook.exit_codes.TIMEOUT_RC` read back out of
-the code under test: that comparison is a tautology, and it was measured surviving the entire
-3067-test suite in the two sibling modules that used it. The number is the one an operator
-already reads as "killed at its limit", and it is the same one ``git`` and ``und`` record --
-the ``--verbose`` stream mixes all three, so it has one convention or none.
-"""
-
-SHELL_COMMAND_NOT_FOUND_STATUS = 127
-"""The shell's status for an interpreter that could not be started (requirement 12.8)."""
 
 PROBE_SLEEP_S = 0.3
 """How long the stand-in interpreter sleeps when a test needs a duration it knows itself."""

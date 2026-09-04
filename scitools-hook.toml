@@ -48,6 +48,19 @@ exclude = [
 # each scoring 5) are left visible on purpose. Configuring them away would be this project
 # teaching the habit its own defaults are written against.
 
+[structure]
+# One value written out in many files: the shape no complexity limit sees, because every
+# file involved is fine on its own. Measured 2026-09-04 before the fix: 13 groups over 87
+# findings, all of them the synthetic project's vocabulary copied into up to fourteen test
+# modules each. They now live in tests/fixtures/.
+duplicate_definitions = 3
+# `log` and `pytestmark` are the per-module idiom: written out in every module on purpose.
+# `FILES` is a false positive this rule produced on this repository and is worth recording:
+# `FILES = tuple(sorted(SOURCES))` is textually identical in four contract modules, but each
+# SOURCES is a DIFFERENT synthetic project. The rule compares initialiser text, so a value
+# that references another module-level name is only really equal when that name is too.
+duplicate_definitions_ignore = ["log", "logger", "pytestmark", "FILES"]
+
 # --- regions whose numbers are different in kind ---------------------------------
 # Three files in src/ are held to file and class counts that they cannot meet, for reasons
 # that are structural rather than about their quality. Each block below records the reason

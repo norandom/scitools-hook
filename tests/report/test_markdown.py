@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import APP, BUILD_PARSER, ENGINE, ENGINE_CLASS, RULES, snapshot_fixture
 
 from scitools_hook.analysis.change_summary import ReviewAids, build_summary, open_command
 from scitools_hook.models.cache import CachePaths
@@ -44,20 +44,11 @@ from scitools_hook.models.snapshot import EntityKey, EntityRef, ProjectSnapshot
 from scitools_hook.report.json_out import INDENT
 from scitools_hook.report.markdown import Format, render_summary
 
-APP: Final = "src/cli/app.py"
-RULES: Final = "src/analysis/rules.py"
-ENGINE: Final = "src/analysis/engine.py"
-
-CLI_NODE: Final = "Directory Structure/src/cli"
 ANALYSIS_NODE: Final = "Directory Structure/src/analysis"
 
 AFFECTED: Final = frozenset({APP, RULES, ENGINE})
 
 APP_FILE: Final = EntityKey(scope="file", path=APP, longname=APP)
-BUILD_PARSER: Final = EntityKey(
-    scope="routine", path=APP, longname="app.build_parser", parameters=""
-)
-ENGINE_CLASS: Final = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
 
 
 def cache_paths(root: Path = Path("/cache/repo")) -> CachePaths:

@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes import FakeUndCli
+from fixtures.constants import BUILD, STARTED_AT
 
 from scitools_hook.analysis.ratchet import within_limit
 from scitools_hook.config.defaults import default_settings
@@ -73,11 +74,6 @@ from scitools_hook.understand.snapshot import SnapshotExtractor, SnapshotTarget
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 """Where the committed before/after snapshots of the sample project live."""
 
-STARTED_AT = "2026-01-02T03:04:05+00:00"
-"""One fixed instant, so a result is comparable between runs (``RunContext`` reads the clock)."""
-
-BUILD = "(Build 1204)"
-"""What ``und version`` prints on the machine the database manager was measured against."""
 
 DROPPED = "PercentLackOfCohesion"
 """A real C++/Java class metric Python lacks; task 2.4 drops the shipped default and reports it."""

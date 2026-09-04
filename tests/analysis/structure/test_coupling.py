@@ -17,20 +17,13 @@ import json
 from typing import Final
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import ADAPTER, APP, CLI_NODE, ENGINE, RULES, snapshot_fixture
 
 from scitools_hook.analysis.structure.coupling import evaluate_coupling, new_dependencies
 from scitools_hook.config.models import CouplingRule, Severity
 from scitools_hook.models.findings import Finding
 from scitools_hook.models.snapshot import DepEdge
 
-APP: Final = "src/cli/app.py"
-ENGINE: Final = "src/analysis/engine.py"
-RULES: Final = "src/analysis/rules.py"
-ADAPTER: Final = "src/understand/adapter.py"
-TEXT: Final = "src/util/text.py"
-
-CLI_NODE: Final = "Directory Structure/src/cli"
 ANALYSIS_NODE: Final = "Directory Structure/src/analysis"
 UNDERSTAND_NODE: Final = "Directory Structure/src/understand"
 UTIL_NODE: Final = "Directory Structure/src/util"

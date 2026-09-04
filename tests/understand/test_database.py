@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes import FakeCall, FakeUndCli
+from fixtures.constants import BUILD
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import ProjectSettings, Settings, UnderstandSettings
@@ -66,9 +67,6 @@ LEAKED_GIT_VARS = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
 )
 """Everything an outer ``git`` invocation exports that would steer these subprocesses."""
-
-BUILD = "(Build 1204)"
-"""What ``und version`` prints on the machine these tests were measured against."""
 
 
 @pytest.fixture(autouse=True)

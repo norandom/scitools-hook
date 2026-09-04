@@ -164,6 +164,11 @@ touches none of them is told nothing.
   never grouped. Two unreadable initialisers are not evidence that two definitions agree.
 - **Semantic equality.** `Decimal("0")` and `Decimal(0)` are different text and so different
   definitions. The rule under-reports; it does not guess.
+- **A value that references another module-level name.** The comparison is on text, so
+  `FILES = tuple(sorted(SOURCES))` reads as one definition in every module that writes it —
+  even where each `SOURCES` is a different dictionary. This is the rule's one *over*-reporting
+  case, found by running it on this project, and it is what `duplicate_definitions_ignore` is
+  for. Check the referenced names before you collect anything.
 - **The per-module idiom.** `log = logging.getLogger(__name__)` and `pytestmark` are written
   out in every module on purpose. Put them in `duplicate_definitions_ignore`. That list is
   names rather than values deliberately: the similar-looking

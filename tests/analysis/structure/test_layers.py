@@ -18,7 +18,7 @@ import json
 from typing import Final
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import ADAPTER, APP, ENGINE, RULES, TEXT, snapshot_fixture
 
 from scitools_hook.analysis.structure.layers import evaluate_layers
 from scitools_hook.config.models import LayerRule, Severity
@@ -30,11 +30,6 @@ ANALYSIS: Final = "Directory Structure/src/analysis"
 UNDERSTAND: Final = "Directory Structure/src/understand"
 UTIL: Final = "Directory Structure/src/util"
 
-APP: Final = "src/cli/app.py"
-ENGINE: Final = "src/analysis/engine.py"
-RULES: Final = "src/analysis/rules.py"
-ADAPTER: Final = "src/understand/adapter.py"
-TEXT: Final = "src/util/text.py"
 
 NODES: Final[dict[str, str]] = {
     APP: CLI,

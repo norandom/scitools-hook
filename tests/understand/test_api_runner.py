@@ -38,6 +38,7 @@ from typing import Any, Final
 
 import pytest
 from conftest import FakeCommandLog, SampleDatabases, Side, understand_probe
+from fixtures.constants import SHELL_COMMAND_NOT_FOUND_STATUS, TIMEOUT_KILLED_STATUS
 
 from scitools_hook.config.metric_names import SCOPE_KINDS
 from scitools_hook.errors import (
@@ -67,24 +68,6 @@ from scitools_hook.understand.locator import WORKER_PATH
 
 # --- the two recorded statuses, and the timing they are recorded with -------------
 
-TIMEOUT_KILLED_STATUS: Final = 124
-"""GNU ``timeout(1)``'s status for an operation that had to be killed (requirement 12.8).
-
-Written here as a literal and **deliberately not** taken from
-:data:`~scitools_hook.exit_codes.TIMEOUT_RC`: a test that reads a constant back out of the
-code under test asserts nothing about its value. Measured under exactly the spelling this
-file used before task 11.2 (``command_log.calls[0][2] == TIMEOUT_RC``), ``124 -> 0`` survived
-the **entire 3067-test suite**, so an Understand operation that hung until it was killed could
-have been logged as a success with every gate green.
-"""
-
-SHELL_COMMAND_NOT_FOUND_STATUS: Final = 127
-"""The shell's status for an interpreter that could not be started (requirement 12.8).
-
-The counterpart of :data:`TIMEOUT_KILLED_STATUS`, held to the same rule for the same measured
-reason: ``127 -> 0`` also survived all 3067 tests while this file compared the log against
-``MISSING_RC`` imported from the module under test.
-"""
 
 PYTHON_TRACEBACK_STATUS: Final = 1
 """CPython's exit status when an unhandled exception reaches the top of a script.

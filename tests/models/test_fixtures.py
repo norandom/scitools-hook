@@ -6,23 +6,26 @@ import json
 from statistics import mean
 
 import pytest
-from fixtures import Side, snapshot_fixture, snapshot_path
+from fixtures import (
+    ADAPTER,
+    APP,
+    BUILD_PARSER,
+    ENGINE,
+    ENGINE_CLASS,
+    RULES,
+    TEXT,
+    Side,
+    snapshot_fixture,
+    snapshot_path,
+)
 
 from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot
 
-APP = "src/cli/app.py"
-ENGINE = "src/analysis/engine.py"
-RULES = "src/analysis/rules.py"
-ADAPTER = "src/understand/adapter.py"
-TEXT = "src/util/text.py"
-
-BUILD_PARSER = EntityKey(scope="routine", path=APP, longname="app.build_parser", parameters="")
 CHECK_COMMAND = EntityKey(
     scope="routine", path=APP, longname="app.check_command", parameters="args"
 )
 LEGACY_ENTRY = EntityKey(scope="routine", path=APP, longname="app.legacy_entry", parameters="")
 MAIN = EntityKey(scope="routine", path=APP, longname="app.main", parameters="argv")
-ENGINE_CLASS = EntityKey(scope="class", path=ENGINE, longname="engine.Engine")
 APP_FILE = EntityKey(scope="file", path=APP, longname=APP)
 
 

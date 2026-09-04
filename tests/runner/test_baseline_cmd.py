@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes.runner import ScriptedExtractor, UndStub, scripted
+from fixtures.constants import BUILD, STARTED_AT
 
 from scitools_hook.config.models import (
     BaselineSettings,
@@ -48,12 +49,6 @@ from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.context import RunContext
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.fake import FixtureApiRunner, FixtureUndCli, fixture_env
-
-STARTED_AT = "2026-01-02T03:04:05+00:00"
-"""One fixed instant; the capture must be stamped with it rather than with the clock."""
-
-BUILD = "(Build 1204)"
-"""What ``und version`` prints on the machine the database manager was measured against."""
 
 BASELINE_FILE = "gate-baseline.json"
 """A repository-level baseline file, which is requirement 8.1's default location."""

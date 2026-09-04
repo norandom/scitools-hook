@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 from conftest import FakeCommandLog, FakeProgress, GitRepoBuilder, MakeGitRepo
 from fakes.runner import ScriptedExtractor, UndStub, scripted
+from fixtures.constants import BUILD, STARTED_AT
 
 from scitools_hook.analysis.recommend import Recommendation
 from scitools_hook.config.models import (
@@ -47,8 +48,6 @@ from scitools_hook.runner.recommend import NOTHING_NOTE, RecommendCmd
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.fake import FixtureApiRunner, FixtureUndCli, fixture_env
 
-STARTED_AT = "2026-01-02T03:04:05+00:00"
-BUILD = "(Build 1204)"
 BASELINE_FILE = "gate-baseline.json"
 
 

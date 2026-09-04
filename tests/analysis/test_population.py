@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 import pytest
-from fixtures import snapshot_fixture
+from fixtures import APP, BUILD_PARSER, snapshot_fixture
 
 from scitools_hook.analysis.population import (
     IgnoreFilter,
@@ -25,8 +25,6 @@ from scitools_hook.models.snapshot import EntityKey
 VALUES = [1.0, 2.0, 2.0, 3.0, 6.0]
 """One vector every reducer accepts; ``2`` is its single mode."""
 
-APP = "src/cli/app.py"
-BUILD_PARSER = EntityKey(scope="routine", path=APP, longname="app.build_parser", parameters="")
 MAIN = EntityKey(scope="routine", path=APP, longname="app.main", parameters="argv")
 ENGINE_CLASS = EntityKey(scope="class", path="src/analysis/engine.py", longname="engine.Engine")
 APP_FILE = EntityKey(scope="file", path=APP, longname=APP)
