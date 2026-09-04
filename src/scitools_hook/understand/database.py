@@ -370,6 +370,20 @@ class DatabaseManager:
             shutil.rmtree(target, ignore_errors=True)
         self._prepare_root()
         self._und.create(target, languages, local=False)
+        if not target.exists():
+            # `und create` reports success and writes nothing when the name is not `.und`:
+            # `-db proj.uhd` exits 0 and creates no database, and `-db proj` exits 0 and
+            # creates `proj.und` beside the path that was asked for. Both measured against
+            # 6.5.1204. `cli.db.project_target` refuses those names before anything runs;
+            # this is the post-condition for every other caller, because a zero exit that
+            # produced nothing is the silent success this project refuses elsewhere.
+            raise AnalysisFailedError(
+                f"Understand reported success but created no database at {target}",
+                hint=(
+                    "Understand only creates a database whose name ends in .und. "
+                    f"Try {target.with_suffix('.und')}."
+                ),
+            )
         self._und.add(target, root, _und_exclusions(self._settings.project.exclude))
         self._und.analyze(target, None, all=True)
         return target

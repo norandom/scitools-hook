@@ -39,6 +39,7 @@ from scitools_hook.cli import common
 from scitools_hook.cli.config_cmd import effective_configuration
 from scitools_hook.cli.pipelines import assemble
 from scitools_hook.config.models import Settings
+from scitools_hook.errors import ConfigError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.cache import CachePaths
 from scitools_hook.models.git import IndexTarget
@@ -52,6 +53,17 @@ HELP = "Inspect and maintain the Understand database for this repository."
 PATH_HELP = "Print the path of this repository's analysis database."
 PROJECT_HELP = "Build an Understand project over the working tree, for opening in the GUI."
 OUT_HELP = "Where to write the project (default: scitools-hook.worktree.und in the repository)."
+
+PROJECT_SUFFIX: Final = ".und"
+"""The only name Understand will build a database under.
+
+Measured, because ``und`` does not say so: ``und create -db proj.uhd`` exits 0 and writes
+nothing, and ``und create -db proj`` exits 0 and writes ``proj.und`` -- so a name this rule
+lets through unchanged is a name that silently produces no project or one somewhere else.
+"""
+
+BAD_SUFFIX: Final = "an Understand project file is named .und"
+"""Why a name is refused; the hint carries the corrected path."""
 REBUILD_HELP = "Discard the analysis databases and analyse the project again."
 ANALYZE_HELP = "Bring the analysis database up to date with the index."
 EXPORT_ARCH_HELP = (
@@ -115,6 +127,27 @@ def path(ctx: typer.Context) -> None:
     common.emit_findings(str(_cache_of(repo, settings, options.env).after_db), None)
 
 
+def project_target(out: Path | None, root: Path) -> Path:
+    """Where the project goes: the default, the name as typed, or the refusal that says why.
+
+    A name with **no** suffix gains ``.und``, which is what Understand does with it anyway --
+    silently, and to a path the operator never sees. A name with a *different* suffix is
+    refused rather than corrected: ``--out report.json`` is a mistake about what this command
+    produces, and quietly writing ``report.und`` instead would hide it.
+    """
+    if out is None:
+        return (root / f"scitools-hook.worktree{PROJECT_SUFFIX}").resolve()
+    if out.suffix == PROJECT_SUFFIX:
+        return out.resolve()
+    if not out.suffix:
+        return out.with_suffix(PROJECT_SUFFIX).resolve()
+    raise ConfigError(
+        f"{out} cannot be an Understand project: {BAD_SUFFIX}",
+        key="--out",
+        hint=f"Try {out.with_suffix(PROJECT_SUFFIX)}.",
+    )
+
+
 def project(
     ctx: typer.Context,
     out: Annotated[Path | None, typer.Option("--out", help=OUT_HELP)] = None,
@@ -140,7 +173,7 @@ def project(
     repo = GitRepo.discover(options.cwd, options.command_log())
     settings, _ = effective_configuration(options, repo)
     manager, _ = _database(ctx)
-    target = (out or repo.root / "scitools-hook.worktree.und").resolve()
+    target = project_target(out, repo.root)
     common.echo_err(WORKTREE_NOTICE)
     built = manager.build_worktree_project(repo.root, repo.tracked_files(), target)
     common.emit_findings(str(built), None)

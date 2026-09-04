@@ -300,6 +300,18 @@ It needs no Understand installation and no repository. See
 
 ## `db`
 
+!!! warning "`db project --out` must name a `.und` file"
+
+    Understand only builds a database whose name ends in `.und`, and it does not say so:
+    `und create -db proj.uhd` **exits 0 and writes nothing**, and the next command fails with
+    *"An open database is required for this action"*, which names neither the file nor the
+    reason. With no extension it exits 0 and writes `proj.und`, leaving the path you asked for
+    empty.
+
+    So `--out ../facdrone.und` works, `--out ../facdrone` gains the suffix, and
+    `--out ../facdrone.uhd` is refused with the corrected path.
+
+
 Inspect and maintain the Understand database for this repository.
 
 ```console
