@@ -123,26 +123,4 @@ CountDeclClass = false
 [scope.schemas.thresholds.class]
 CountClassDerived = false
 
-[scope.cli-commands]
-# A Typer command's parameters ARE its command line: `check` has 13 because it offers 13
-# options, and `explain` has 12. `routine.CountParams` measures how much state a routine has
-# to be handed to do its work, which is a real cost for an internal routine and no cost at
-# all for an option list a person reads in `--help`. The limit stays 5 everywhere else in
-# these modules, including their helpers -- `check.render` is at 5 and is held to it.
-# Measured 2026-09-04: two routines in the package are over, both of them command bodies.
-paths = ["src/scitools_hook/cli/*.py"]
-
-[scope.cli-commands.thresholds.routine]
-CountParams = { max = 13 }
-
-[scope.orchestrator]
-# `runner/check.py` holds CheckPipeline, the one class that wires every rule to every
-# adapter: thresholds, ratchet, baseline, five structural evaluators, codecheck, the hint
-# catalogue. Coupling is what it is FOR, and a limit of 12 asks it to know less than the
-# run needs. Splitting it would move the same edges behind a facade and report a smaller
-# number for the same design. Measured 2026-09-04: CountClassCoupled 29.
-paths = ["src/scitools_hook/runner/check.py"]
-
-[scope.orchestrator.thresholds.class]
-CountClassCoupled = { max = 32 }
 
