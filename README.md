@@ -51,7 +51,8 @@ scitools-hook agent-rules --write AGENTS.md   # the limits, where your agent alr
 scitools-hook install-skills                  # the skills, at .agents/skills
 ```
 
-The last one writes three `SKILL.md` documents: `scitools-gate` (drive the CLI on a change),
+The last one writes four `SKILL.md` documents: `scitools-onboard` (enable a repository,
+deriving its limits from what it measures), `scitools-gate` (drive the CLI on a change),
 `scitools-improve` (work a grown-over repository back down, one commit at a time) and
 `scitools-adapt` (change the rules themselves, with the measurement behind each decision).
 The first two deliberately refuse to touch the configuration — an agent that can silence its

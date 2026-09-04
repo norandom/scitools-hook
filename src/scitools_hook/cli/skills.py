@@ -37,7 +37,8 @@ HELP = "Install the agent skills that drive this tool into a repository."
 
 LONG_HELP = f"""{HELP}
 
-Writes three SKILL.md documents an agent host can load: `scitools-gate` (check a change),
+Writes four SKILL.md documents an agent host can load: `scitools-onboard` (enable a
+repository, deriving its limits from measurement), `scitools-gate` (check a change),
 `scitools-improve` (lower the complexity of a project commit by commit) and `scitools-adapt`
 (change the rules themselves, with the measurement behind each decision).
 
@@ -65,9 +66,9 @@ FORCE_HINT: Final = f"Pass {FORCE_OPTION} to replace it with the version this re
 UNUSABLE_HINT: Final = "Name a directory the skills can be written into."
 
 NEXT_STEPS: Final = (
-    "Your agent can now run /scitools-gate to check a change, /scitools-improve to lower this "
-    "project's complexity one commit at a time, and /scitools-adapt to change the rules with "
-    "the measurement behind each decision."
+    "Start with /scitools-onboard if this repository is new to the Gate. After that: "
+    "/scitools-gate checks a change, /scitools-improve lowers this project's complexity one "
+    "commit at a time, and /scitools-adapt changes the rules with the measurement behind each."
 )
 """What the skills are for, said once, where an operator has just installed them."""
 

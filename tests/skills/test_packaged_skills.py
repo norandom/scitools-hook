@@ -25,6 +25,7 @@ def test_both_skills_are_readable_from_the_installed_package() -> None:
     """The documents are package data, not files that happen to sit beside the source."""
     shipped = skills.shipped()
     assert [skill.name for skill in shipped] == [
+        "scitools-onboard",
         "scitools-gate",
         "scitools-improve",
         "scitools-adapt",

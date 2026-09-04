@@ -286,10 +286,11 @@ Options:
   --force    Replace a SKILL.md that differs from the shipped one.
 ```
 
-Writes three documents an agent host can load:
+Writes four documents an agent host can load:
 
 | Skill | Answers |
 | --- | --- |
+| `scitools-onboard` | *What is this repository, and what limits fit it?* Enabling it from measurement, once. |
 | `scitools-gate` | *May this change land?* Preconditions, `check`, `explain`, the exit-code contract. |
 | `scitools-improve` | *How does this repository get easier to change?* The baseline loop, one entity per commit. |
 | `scitools-adapt` | *Are these rules right for this repository?* The six-rung ladder, with a measurement per decision. |

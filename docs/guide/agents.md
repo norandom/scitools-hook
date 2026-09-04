@@ -261,6 +261,7 @@ version back.
 
 | Skill | Question it answers | May edit the configuration |
 | --- | --- | --- |
+| `scitools-onboard` | *What is this repository, and what limits fit it?* | yes, once, from measurement |
 | `scitools-gate` | *May this change land?* | no |
 | `scitools-improve` | *How does this repository get easier to change?* | no |
 | `scitools-adapt` | *Are these rules right for this repository?* | yes, with evidence |
@@ -268,6 +269,43 @@ version back.
 That last column is the design. The first two skills refuse to touch the configuration,
 because an agent that can silence its own findings has no gate; `scitools-adapt` is where
 that decision is made deliberately, and it is a separate invocation on purpose.
+
+### `scitools-onboard`
+
+The one-time act of deciding what a repository is. Eight commands in an order that matters,
+because each answers a question the next one needs — and the point of it is that **every line
+in the resulting configuration that deviates from a default carries the measurement that
+justifies it.**
+
+The shape it enforces, which is the opposite of how a configuration usually accretes:
+
+1. **Detect before configuring.** `init --detect` classifies the tree from what it declares
+   about itself and prints the evidence beside each line.
+2. **Install the hooks and the rules first**, on shipped defaults — a repository is not
+   enabled until a commit actually meets the gate.
+3. **Measure, and change only what the measurement says.** A ceiling reported `keep` fits;
+   paste only what `recommend` proposes, with its numbers in a comment above each line.
+4. **Capture a baseline and turn `adaptive` on.** This is the invariant that makes onboarding
+   safe to do once: limits are derived from evidence at the start, and from then on they can
+   only narrow.
+5. **Prove it** — a large `--all` inventory and `0 blocking` on `--staged` are both expected,
+   and confusing the two is the most common first-day mistake.
+
+Three readings it insists on, each from a measurement rather than a preference:
+
+- **A ceiling most of the repository fails is not a limit, it is noise.** A third of files
+  outside `CountDeclFunction = 25` means the default is wrong there, not that the codebase is.
+- **A ceiling the repository fits, with a handful outside it, is working.** Those are
+  outliers; the ratchet holds them as `pre-existing`. Do not draw a scope around them —
+  scattered outliers do not cluster, and a scope round the three that blocked you has a worse
+  reason than none.
+- **When the routine limits and the file limits disagree, the file-level one yields.** Every
+  routine hint asks for extraction and extraction raises the file counts; a file of twelve
+  small named helpers is the outcome the routine limits are asking for.
+
+And one precondition, which is easy to skip and expensive to skip: **do not derive limits from
+a repository you are still reshaping.** `recommend` measures the shape a project has, so
+running it mid-cleanup bakes in the shape somebody is working to change.
 
 ### `scitools-gate`
 
