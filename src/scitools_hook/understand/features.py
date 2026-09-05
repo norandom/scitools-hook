@@ -30,10 +30,12 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-from scitools_hook.errors import GateError
+from scitools_hook.config.models import Settings
+from scitools_hook.errors import ConfigError, GateError
 from scitools_hook.models.cache import CachePaths
 from scitools_hook.models.understand import Availability, Feature, FeatureReport
 from scitools_hook.understand.api_runner import ApiRunner
+from scitools_hook.understand.und_arch import DIRECTORY_STRUCTURE
 from scitools_hook.understand.und_cli import (
     ALL,
     GitSource,
@@ -211,6 +213,106 @@ def _one_commit(scratch: Path) -> str | None:
             return None
         answer = done.stdout.strip()
     return answer or None
+
+
+ASKED_BY: Final[dict[str, Feature]] = {
+    "understand.sarif": Feature.UNDERSTAND_SARIF,
+    "understand.before_side": Feature.COMMIT_BEFORE,
+    "analysis.accuracy_floor": Feature.ACCURACY,
+    "structure.unused_routines": Feature.UNUSED_RULE,
+}
+"""Configuration key -> the feature it needs the build to offer (requirement 1.2).
+
+``understand.before_side`` is here for ``"commit"`` only: ``"auto"`` asks for the route
+*if the build has it* and falls back to the shadow tree otherwise, which is the whole point
+of the value and must not be refused (requirement 3.3).
+"""
+
+RUN_DOCTOR: Final = (
+    "Run `scitools-hook doctor` once: it measures what this build offers and records it "
+    "beside the analysis databases."
+)
+"""What to do about a missing or stale record. The check never probes; ``doctor`` does."""
+
+
+def asked_features(settings: Settings) -> dict[str, Feature]:
+    """The features this configuration asks the build for, by the key that asked (req 1.2)."""
+    enabled = {
+        "understand.sarif": settings.understand.sarif,
+        "understand.before_side": settings.understand.before_side == "commit",
+        "analysis.accuracy_floor": settings.analysis.accuracy_floor is not None,
+        "structure.unused_routines": settings.structure.unused_routines is not None,
+    }
+    return {key: ASKED_BY[key] for key, on in enabled.items() if on}
+
+
+def generated_name(settings: Settings, declared: bool) -> str | None:
+    """The architecture name that can only come from the build generating it, if any (req 4.2).
+
+    ``Directory Structure`` is built into every database and a declared architecture comes
+    from the repository's own file, so neither is this question. Anything else has to be a
+    name the build can generate -- and a name that is none of the three is a misspelling,
+    which is worth catching at configuration time rather than as ``und``'s "architecture not
+    found" after two analyses have run.
+    """
+    name = settings.structure.architecture
+    if name == DIRECTORY_STRUCTURE or declared:
+        return None
+    return name
+
+
+def refuse_unavailable(
+    settings: Settings, report: FeatureReport | None, build: str, declared: bool
+) -> None:
+    """Stop a run whose configuration needs something this build does not offer (req 1.2).
+
+    Fails **closed**: a missing record, or one measured on another build, is not permission.
+    A configuration that asks for nothing new needs no record at all, which is what keeps
+    requirement 1.3's promise that an untouched repository behaves as it always did.
+    """
+    asked = asked_features(settings)
+    wanted = generated_name(settings, declared)
+    if not asked and wanted is None:
+        return
+    if report is None or report.build != build:
+        keys = ", ".join(sorted(asked)) or "structure.architecture"
+        raise ConfigError(
+            f"this configuration asks what {build or 'this Understand'} offers, and no "
+            f"measurement of it was found; keys asking: {keys}",
+            hint=RUN_DOCTOR,
+        )
+    for key, feature in sorted(asked.items()):
+        _reject_feature(report, feature, key, build)
+    if wanted is not None:
+        _reject_architecture(report, wanted)
+
+
+def _reject_feature(report: FeatureReport, feature: Feature, key: str, build: str) -> None:
+    """One key, one feature, and the build's own reason for not having it."""
+    found = report.features.get(feature)
+    if found is not None and found.state == "available":
+        return
+    said = f": {found.detail}" if found is not None and found.detail else ""
+    state = "unverified" if found is None else found.state
+    raise ConfigError(
+        f"{key} needs {feature.value.replace('_', ' ')}, which {build} does not offer "
+        f"({state}{said})",
+        key=key,
+        hint=RUN_DOCTOR if state == "unverified" else "Remove the key, or use a build that has it.",
+    )
+
+
+def _reject_architecture(report: FeatureReport, wanted: str) -> None:
+    """An architecture name nothing can supply, with the names the build can (req 4.2)."""
+    offered = report.features[Feature.GENERATED_ARCHS].generated
+    if wanted in offered:
+        return
+    raise ConfigError(
+        f"structure.architecture names {wanted!r}, which is neither {DIRECTORY_STRUCTURE!r}, "
+        f"nor declared in this repository, nor one this build can generate",
+        key="structure.architecture",
+        hint=f"Architectures this build generates: {', '.join(offered) or '(none)'}.",
+    )
 
 
 def store_features(paths: CachePaths, report: FeatureReport) -> Path | None:

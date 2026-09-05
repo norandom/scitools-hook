@@ -70,6 +70,7 @@ from scitools_hook.understand.fake import (
     fixture_env,
     fixture_problem,
 )
+from scitools_hook.understand.features import load_features, refuse_unavailable
 from scitools_hook.understand.locator import WORKER_PATH, discover, verify
 from scitools_hook.understand.und_cli import (
     UndCli,
@@ -197,6 +198,7 @@ def build_context(options: ContextOptions) -> RunContext:
     root = None if repo is None else repo.root
     settings, provenance = load_settings(root, dict(options.cli_overrides), options.env)
     understand, und, api = build_adapters(settings, options)
+    _refuse_unavailable(settings, understand, repo, options.env)
     return RunContext(
         settings=settings,
         provenance=provenance,
@@ -210,6 +212,40 @@ def build_context(options: ContextOptions) -> RunContext:
         progress=options.progress,
         started_at=now(),
     )
+
+
+def _refuse_unavailable(
+    settings: Settings, understand: UnderstandEnv, repo: GitRepo | None, env: Mapping[str, str]
+) -> None:
+    """Stop before any analysis when this configuration needs what the build does not offer.
+
+    Here rather than in ``config.validate`` for a layering reason: what a build offers is
+    measured by the ``understand`` adapter and recorded in ``models``, and ``config`` is a
+    leaf that may import neither. The check reads what ``doctor`` measured; it never probes,
+    because a check must not pay a second and a half to answer a question that does not
+    change between runs (requirement 1.2).
+    """
+    paths = (
+        None
+        if repo is None
+        else CachePaths.for_repo(repo.common_dir, settings.understand.db_location, cache_dir(env))
+    )
+    declared = _has_declaration(settings, repo)
+    report = None if paths is None else load_features(paths)
+    refuse_unavailable(settings, report, understand.version, declared)
+
+
+def _has_declaration(settings: Settings, repo: GitRepo | None) -> bool:
+    """Whether this repository declares its own architecture in a file (requirement 6.3).
+
+    A declared architecture supplies the configured name itself, so the name is not a
+    question about the build. Only the file's presence is read here; whether it parses, and
+    what its root is called, is the database manager's business at declaration time.
+    """
+    named = settings.structure.architecture_file
+    if named is None or repo is None:
+        return False
+    return (repo.root / named).exists()
 
 
 def find_repository(cwd: Path, log: CommandLog) -> GitRepo | None:

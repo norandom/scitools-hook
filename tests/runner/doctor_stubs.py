@@ -21,9 +21,12 @@ from pathlib import Path
 
 from conftest import FakeCommandLog
 
-from scitools_hook.runner.context import ContextOptions
+from scitools_hook.models.cache import CachePaths
+from scitools_hook.models.understand import Availability, Feature, FeatureReport
+from scitools_hook.runner.context import ContextOptions, cache_dir
 from scitools_hook.runner.doctor import DoctorReport
 from scitools_hook.understand.fake import FAKE_VAR
+from scitools_hook.understand.features import FEATURES_FILE
 from scitools_hook.understand.locator import platform_bin
 
 UND_SCRIPT = """#!/bin/sh
@@ -299,6 +302,28 @@ def seam(tmp_path: Path, **extra: str) -> tuple[Path, dict[str, str]]:
     fixtures = tmp_path / "fixtures"
     fixtures.mkdir(parents=True, exist_ok=True)
     return fixtures, isolated_env(tmp_path, **{FAKE_VAR: str(fixtures), **extra})
+
+
+def seed_features(repo: Path, env: Mapping[str, str], build: str, **states: str) -> Path:
+    """Write a feature record beside a repository's databases, as ``doctor`` would.
+
+    Every feature reads ``available`` unless a keyword names it otherwise, so a test that
+    needs one feature missing says only that. Without this, any test enabling a key from the
+    understand-8-features specification would fail closed on a missing record -- which is the
+    correct behaviour and a useless thing to re-prove in every test.
+    """
+    paths = CachePaths.for_repo(repo.resolve() / ".git", "cache", cache_dir(env))
+    report = FeatureReport(
+        build=build,
+        features={
+            feature: Availability(state=states.get(feature.value, "available"), detail="seeded")
+            for feature in Feature
+        },
+    )
+    paths.root.mkdir(parents=True, exist_ok=True)
+    target = paths.root / FEATURES_FILE
+    target.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    return target
 
 
 def problem_about(report: DoctorReport, needle: str) -> str:
