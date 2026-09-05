@@ -112,7 +112,7 @@ def _understand_rows(diagnosis: UnderstandDiagnosis) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     rows.extend(_installation_rows(diagnosis.env))
     rows.append(("und version", diagnosis.und_version or NOT_FOUND))
-    rows.extend(_license_rows(diagnosis.license))
+    rows.append(("license", _license(diagnosis.license)))
     rows.append(("analysis probe", _analysis(diagnosis)))
     rows.append(("api mode", diagnosis.api_mode or NOT_VERIFIED))
     rows.extend((f"probe {probe.mode}", _probe(probe)) for probe in diagnosis.probes)
@@ -130,19 +130,11 @@ def _installation_rows(env: UnderstandEnv | None) -> list[tuple[str, str]]:
     return [*rows, ("python api", str(env.python_api_dir))]
 
 
-def _license_rows(status: LicenseStatus | None) -> list[tuple[str, str]]:
-    """What ``und`` said about licensing, quoted when it refused one (req 1.4).
-
-    The enabled options get a row of their own when ``und license`` listed any, because
-    ``ok`` alone has been wrong in the way that matters: a licence without ``API Access``
-    reads as licensed and cannot measure a thing.
-    """
+def _license(status: LicenseStatus | None) -> str:
+    """What ``und -isundlicensed`` said, quoted when it was not ``1`` (req 1.4)."""
     if status is None:
-        return [("license", NOT_FOUND)]
-    rows = [("license", "ok" if status.ok else f"unavailable: {status.text}".strip())]
-    if status.options:
-        rows.append(("license options", ", ".join(status.options)))
-    return rows
+        return NOT_FOUND
+    return "ok" if status.ok else f"unavailable: {status.text}".strip()
 
 
 def _analysis(diagnosis: UnderstandDiagnosis) -> str:

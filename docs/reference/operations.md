@@ -224,7 +224,9 @@ answers `Licensing Error: No license for CodeCheck.` and writes nothing.
 All three are licensing, all three are the operator's to fix with `und` itself, and none is
 this tool's to work around. See [licensing is done from the command
 line](../guide/install.md#licensing-is-done-from-the-command-line). The option the gate needs
-is **API Access**; `doctor` lists the enabled options and names it when it is missing. On 8.0
+is **API Access**; the tool never lists a licence's options (the command that does rewrote the
+licence file on 8.0), so a licence without it is caught by `doctor`'s analysis probe opening
+its scratch database through the API, and by a check at its first metric read. On 8.0
 CodeCheck refuses with *"No checks in this configuration are licensed to run"*, which the
 wrapper reports as a licence refusal (exit 4) rather than a broken analysis.
 

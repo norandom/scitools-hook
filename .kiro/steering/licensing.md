@@ -6,8 +6,11 @@ project debugs, inspects, or changes it.
 - Never run `und license`, `und -isundlicensed`, `und -licensehowmanydays`, or any
   `und -*license*` / `-*offline*` / `-*nodelock*` switch by hand. Never read or edit
   `~/.config/SciTools/License.conf`.
-- The tool itself may call `und -isundlicensed` inside `doctor` and the licence check of a run;
-  that code path is tested with fakes and is not to be exercised interactively "to see".
+- The tool itself calls `und -isundlicensed` inside `doctor` and the licence check of a run,
+  and no other licence command (user's instruction, 2026-09-05: "throwing an error early is
+  enough"). That code path is tested with fakes and is not to be exercised interactively "to
+  see". A licence without the API option is caught by `doctor`'s analysis probe opening its
+  scratch database through the API, and by a check at its first metric read (exit 4).
 - Measured 2026-09-05 on Understand 8.0 (Build 1262): an agent's `und license`,
   `-licensehowmanydays` and `-showofflinerequestcode` rewrote `License.conf` and removed the
   stored offline reply code. `-show…` was not read-only. The fix was the user's, with the vendor.

@@ -90,15 +90,9 @@ LICENSE_DOCS_URL: Final = "https://docs.scitools.com/help/licensing/command-line
 
 LICENSE_HINT: Final = (
     f"Licensing is done from the command line -- see {LICENSE_DOCS_URL}. "
-    "`und license` must list 'API Access' for the Gate to read metrics."
+    "The licence must carry the 'API Access' option for the Gate to read metrics."
 )
 """What every licensing refusal points at. The steps are the vendor's; the check is ours."""
-
-API_OPTION: Final = "API Access"
-"""The licence option the Gate depends on: every metric it reads comes through the Python API."""
-
-OPTIONS_HEADING: Final = "Enabled Options"
-"""The heading ``und license`` prints its option list under (8.0; absent on older builds)."""
 
 LICENSE_TEXT: Final = re.compile(
     r"licensing error|no und license found|no valid und license found|"
@@ -388,27 +382,27 @@ class UndCli:
         return answer
 
     def license_status(self) -> LicenseStatus:
-        """Whether a licence is there, which options it carries, and what ``und`` said (req 1.4).
+        """Whether a licence is there, from ``und -isundlicensed`` and nothing else (req 1.4).
 
         This reports rather than raises: ``doctor`` prints the status even when it is bad
-        (requirement 1.5), and it is the caller that decides to stop. ``und -isundlicensed``
-        answers ``1`` or ``0`` and is asked first because it is unambiguous; ``und license``
-        is then read for the enabled options on a licensed machine, and is the fallback that
-        decides the status on a build that does not know the switch.
+        (requirement 1.5), and it is the caller that decides to stop. The switch answers
+        ``1`` or ``0``, and the digit is the answer whatever the exit status: 6.5 exits 0
+        beside the 0 and 8.0 exits 2 (its licensing reference says so). Measured on 8.0.1262
+        before this read the digit: the probe fell through to ``und license`` and ``doctor``
+        printed ``license: ok`` on a machine where every ``und analyze`` failed. Anything
+        that is not a digit -- a build without the switch, an error -- is reported as not
+        established, with und's words, and nothing else is run: this is the one licence
+        switch the tool uses, on the user's instruction, because on 8.0 the "read-only"
+        licence commands rewrote the licence file.
         """
         probe = self._run(["-isundlicensed"])
         answer = probe.stdout.strip()
+        if answer == "1":
+            return LicenseStatus(ok=True)
         if answer == "0":
-            # The digit is the answer and the exit status is not: 6.5 exits 0 alongside the
-            # 0, and 8.0 exits 2 alongside it (its licensing reference says so). Measured on
-            # 8.0.1262 before this read `rc == 0`: the probe fell through to `und license`,
-            # whose new output carries no error line, and `doctor` printed `license: ok` on a
-            # machine where every `und analyze` failed.
             return LicenseStatus(ok=False, text="und -isundlicensed printed 0: no valid license")
-        told = self._run(["license"])
-        if probe.rc == 0 and answer == "1":
-            return LicenseStatus(ok=True, options=_enabled_options(told.output))
-        return _license_from(told)
+        said = probe.output.strip() or f"exit status {probe.rc} and no output"
+        return LicenseStatus(ok=False, text=f"und -isundlicensed did not answer 1 or 0: {said}")
 
     # --- database lifecycle -----------------------------------------------------
 
@@ -806,28 +800,6 @@ def _violations_export(found: list[Path], result: CommandResult, out_dir: Path) 
         stderr=result.stderr,
         hint=CONFIG_HINT,
     )
-
-
-def _license_from(told: CommandResult) -> LicenseStatus:
-    """``und license`` as the verdict: a licensed machine prints a reply code and no complaint."""
-    text = told.output.strip()
-    bad = told.rc != 0 or bool(LICENSE_TEXT.search(text)) or _has_error_line(text)
-    return LicenseStatus(ok=not bad, text=text if bad else "", options=_enabled_options(text))
-
-
-def _enabled_options(text: str) -> list[str]:
-    """The options ``und license`` lists as enabled, or ``[]`` when it lists none.
-
-    8.0 prints them one per line under an ``Enabled Options`` heading, after the reply code
-    and the licence-code table; earlier builds print no such block. The list ends at the
-    next heading, should a later build add one after it.
-    """
-    lines = [line.strip() for line in text.splitlines()]
-    if OPTIONS_HEADING not in lines:
-        return []
-    listed = [line for line in lines[lines.index(OPTIONS_HEADING) + 1 :] if line]
-    end = next((i for i, line in enumerate(listed) if line.endswith(":")), len(listed))
-    return listed[:end]
 
 
 def _has_error_line(text: str) -> bool:

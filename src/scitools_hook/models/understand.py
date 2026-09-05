@@ -40,19 +40,19 @@ class AnalyzeResult(DataModel):
 
 
 class LicenseStatus(DataModel):
-    """What ``und`` said about licensing; ``text`` quotes it when not ok (req 1.4).
+    """What ``und -isundlicensed`` said; ``text`` quotes ``und`` when not ok (req 1.4).
 
-    ``options`` is what ``und license`` lists under ``Enabled Options`` on a licensed
-    machine, and ``[]`` when it lists none -- which on a build before 8.0 means "unknown",
-    never "none". They are part of the status because ``ok`` alone is not the answer the
-    gate needs: on 2026-09-05 a re-activated licence carried GUI and command-line access and
-    not the API, ``-isundlicensed`` said ``1``, ``und analyze`` ran, and every metric read
-    failed with ``NoApiLicense``. Only the option list says what is missing.
+    Deliberately no more than that. A licence is a set of options and ``ok`` alone has been
+    wrong in the way that matters -- on 2026-09-05 a re-activated licence carried GUI and
+    command-line access and not the API, so ``1`` here and ``NoApiLicense`` on every metric
+    read -- but the command that lists the options is one of the licence commands that
+    rewrote the licence file that morning, so the tool does not run it. The missing option
+    is caught where it bites: ``doctor``'s analysis probe opens its scratch database through
+    the API, and a check exits 4 at the first metric read.
     """
 
     ok: bool
     text: str = ""
-    options: list[str] = Field(default_factory=list)
 
 
 class AnalysisProbe(DataModel):

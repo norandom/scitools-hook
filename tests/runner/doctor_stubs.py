@@ -36,7 +36,6 @@ done
 case "$1" in
   version) echo "{version}" ;;
   -isundlicensed) echo "{licensed}" ;;
-  license) printf '%s\n' "{license_text}" ;;
   *) echo "Error: No valid command found." >&2; exit 1 ;;
 esac
 """
@@ -127,11 +126,25 @@ earlier version of this stub invoked ``python3`` and did exactly that -- the tes
 proving nothing, which the surviving mutant is what exposed.
 """
 
+API_UNLICENSED_UPYTHON = """#!/bin/sh
+case "$2" in
+  ping) echo '{{"version": "{version}", "python": "3.12.0"}}' ;;
+  *) echo '{{"error": {{"type": "NoApiLicense", "message": "NoApiLicense: no API licence"}}}}' ;;
+esac
+"""
+"""A bundled interpreter licensed for everything but the API: the 2026-09-05 morning.
+
+``understand.version()`` answers, so the ping probe says ``ok``; ``understand.open`` refuses,
+so the first operation on a database answers the ``NoApiLicense`` envelope. The worker is run
+as ``upython worker.py <op>``, hence ``$2``.
+"""
+
 UPYTHON_SCRIPTS = {
     "ok": UPYTHON_SCRIPT,
     "broken": BROKEN_UPYTHON,
     "refusing": REFUSING_UPYTHON,
     "deep": DEEP_UPYTHON,
+    "api_unlicensed": API_UNLICENSED_UPYTHON,
 }
 """The three answers a bundled interpreter can give, selected by ``install(mode=...)``."""
 
@@ -168,24 +181,11 @@ def executable(path: Path, body: str) -> Path:
 
 @dataclass(frozen=True)
 class UndAnswers:
-    """What the stand-in ``und`` says: whether it is licensed, and how an analysis ends.
-
-    ``license_text`` replaces the whole ``und license`` output when a test needs a real
-    transcript (an option list, say); otherwise the stub prints a token that reads as
-    licensed or not to match ``licensed``.
-    """
+    """What the stand-in ``und`` says: whether it is licensed, and how an analysis ends."""
 
     licensed: bool = True
-    license_text: str | None = None
     analysis_rc: int = 0
     analysis_text: str = ""
-
-    @property
-    def license_output(self) -> str:
-        """What ``und license`` prints."""
-        if self.license_text is not None:
-            return self.license_text
-        return "ok" if self.licensed else "No license available"
 
 
 def install(
@@ -210,7 +210,6 @@ def install(
         UND_SCRIPT.format(
             version="(Build 1204)",
             licensed="1" if answers.licensed else "0",
-            license_text=answers.license_output,
             analysis_rc=answers.analysis_rc,
             analysis_text=answers.analysis_text,
         ),

@@ -1603,7 +1603,7 @@ def test_contract_version_reports_a_build(sample_databases: SampleSet) -> None:
 
 @pytest.mark.contract
 def test_contract_license_status_is_ok_on_a_licensed_machine(sample_databases: SampleSet) -> None:
-    """Licensed, with nothing to quote; the option list is the build's to fill (8.0 does)."""
+    """Licensed, with nothing to quote, from the one licence switch the tool runs."""
     status = UndCli(understand_env(sample_databases.und), _null_log()).license_status()
     assert status.ok is True
     assert status.text == ""

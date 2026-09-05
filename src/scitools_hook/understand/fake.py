@@ -50,7 +50,7 @@ from scitools_hook.models.snapshot import Side
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
 from scitools_hook.paths import classify_directory, classify_file
 from scitools_hook.understand.api_runner import ApiRunner, Operation
-from scitools_hook.understand.und_cli import API_OPTION, UndCli
+from scitools_hook.understand.und_cli import UndCli
 
 FAKE_VAR: Final = "SCITOOLS_HOOK_FAKE_UNDERSTAND"
 """The environment variable that turns the seam on; its value is the fixture directory."""
@@ -208,8 +208,8 @@ class FixtureUndCli(UndCli):
         return FIXTURE_VERSION
 
     def license_status(self) -> LicenseStatus:
-        """Always licensed, API included: there is no Understand behind the seam to refuse one."""
-        return LicenseStatus(ok=True, options=[API_OPTION])
+        """Always licensed: there is no Understand behind the seam to refuse one."""
+        return LicenseStatus(ok=True)
 
     def create(self, db: Path, languages: list[str], local: bool = True) -> None:
         """Create the database *directory*, because a ``.und`` is a directory (measured).

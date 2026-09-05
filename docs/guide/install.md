@@ -138,7 +138,6 @@ Understand
   python api:        /home/mc/scitools/bin/linux64/Python
   und version:       (Build 1262)
   license:           ok
-  license options:   GUI Access, Perpetual License, Export & Share Reports/Metrics, Command Line Access via Und, API Access, VS Code Plugin, Onboard
   analysis probe:    ok
   api mode:          upython
   probe upython:     ok (8.0.1262)
@@ -165,27 +164,29 @@ Problems
   none
 ```
 
-Six rows in that output are worth understanding before you need them.
+Five rows in that output are worth understanding before you need them.
 
 **`und version` says `(Build 1262)` and nothing else.** That is what `und version` prints on
 this build, as `(Build 1204)` was on 6.5. No product version. The Python API, asked
 separately, reports `8.0.1262`, which is why the two probe rows show a different string from
 the `und version` row.
 
-**`license options` is the row that says whether the gate can measure anything.** `license:
-ok` means `und -isundlicensed` printed `1`, and that has been true on a machine where every
-metric read failed: a licence carries options, and the one the gate reads every metric
-through is **API Access**. When `und license` lists the options and that one is missing,
-`doctor` records a problem naming it and pointing at the vendor's [command-line licensing
-page](https://docs.scitools.com/help/licensing/command-line-licensing.html). A build that
-prints no option list gets no row and no problem: unknown is not missing.
+**`license` comes from `und -isundlicensed` and nothing else.** `ok` means it printed `1`.
+That is the one licence switch the tool runs: the commands that list a licence's options
+rewrote the licence file on 8.0 (measured 2026-09-05), so the tool does not run them, and
+licensing stays yours, from the command line. A `0`, or any answer that is not a digit, is
+quoted as the problem and a check stops there with exit 4.
 
 **`analysis probe` runs what the hook runs.** The licence probe and the two API probes ask
 whether `und` and the `understand` module answer; none of them asks whether an analysis
 works. Measured on 8.0.1262 the morning the install was replaced: all three said yes while
 every `und analyze` on the machine failed with `No Server Response`. So `doctor` creates,
-adds and analyses a one-file project in a scratch directory and reports the result, quoting
-`und`'s own words when it fails.
+adds and analyses a one-file project in a scratch directory, then opens it through the API
+in the mode a check would use, and reports the result quoting `und`'s own words when it
+fails. A licence that carries command-line access and not **API Access** -- `1` from
+`-isundlicensed`, a clean analysis, `NoApiLicense` from `understand.open` -- is caught here,
+with the vendor's [command-line licensing
+page](https://docs.scitools.com/help/licensing/command-line-licensing.html) in the problem.
 
 **Both API probes are reported, not just the one in use.** The normal resolution path stops
 at the first mode that works. A diagnosis has the opposite job, so `doctor` runs both. This

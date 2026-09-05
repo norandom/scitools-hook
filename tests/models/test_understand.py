@@ -97,13 +97,6 @@ def test_license_status_distinguishes_ok_from_missing() -> None:
     assert (missing.ok, missing.text) == (False, "No Und License Found")
 
 
-def test_license_status_lists_no_options_until_und_names_some() -> None:
-    """``[]`` is "unknown", the answer of a build that prints no option list, and the default."""
-    assert LicenseStatus(ok=True).options == []
-    listed = LicenseStatus(ok=True, options=["GUI Access", "API Access"])
-    assert listed.options == ["GUI Access", "API Access"]
-
-
 def test_raw_violation_keeps_the_codecheck_row() -> None:
     violation = RawViolation(
         check_id="PY_A001",

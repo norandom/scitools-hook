@@ -79,7 +79,7 @@ from scitools_hook.understand.locator import (
     pinned_python,
     verify,
 )
-from scitools_hook.understand.und_cli import API_OPTION, LICENSE_HINT, UndCli
+from scitools_hook.understand.und_cli import DIRECTORY_STRUCTURE, UndCli
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
 # cannot parse a type-parameter list, and one such declaration costs the rest of the file
@@ -440,7 +440,7 @@ def _fixture_diagnosis(fixtures: Path) -> UnderstandDiagnosis:
         env=fixture_env(fixtures),
         verified=True,
         und_version=FixtureUndCli(fixtures).version(),
-        license=LicenseStatus(ok=True, options=[API_OPTION]),
+        license=LicenseStatus(ok=True),
         analysis=AnalysisProbe(ok=True),
         probes=[ApiProbe(mode="inprocess", ok=True, version=FIXTURE_API_VERSION, detail=FAKE_VAR)],
         api_mode="inprocess",
@@ -467,12 +467,12 @@ def _diagnose(
     cli = UndCli(found, options.log, timeout_s=PROBE_TIMEOUT_S)
     probes = RealProbes(cli=cli, log=options.log, env=options.env)
     version = _guarded(cli.version, "und version", problems)
-    license_status = _guarded(cli.license_status, "und license", problems)
+    license_status = _guarded(cli.license_status, "und -isundlicensed", problems)
     _reject_license(license_status, problems)
-    _reject_missing_api_option(license_status, problems)
-    analysis = _analysis_probe(cli, problems)
     answers = [_ask_probe(found, probes, mode, problems) for mode in PROBE_ORDER]
     env = _verified(found, preferred, version, answers, problems)
+    api = None if env is None else ApiRunner(env, options.log)
+    analysis = _analysis_probe(cli, api, problems)
     return (
         UnderstandDiagnosis(
             env=env or found,
@@ -484,7 +484,7 @@ def _diagnose(
             api_mode=None if env is None else env.api_mode,
             python=pin,
         ),
-        None if env is None else ApiRunner(env, options.log),
+        api,
     )
 
 
@@ -492,12 +492,15 @@ ANALYSIS_PROBE_SOURCE: Final = "def probe():\n    return 1\n"
 """The whole of the scratch project the analysis probe builds: one routine, no imports."""
 
 
-def _analysis_probe(cli: UndCli, problems: list[str]) -> AnalysisProbe:
-    """Create, add and analyse a one-file project, the way a check would (req 1.5).
+def _analysis_probe(cli: UndCli, api: ApiRunner | None, problems: list[str]) -> AnalysisProbe:
+    """Create, add, analyse and open a one-file project, the way a check would (req 1.5).
 
     Run whether or not the licence probe complained, because its answer is the one that
     names the cause: ``und -isundlicensed`` can only say ``0``, while ``und analyze`` says
     ``No Server Response`` or ``Licensing Error: ...`` -- the line an operator can act on.
+    The database is then opened through the API in the mode a check would use, because that
+    is where a licence without the API option shows: ``-isundlicensed`` says ``1``, the
+    analysis runs, and ``understand.open`` answers ``NoApiLicense`` (measured 2026-09-05).
     The scratch directory is removed on the way out, and the database is created ``-local``
     so its analysis data lives inside it rather than in the user's application data.
     """
@@ -509,6 +512,8 @@ def _analysis_probe(cli: UndCli, problems: list[str]) -> AnalysisProbe:
             cli.create(db, ["Python"])
             cli.add(db, root, [])
             cli.analyze(db, None, all=True)
+            if api is not None:
+                api.run("archs", {"db": str(db), "architecture": DIRECTORY_STRUCTURE, "depth": 1})
     except GateError as failed:
         text = _quoted(failed)
         problems.append(f"analysis: und cannot analyse a one-file project: {text}")
@@ -528,23 +533,10 @@ def _quoted(failed: GateError) -> str:
     ``No Server Response`` says what to check where the wrapper's generic sentence does not.
     """
     said = getattr(failed, "und_output", "") or ""
-    return f"{failed}: {said}".strip(": ") if said else str(failed)
-
-
-def _reject_missing_api_option(status: LicenseStatus | None, problems: list[str]) -> None:
-    """A licence that lists its options and leaves out the API is a licence the Gate cannot use.
-
-    Only when the list is there: an older ``und`` prints none, and "unknown" must not read as
-    "missing". The problem names the option, quotes what is enabled, and points at the
-    vendor's command-line licensing page -- the operator does the licensing, never this tool.
-    """
-    options = [] if status is None else status.options
-    if options and API_OPTION not in options:
-        problems.append(
-            f"license: '{API_OPTION}' is not among the enabled options "
-            f"({', '.join(options)}); the Gate reads every metric through the Python API. "
-            f"{LICENSE_HINT}"
-        )
+    hint = getattr(failed, "hint", "") or ""
+    return " ".join(
+        part for part in (f"{failed}: {said}".strip(": ") if said else str(failed), hint) if part
+    )
 
 
 def _reject_license(status: LicenseStatus | None, problems: list[str]) -> None:
