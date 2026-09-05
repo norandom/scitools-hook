@@ -40,7 +40,34 @@ class AnalyzeResult(DataModel):
 
 
 class LicenseStatus(DataModel):
-    """What ``und`` said about licensing; ``text`` quotes it when not ok (req 1.4)."""
+    """What ``und`` said about licensing; ``text`` quotes it when not ok (req 1.4).
+
+    ``options`` is what ``und license`` lists under ``Enabled Options`` on a licensed
+    machine, and ``[]`` when it lists none -- which on a build before 8.0 means "unknown",
+    never "none". They are part of the status because ``ok`` alone is not the answer the
+    gate needs: on 2026-09-05 a re-activated licence carried GUI and command-line access and
+    not the API, ``-isundlicensed`` said ``1``, ``und analyze`` ran, and every metric read
+    failed with ``NoApiLicense``. Only the option list says what is missing.
+    """
+
+    ok: bool
+    text: str = ""
+    options: list[str] = Field(default_factory=list)
+
+
+class AnalysisProbe(DataModel):
+    """Whether ``und`` can analyse anything at all right now, and what it said when it cannot.
+
+    The API probes ask whether the ``understand`` module loads; the licence probe asks
+    ``und -isundlicensed``. Neither asks the question the gate actually depends on, and
+    8.0.1262 showed the gap the morning the install was replaced: ``-isundlicensed`` had
+    fallen through to ``und license``, whose new output carries no error line, both API
+    probes answered ``ok (8.0.1262)``, ``doctor`` printed ``license: ok`` and ``Problems:
+    none`` -- and every ``und analyze`` on the machine was failing with "No Server
+    Response". A session driving the gate spent its morning on that before asking for a
+    probe that runs what the hook runs. This is that probe: a one-file project, created,
+    added and analysed in a scratch directory.
+    """
 
     ok: bool
     text: str = ""

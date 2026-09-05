@@ -85,12 +85,35 @@ from scitools_hook.understand.locator import pinned_python
 DEFAULT_TIMEOUT_S: Final = 900
 """Ceiling for one ``und`` call: a full analysis of a large repository still fits."""
 
+LICENSE_DOCS_URL: Final = "https://docs.scitools.com/help/licensing/command-line-licensing.html"
+"""Where licensing is done. From the command line, by the operator, never by this tool."""
+
+LICENSE_HINT: Final = (
+    f"Licensing is done from the command line -- see {LICENSE_DOCS_URL}. "
+    "`und license` must list 'API Access' for the Gate to read metrics."
+)
+"""What every licensing refusal points at. The steps are the vendor's; the check is ours."""
+
+API_OPTION: Final = "API Access"
+"""The licence option the Gate depends on: every metric it reads comes through the Python API."""
+
+OPTIONS_HEADING: Final = "Enabled Options"
+"""The heading ``und license`` prints its option list under (8.0; absent on older builds)."""
+
 LICENSE_TEXT: Final = re.compile(
     r"licensing error|no und license found|no valid und license found|"
-    r"noapilicense|no api license",
+    r"noapilicense|no api license|no server response|license is invalid|"
+    r"no checks in this configuration are licensed",
     re.IGNORECASE,
 )
-"""The licensing sentences built into ``und``, and nothing looser (requirement 1.4)."""
+"""The licensing sentences built into ``und``, and nothing looser (requirement 1.4).
+
+``No Server Response`` is 8.0's: with no valid offline or node-locked code the build falls
+back to its licence server, and on a machine kept off the network that is the whole of what
+``und analyze`` says, at exit status 2. It is a licensing failure and is mapped to one (exit
+4, requirement 1.4) rather than to a generic analysis failure, so the hook's message names
+the licence and not the code. Measured on 8.0.1262, the day the install was replaced.
+"""
 
 ERROR_LINE: Final = re.compile(r"^\s*Error:\s*(?P<message>.+?)\s*$")
 """``Error: <message>`` — a parse error from ``analyze``, or a refusal from anything else."""
@@ -365,27 +388,27 @@ class UndCli:
         return answer
 
     def license_status(self) -> LicenseStatus:
-        """Whether a license is available, and what ``und`` said when it is not (req 1.4).
+        """Whether a licence is there, which options it carries, and what ``und`` said (req 1.4).
 
         This reports rather than raises: ``doctor`` prints the status even when it is bad
         (requirement 1.5), and it is the caller that decides to stop. ``und -isundlicensed``
-        answers ``1`` or ``0`` and is preferred because it is unambiguous; ``und license``
-        is the fallback for a build that does not know the switch.
+        answers ``1`` or ``0`` and is asked first because it is unambiguous; ``und license``
+        is then read for the enabled options on a licensed machine, and is the fallback that
+        decides the status on a build that does not know the switch.
         """
         probe = self._run(["-isundlicensed"])
         answer = probe.stdout.strip()
-        if probe.rc == 0 and answer == "1":
-            return LicenseStatus(ok=True)
-        if probe.rc == 0 and answer == "0":
+        if answer == "0":
+            # The digit is the answer and the exit status is not: 6.5 exits 0 alongside the
+            # 0, and 8.0 exits 2 alongside it (its licensing reference says so). Measured on
+            # 8.0.1262 before this read `rc == 0`: the probe fell through to `und license`,
+            # whose new output carries no error line, and `doctor` printed `license: ok` on a
+            # machine where every `und analyze` failed.
             return LicenseStatus(ok=False, text="und -isundlicensed printed 0: no valid license")
-        return self._license_from_command()
-
-    def _license_from_command(self) -> LicenseStatus:
-        """Parse ``und license``; a licensed machine prints a reply code and no complaint."""
         told = self._run(["license"])
-        text = told.output.strip()
-        bad = told.rc != 0 or bool(LICENSE_TEXT.search(text)) or _has_error_line(text)
-        return LicenseStatus(ok=not bad, text=text if bad else "")
+        if probe.rc == 0 and answer == "1":
+            return LicenseStatus(ok=True, options=_enabled_options(told.output))
+        return _license_from(told)
 
     # --- database lifecycle -----------------------------------------------------
 
@@ -634,7 +657,7 @@ class UndCli:
             raise LicenseError(
                 "SciTools Understand reports that no valid license is available",
                 und_output=result.output.strip(),
-                hint="Check the license with `und license`, or set one with `und -setlicensecode`.",
+                hint=LICENSE_HINT,
             )
         if result.rc != 0:
             raise AnalysisFailedError(
@@ -783,6 +806,28 @@ def _violations_export(found: list[Path], result: CommandResult, out_dir: Path) 
         stderr=result.stderr,
         hint=CONFIG_HINT,
     )
+
+
+def _license_from(told: CommandResult) -> LicenseStatus:
+    """``und license`` as the verdict: a licensed machine prints a reply code and no complaint."""
+    text = told.output.strip()
+    bad = told.rc != 0 or bool(LICENSE_TEXT.search(text)) or _has_error_line(text)
+    return LicenseStatus(ok=not bad, text=text if bad else "", options=_enabled_options(text))
+
+
+def _enabled_options(text: str) -> list[str]:
+    """The options ``und license`` lists as enabled, or ``[]`` when it lists none.
+
+    8.0 prints them one per line under an ``Enabled Options`` heading, after the reply code
+    and the licence-code table; earlier builds print no such block. The list ends at the
+    next heading, should a later build add one after it.
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    if OPTIONS_HEADING not in lines:
+        return []
+    listed = [line for line in lines[lines.index(OPTIONS_HEADING) + 1 :] if line]
+    end = next((i for i, line in enumerate(listed) if line.endswith(":")), len(listed))
+    return listed[:end]
 
 
 def _has_error_line(text: str) -> bool:

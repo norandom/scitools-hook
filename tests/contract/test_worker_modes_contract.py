@@ -22,6 +22,7 @@ differently, and dangerously so.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -76,9 +77,30 @@ PROBE = """
 import sys
 sys.path.append({api_dir!r})
 import understand
-print(repr(understand.Metric.description({metric!r})))
+lookup = getattr(understand.Metric, "lookup", None)
+if lookup is None:
+    print(repr(understand.Metric.description({metric!r})))
+else:
+    found = lookup({metric!r})
+    print(repr("" if found is None else found.description()))
 """
 """A probe that talks to the API directly: the hang is in Understand, not in the wrapper."""
+
+
+RESOURCE_BLOCK = re.compile(
+    r"<br>|<img\b[^>]*>|<b>Targets By Language:</b>\s*<ul>.*?</ul>", re.DOTALL
+)
+"""What only the bundled interpreter adds to a description: built from resources it alone finds."""
+
+
+def described(answer: Mapping[str, object]) -> dict[str, str]:
+    """The descriptions in a catalogue answer, without the resource block, whitespace collapsed."""
+    descriptions = answer["descriptions"]
+    assert isinstance(descriptions, dict), f"no descriptions in {answer!r}"
+    return {
+        str(name): " ".join(RESOURCE_BLOCK.sub("", str(text)).split())
+        for name, text in descriptions.items()
+    }
 
 
 def run_in(mode: str, op: Operation, request: Mapping[str, object]) -> dict[str, object]:
@@ -110,16 +132,28 @@ def describe_probe(metric: str, budget: int) -> subprocess.CompletedProcess[str]
 
 
 def test_both_modes_answer_the_same_catalogue_document() -> None:
-    """The metric lists decide which thresholds run at all, so a difference is a silent skip."""
+    """The metric lists decide which thresholds run at all, so a difference is a silent skip.
+
+    The lists must match to the character. The descriptions are compared with one block
+    removed: measured on 8.0.1262, ``upython`` finds Understand's documentation resources
+    and an ordinary CPython loading the same module does not, so only the bundled
+    interpreter's answer carries the ``<br>``, the image and the "Targets By Language" list
+    built from them (2892 characters against 2006 for ``CountLineCode``). Nothing the gate
+    decides reads a description, so that is documentation depth, not a result -- but the
+    text around the block has to agree, and both have to say something.
+    """
     request = {
         "kinds": ["python function", "c class", "python file", "architecture"],
         "describe": [KNOWN_METRIC],
     }
 
-    under_upython, in_process = both_modes("catalogue", request)
+    under_upython = run_in("upython", "catalogue", request)
+    in_process = run_in("inprocess", "catalogue", request)
 
-    assert KNOWN_METRIC in under_upython
-    assert in_process == under_upython
+    assert KNOWN_METRIC in json.dumps(under_upython["metrics"])
+    assert in_process["metrics"] == under_upython["metrics"]
+    assert described(in_process)[KNOWN_METRIC]
+    assert described(in_process) == described(under_upython)
 
 
 def test_both_modes_answer_the_same_architecture_document(
@@ -164,7 +198,8 @@ def test_ping_differs_only_in_the_interpreter_that_answered() -> None:
     in_process = run_in("inprocess", "ping", {})
 
     assert under_upython["version"] == in_process["version"]
-    assert str(under_upython["version"]).startswith("6.")
+    # Major.minor.build, whatever the build: this asserted `startswith("6.")` until 8.0 arrived.
+    assert re.fullmatch(r"\d+\.\d+\.\d+", str(under_upython["version"]))
     assert in_process["python"] == ".".join(str(part) for part in sys.version_info[:3])
     assert set(under_upython) == set(in_process) == {"version", "python"}
 
@@ -196,5 +231,21 @@ def test_describing_a_metric_understand_does_not_have_never_returns_in_this_proc
     assert control.returncode == 0, control.stderr
     assert "Number of lines" in control.stdout, control.stdout
 
+    if understand_major() >= 8:
+        # 8.0's `Metric.lookup` answers None for an unknown id and returns at once (measured:
+        # 0.006 s in-process). The hang below is the pre-8.0 classmethod's, and is kept for
+        # any 6.x/7.x install this suite still meets.
+        # Not UNKNOWN_METRIC: 8.0 ships CountParams as a (disabled) HIS plugin metric, and
+        # `lookup` finds it -- measured, `name() == "Parameters"`. Ask for a name no build has.
+        answered = describe_probe("NoSuchMetricAtAll", HANG_BUDGET_S)
+        assert answered.returncode == 0, answered.stderr
+        assert answered.stdout.strip() in ("''", '""'), answered.stdout
+        return
     with pytest.raises(subprocess.TimeoutExpired):
         describe_probe(UNKNOWN_METRIC, HANG_BUDGET_S)
+
+
+def understand_major() -> int:
+    """The installed API's major version, read the way ``ping`` reads it."""
+    version = str(run_in("upython", "ping", {})["version"])
+    return int(version.split(".", 1)[0])

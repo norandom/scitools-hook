@@ -413,6 +413,32 @@ Severity and ratchet stay independent: `analysis.ratchet` reads `severity` only 
 snapshots -- an `Essential` ratchet regression on `src/cli/app.py` is still raised, and is now
 a warning rather than a block.
 
+### Understand 8.0 (Build 1262) replaced 6.5 (Build 1204) -- 2026-09-05
+
+The install under `/home/mc/scitools` was swapped in place by the user. Everything here is measured on that build unless it says otherwise; the licence work in the middle of it was the user's (agents never run a licence command -- `.kiro/steering/licensing.md`).
+
+**What broke, and the fix that shipped as 0.1.0a7**
+- `understand.Metric.list()` returns `Metric` objects, `description` is an instance method, `Metric.lookup(id)` is new. The a6 worker sorted the objects and died in `json.dumps` (`TypeError: Object of type Metric is not JSON serializable`) -- exit 5 on any repository with `project.languages` set, unchanged behaviour without it (the catalogue is asked only then). Worker takes ids off the objects, describes through `lookup`, keeps the 7.x spellings as fallback.
+- `und -isundlicensed` prints `0` with exit status 2 (6.5: 0). The wrapper required rc 0, fell through to `und license`, and `doctor` said `license: ok` while every `und analyze` failed with `No Server Response`. The digit decides now; `No Server Response`, `license is Invalid` and CodeCheck's `No checks in this configuration are licensed to run` are licensing texts (exit 4).
+- A licence is a set of *options*: GUI Access, Perpetual License, Export & Share Reports/Metrics, Command Line Access via Und, API Access, VS Code Plugin, Onboard. A re-activated licence without `API Access` was `1` for `-isundlicensed`, analysed, and failed every metric read with `NoApiLicense`. `LicenseStatus.options` carries the list; `doctor` prints it and names the missing option with the vendor's command-line licensing URL.
+- `doctor` now creates/adds/analyses a one-file scratch project (`analysis probe` row): the licence probe and the API probes all said yes on a machine where nothing analysed.
+- `understand.open` on a bare `.und` directory raises `DBUnableOpen` (6.5: `DBEmpty`); the `DBUnableOpen` hint now goes on to the rebuild.
+- Metric descriptions differ between `upython` and an ordinary CPython loading the same module: only the bundled interpreter finds the documentation resources and adds `<br>`, `<img>` and a "Targets By Language" list (2892 vs 2006 characters for `CountLineCode`). The cross-mode contract compares descriptions with that block removed; the metric lists must still match exactly.
+- 8.0 ships `CountParams` as a HIS plugin metric with a description; the gate still computes its own (the plugin metric is unset for Python), so the synthetic description wins.
+
+**What did not break**
+- `und create/add/analyze`, the shadow trees, the PATH-directory Python pin (`und` still runs bare `python` from `PATH`; none on `PATH` still means the Python 2 model, where `[first, *rest] = xs` still fails). `-PythonVersion` is not a switch; the 8.0 settings are `PythonSetVersion Python2|Python3` and `PythonExe`.
+- PEP 695 / PEP 654: 7.2 taught the parser type parameters, `type` aliases and `except*`. The thirteen constructs from `report/hints.py` analyse with `Errors:0` under the pin. The 6.5 measurement stays in the docs, dated; the ruff ignores and the acknowledgement suggestions are deliberately not lifted yet ("no parse error" is not "every routine after it is in the database").
+- A file no build reads: `def generic(x:` -- `expected identifier at token return`, then `expected token ':' at token EOF`, and the routine after it is gone from the database (the e2e fixture now, since the PEP 695 one parses). A PEP 750 t-string costs one error on its line and nothing after it.
+- Languages: `und create -languages` accepts the classic set plus **Rust** (needs a Cargo project; a bare `.rs` analyses to nothing). Go, Dart, COBOL, Tcl, Perl, Plm, Verilog and Delphi are "not a valid language" (`-quiet` hid that message on the first try).
+
+**Open on 8.0**
+- CodeCheck: configurations are plugins under `plugins/CodeCheck/{Configs,Published Standards}`; `Sandbox` does not exist. `und codecheck` writes `results.sarif` and, by default, `CodeCheckResultsByTable.csv` from `plugins/Solutions/codecheck6Compatability` (columns File, Violation, Line, Column, Entity, Kind, CheckID, Check Name, Check Short Description, Severity); the three 6.5 CSV exports are gone from `und`. This licence excludes CodeCheck, so the integration is unmeasured and unadapted -- the contract tests xfail with that reason.
+
+**New in 8.0, deferred until parity is established (user, 2026-09-05)**
+- SARIF: `und codecheck` always writes `results.sarif`, `und analyze -sarif` exists. The user's note: *"sarif could be useful for github actions"* -- GitHub code scanning ingests SARIF directly, so the gate's own SARIF writer and Understand's could feed the same upload step.
+- `undmcp` (MCP server; its probe spawned two `undaiserver --tcp 56767` processes that had to be killed -- keep it off the network boundary). `und create -gitcommit/-refdb/-gitrepo` (databases from a commit). `und arch -generate` (Git Stability and other generated architectures). `und analyze -accuracy`. New metrics: CountGlobalsModified/Set/Used and CountClassCoupledModified for Python, CognitiveComplexity (C/C++ only), CorePercentage, BidirectionalDepsPercent, CBRI*, comparison metrics; Unused-function filters for Python; CodeCheck `-gitfiles`, baselines, `-previous`, PYTH_02. `und ai` is a local LLM that downloads models over the network and is off by default -- the container must stay off the network.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |

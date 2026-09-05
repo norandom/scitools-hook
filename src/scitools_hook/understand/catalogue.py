@@ -84,14 +84,22 @@ class MetricCatalogue:
         return {str(name) for name in _as_list(metrics[kind], kind)}
 
     def _read(self, metric: str) -> str:
-        """One description, falling back to the declaration of a metric the Gate computes."""
+        """One description; a metric the Gate computes is described by the Gate.
+
+        The synthetic description wins even when Understand has one of its own: 8.0 ships
+        ``CountParams`` as a HIS plugin metric and describes it ("The number of parameters
+        ... PARAM metric"), while the number the gate reports is still its own count of
+        ``Parameter ~Catch`` entities, because the plugin metric is unset for Python
+        (measured on 8.0.1262). A description of a value nobody reads would mislead.
+        """
+        synthetic = SYNTHETIC_METRICS.get(metric)
+        if synthetic is not None:
+            return synthetic.description
         answer = self.runner.run("catalogue", {"kinds": [], "describe": [metric]})
         described = answer.get("descriptions")
         if not isinstance(described, dict) or metric not in described:
             raise _unusable(f"no description for {metric!r}", str(described)[:200])
-        text = str(described[metric])
-        synthetic = SYNTHETIC_METRICS.get(metric)
-        return text or (synthetic.description if synthetic is not None else "")
+        return str(described[metric])
 
 
 def as_availability(catalogue: MetricCatalogue) -> MetricAvailability:

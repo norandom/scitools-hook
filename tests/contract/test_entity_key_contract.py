@@ -272,7 +272,10 @@ def test_a_cpp_overload_pair_differs_in_nothing_but_its_parameters(
         ("routine", "native/shape.cpp", OVERLOADED)
     }
     records = [alpha.entities[key] for key in overloads]
-    assert {record.ref.kind for record in records} == {"C Public Member Const Function"}
+    # 6.5 spelled this `C Public Member Const Function`; 8.0 inserts `Method` after `Public`.
+    # The kind is informational -- the key never reads it -- so both spellings are one answer.
+    (kind,) = {record.ref.kind for record in records}
+    assert kind.startswith("C Public") and kind.endswith("Member Const Function"), kind
     assert {record.ref.name for record in records} == {"area"}
     assert len({record.ref.line for record in records}) == 2, "only the line separates them"
 

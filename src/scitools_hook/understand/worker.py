@@ -179,12 +179,61 @@ def _op_catalogue(api: Any, request: Mapping[str, object]) -> dict[str, object]:
     language. No database is involved: ``understand.Metric`` is a module-level accessor.
     """
     kinds = _require_str_list(request, "kinds")
-    result: dict[str, object] = {kind: sorted(api.Metric.list(kind)) for kind in kinds}
+    result: dict[str, object] = {kind: sorted(_metric_ids(api.Metric.list(kind))) for kind in kinds}
     answer: dict[str, object] = {"metrics": result}
     if "describe" in request:
         names = _require_str_list(request, "describe")
-        answer["descriptions"] = {name: api.Metric.description(name) for name in names}
+        answer["descriptions"] = {name: _metric_description(api, name) for name in names}
     return answer
+
+
+def _metric_ids(listed: Any) -> list[str]:
+    """The metric ids in a ``Metric.list`` answer, whichever API generation produced it.
+
+    Understand 8.0 changed ``understand.Metric.list()`` to return ``Metric`` objects instead
+    of id strings (the shipped "Breaking API changes in 8.0" page, item 1). Measured on
+    8.0.1262 with the 0.1.0a6 worker: the objects sorted without complaint and the answer
+    died in ``json.dumps`` -- ``TypeError: Object of type Metric is not JSON serializable``
+    -- so every catalogue request exited 1 with a traceback and the wrapper reported an
+    analysis failure (exit 5). The catalogue is asked only when ``project.languages`` is
+    configured, so a repository without that key ran as before and never noticed. The id is
+    what the request contract carries, so it is taken from the object when the object is
+    what came back and passed through when a string did.
+    """
+    return [item if isinstance(item, str) else str(item.id()) for item in listed]
+
+
+def _metric_description(api: Any, name: str) -> str:
+    """A metric's description under either API: ``lookup(id).description()`` or the old classmethod.
+
+    8.0 made ``description`` an instance method and added ``Metric.lookup(id)``; 7.x and
+    earlier had ``Metric.description(id)`` on the class. The lookup is preferred wherever it
+    exists, and an id the build does not know answers ``""`` -- the same answer the old
+    classmethod gave for an unknown name, so the caller's contract does not change.
+    """
+    lookup = getattr(api.Metric, "lookup", None)
+    if callable(lookup):
+        found = lookup(name)
+        return "" if found is None else _plain_description(str(found.description()))
+    return _plain_description(str(api.Metric.description(name)))
+
+
+_IMAGE_TAG = re.compile(r"<img\b[^>]*>")
+
+
+def _plain_description(text: str) -> str:
+    """The description without the illustrations only one interpreter can see.
+
+    Measured on 8.0.1262: ``upython`` describes ``CountLineCode`` in 2892 characters and an
+    ordinary CPython loading the same module answers 2006. The bundled interpreter finds
+    Understand's documentation resources and the other does not, and the block it builds
+    from them -- a ``<br>``, an ``<img src="CountLineCodeC.svg"/>`` and a "Targets By
+    Language" list -- is the whole difference. Nothing downstream renders an image from a
+    hint, so the tags are dropped on both sides; the list is real documentation and stays,
+    and the cross-mode contract in ``tests/contract/test_worker_modes_contract.py`` compares
+    descriptions with that block removed.
+    """
+    return _IMAGE_TAG.sub("", text)
 
 
 def _op_archs(api: Any, request: Mapping[str, object]) -> dict[str, object]:

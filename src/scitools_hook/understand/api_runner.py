@@ -64,6 +64,7 @@ from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand import worker
 from scitools_hook.understand.locator import WORKER_PATH
+from scitools_hook.understand.und_cli import LICENSE_HINT
 
 Operation = Literal["ping", "catalogue", "archs", "snapshot", "impact", "graphs"]
 """The operations the worker answers; the same names, in the same order, as ``worker.OPS``."""
@@ -282,7 +283,7 @@ def _no_license(refusal: _Refusal) -> GateError:
     return LicenseError(
         "SciTools Understand reports that no valid API license is available",
         und_output=refusal.message,
-        hint="Check the license with `und license`, or set one with `und -setlicensecode`.",
+        hint=LICENSE_HINT,
     )
 
 
@@ -342,7 +343,11 @@ _HINTS: Final[dict[str, str]] = {
     "DBOldVersion": REBUILD_HINT,
     "DBUnknownVersion": REBUILD_HINT,
     "DBAlreadyOpen": "Only one database may be open per process; this is a defect in the Gate.",
-    "DBUnableOpen": "Check that the database exists and that this user may read it.",
+    "DBUnableOpen": (
+        "Check that the database exists and that this user may read it; if it does, "
+        + REBUILD_HINT
+        + " 8.0 answers DBUnableOpen for a half-built database where 6.5 said DBEmpty."
+    ),
     "BadRequest": DEFECT_HINT,
     "UnknownOperation": DEFECT_HINT,
 }

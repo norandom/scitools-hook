@@ -58,6 +58,7 @@ from scitools_hook.understand.api_runner import (
     IN_PROCESS,
     MISSING_RC,
     OPERATIONS,
+    REBUILD_HINT,
     TIMEOUT_RC,
     UPYTHON_ONLY_OPS,
     WORKER_RC,
@@ -746,8 +747,10 @@ def test_a_type_the_worker_named_is_never_re_read_from_its_message(
     # classified, over a message whose prose spells the text the catch-all is recognised by —
     # because that is the only way to say which of the two wins. Reading the message over a
     # named type would make every hint hostage to whatever the message quotes (a database
-    # path, the request, a chained exception) and would answer a database that cannot be
-    # opened at all, or a request the Gate itself built wrong, with "rebuild the analysis".
+    # path, the request, a chained exception) and would answer a request the Gate itself
+    # built wrong with "rebuild the analysis". The proof is the hint: the type's own, never
+    # the bare rebuild hint the `DBEmpty` path answers with (`DBUnableOpen`'s own hint does
+    # go on to suggest a rebuild, because 8.0 answers it for a half-built database too).
     error = refusal(
         stub_upython,
         command_log,
@@ -756,7 +759,7 @@ def test_a_type_the_worker_named_is_never_re_read_from_its_message(
 
     assert isinstance(error, AnalysisFailedError)
     assert own_hint in (error.hint or "")
-    assert "db rebuild" not in (error.hint or "")
+    assert error.hint != REBUILD_HINT
 
 
 def test_an_unknown_error_type_is_still_typed(
@@ -892,7 +895,7 @@ def test_a_database_that_cannot_be_opened_is_an_analysis_failure(tmp_path: Path)
 
 @pytest.mark.contract
 def test_a_half_built_database_is_recognised_on_the_real_installation(tmp_path: Path) -> None:
-    """The measured ``DBEmpty`` text, from the real ``understand.open``."""
+    """A bare ``.und``: ``DBEmpty`` on 6.5 and ``DBUnableOpen`` on 8.0, a rebuild either way."""
     half_built = tmp_path / "half.und"
     half_built.mkdir()
 

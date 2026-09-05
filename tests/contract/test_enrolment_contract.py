@@ -66,7 +66,11 @@ def intact_marker():
 
 UNPACK_FILES: tuple[str, ...] = tuple(sorted(UNPACK_SOURCES))
 
-CODECHECK_CONFIG = "Sandbox"
+CODECHECK_CONFIG = "Hersteller Initiative Software (HIS) Metrics"
+"""A configuration 8.0 ships (under Published Standards). 6.5's "Sandbox" no longer exists:
+7.0 rebuilt CodeCheck around plugins, and an unknown name fails with `Unable to find config`,
+which is neither a refusal nor a result. On this machine the licence excludes CodeCheck, and
+8.0 refuses it as "No checks in this configuration are licensed to run" (measured)."""
 """A configuration name shipped with Understand; the licence, not the name, is the question."""
 
 

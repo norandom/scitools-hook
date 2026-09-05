@@ -17,24 +17,32 @@ deterministic commands against the real executable so the transcripts cannot sil
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 import sys
 import tempfile
-from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 import pytest
 from fakes import FakeUndCli
 from fixtures.constants import SHELL_COMMAND_NOT_FOUND_STATUS, TIMEOUT_KILLED_STATUS
+from und_stub import (
+    BAD_DB_STDERR,
+    NO_COMMAND_OUTPUT,
+    VERSION_OUTPUT,
+    RecordingLog,
+    UndStub,
+    cli,
+    db_path,
+    understand_env,
+    write_stub,
+)
 
-from scitools_hook.errors import AnalysisFailedError, LicenseError
+from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.snapshot import ParseError
-from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
+from scitools_hook.models.understand import AnalyzeResult, LicenseStatus
 from scitools_hook.understand.und_cli import (
     CONFIG_HINT,
     EXPORT_PREFIX,
@@ -48,31 +56,20 @@ from scitools_hook.understand.und_cli import (
     write_architecture,
 )
 
+
+@pytest.fixture
+def stub(tmp_path: Path) -> UndStub:
+    """A stubbed ``und`` executable with an empty plan, ready to be scripted."""
+    return write_stub(tmp_path)
+
+
+@pytest.fixture
+def log() -> RecordingLog:
+    """A fresh recording command log (requirement 12.8)."""
+    return RecordingLog(entries=[])
+
+
 # --- transcripts of the real und -----------------------------------------------
-
-VERSION_OUTPUT = "(Build 1204)\n"
-"""``und version`` on 6.5 build 1204: a build number and no product version."""
-
-NO_COMMAND_OUTPUT = (
-    'Error: No valid command found. Type "und help" for help.\n'
-    'Error: Unrecognized arguments. Type "und help" for help.\n'
-)
-"""What ``und -version`` answers: this build has no ``--version`` switch."""
-
-LICENSE_OUTPUT = "Reply Code : D36C3CA9FF44A\nReply Date : 2036-08-28\n\n"
-"""``und license`` with a valid license: a reply code, and no mention of a problem."""
-
-NO_LICENSE_OUTPUT = "Licensing Error: No Und License Found\n"
-"""The licensing text built into the executable; the wrapper must map it, not report it."""
-
-CODECHECK_NO_LICENSE = "Licensing Error: No license for CodeCheck. \nStopping CodeCheck. \n"
-"""Measured verbatim on the licensed machine, whose license excludes CodeCheck."""
-
-BAD_DB_STDERR = (
-    "Error: unable to open /nonexistent/nope.und\n"
-    "Error: An open database is required for this action. \n"
-)
-"""``und -db <missing> analyze -all``: exit status 1 and this on standard error."""
 
 ANALYZE_OUTPUT = """\
 Error: expected identifier at token :
@@ -158,196 +155,6 @@ No ``und`` call in this file is allowed anywhere near ten seconds.
 """
 
 
-# --- the stubbed executable ------------------------------------------------------
-
-STUB_SHEBANG = f"#!{sys.executable}"
-"""The stub is launched by absolute path, never through ``PATH``.
-
-The tests below hand ``und`` deliberately hostile search paths -- one holding a Python 2
-decoy, one holding nothing at all -- and a stub whose own shebang was ``/usr/bin/env
-python3`` would then fail to start and exit 127. This project has read such a 127 as evidence
-about the code under test five times; an absolute shebang removes the question.
-"""
-
-STUB_SOURCE = '''#!/usr/bin/env python3
-"""Stand-in for ``und``: record the call and its environment, snapshot list files, replay a plan."""
-import json
-import os
-import shutil
-import sys
-import time
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-ARGV = sys.argv[1:]
-
-with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as handle:
-    handle.write(json.dumps(ARGV) + "\\n")
-
-# The real und resolves a bare `python` off PATH *while it runs* and analyses Python 2 when
-# it finds none, so the answer has to be taken here: the directory the Gate builds is gone
-# by the time the test looks.
-FOUND = shutil.which("python")
-with open(os.path.join(HERE, "environment.json"), "w", encoding="utf-8") as handle:
-    json.dump(
-        {
-            "PATH": os.environ.get("PATH", ""),
-            "python": FOUND,
-            "python_real": os.path.realpath(FOUND) if FOUND else None,
-            "marker": os.environ.get("SCITOOLS_HOOK_STUB_MARKER", ""),
-        },
-        handle,
-    )
-
-# Merged across calls, not overwritten: one wrapper method can run several und commands
-# (`declare_architecture` runs four), and a snapshot taken by the last of them would hide
-# the temporary document an earlier one handed over -- which only exists while it runs.
-SEEN = {}
-if os.path.isfile(os.path.join(HERE, "lists.json")):
-    with open(os.path.join(HERE, "lists.json"), encoding="utf-8") as handle:
-        SEEN = json.load(handle)
-for token in ARGV:
-    named = token[1:] if token.startswith("@") else token
-    if os.path.isfile(named):
-        with open(named, encoding="utf-8") as handle:
-            SEEN[os.path.basename(named)] = handle.read()
-with open(os.path.join(HERE, "lists.json"), "w", encoding="utf-8") as handle:
-    json.dump(SEEN, handle)
-
-with open(os.path.join(HERE, "plan.json"), encoding="utf-8") as handle:
-    PLANS = json.load(handle)
-PLAN = next((PLANS[token] for token in ARGV if token in PLANS), PLANS.get("default", {}))
-
-time.sleep(PLAN.get("sleep", 0))
-OUT = ARGV[-1] if ARGV and os.path.isdir(ARGV[-1]) else HERE
-for name in PLAN.get("mkdir", []):
-    os.makedirs(os.path.join(OUT, name), exist_ok=True)
-for name in PLAN.get("symlink_loop", []):
-    target = os.path.join(OUT, name)
-    os.symlink(target, target)
-for name, text in PLAN.get("write", {}).items():
-    with open(os.path.join(OUT, name), "w", encoding="utf-8") as handle:
-        handle.write(text)
-# `export -arch <name> <file>` names the file it writes as its last argument, so a plan that
-# could only write into a directory could not stand in for it at all.
-if "write_argv" in PLAN and ARGV:
-    with open(ARGV[-1], "w", encoding="utf-8") as handle:
-        handle.write(PLAN["write_argv"])
-sys.stdout.write(PLAN.get("stdout", ""))
-sys.stderr.write(PLAN.get("stderr", ""))
-sys.exit(PLAN.get("rc", 0))
-'''
-
-
-@dataclass(frozen=True)
-class UndStub:
-    """An executable that impersonates ``und`` and reports what it was asked to do."""
-
-    root: Path
-
-    @property
-    def path(self) -> Path:
-        """The executable an :class:`UnderstandEnv` should point at."""
-        return self.root / "und"
-
-    def plan(self, plans: Mapping[str, Mapping[str, object]]) -> None:
-        """Script the answers, keyed by any argv token (a subcommand) or ``default``."""
-        (self.root / "plan.json").write_text(json.dumps(plans), encoding="utf-8")
-
-    @property
-    def calls(self) -> list[list[str]]:
-        """Every argv the stub was run with, in order, without the executable itself."""
-        recorded = self.root / "calls.jsonl"
-        if not recorded.exists():
-            return []
-        return [json.loads(line) for line in recorded.read_text(encoding="utf-8").splitlines()]
-
-    @property
-    def argv(self) -> list[str]:
-        """The single call the test made; fails loudly when there was not exactly one."""
-        assert len(self.calls) == 1, f"expected one und call, got {self.calls}"
-        return self.calls[0]
-
-    @property
-    def environment(self) -> dict[str, str | None]:
-        """What the stub saw of its own environment, recorded while it ran.
-
-        ``python`` is resolved *inside* the stub for the reason ``und`` resolves it inside
-        ``und``: the directory the wrapper builds exists only for the length of one call, so
-        a test that looked afterwards would find nothing and could not tell a working pin
-        from an absent one.
-        """
-        seen = self.root / "environment.json"
-        assert seen.exists(), "the stub did not run, so it recorded no environment"
-        return dict(json.loads(seen.read_text(encoding="utf-8")))
-
-    @property
-    def lists(self) -> dict[str, str]:
-        """Content of every file named on the last command line, read while it ran."""
-        snapshot = self.root / "lists.json"
-        if not snapshot.exists():
-            return {}
-        return dict(json.loads(snapshot.read_text(encoding="utf-8")))
-
-    def env(self) -> UnderstandEnv:
-        """An installation whose ``und`` is this stub."""
-        return understand_env(self.path)
-
-
-def understand_env(und: Path) -> UnderstandEnv:
-    """The minimal :class:`UnderstandEnv` the wrapper needs: it only ever reads ``und``."""
-    home = und.parent
-    return UnderstandEnv(
-        home=home,
-        und=und,
-        upython=None,
-        python_api_dir=home / "Python",
-        version=VERSION_OUTPUT.strip(),
-        source="test",
-        api_mode="upython",
-    )
-
-
-@pytest.fixture
-def stub(tmp_path: Path) -> UndStub:
-    """A stubbed ``und`` executable with an empty plan, ready to be scripted."""
-    root = tmp_path / "bin"
-    root.mkdir()
-    script = root / "und"
-    body = STUB_SOURCE.split("\n", 1)[1]
-    script.write_text(f"{STUB_SHEBANG}\n{body}", encoding="utf-8")
-    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    made = UndStub(root)
-    made.plan({})
-    return made
-
-
-@dataclass
-class RecordingLog:
-    """A ``CommandLog`` that keeps what it was told, so timing and rc can be asserted."""
-
-    entries: list[tuple[list[str], float, int]]
-
-    def record(self, argv: list[str], seconds: float, rc: int) -> None:
-        """Keep one finished command."""
-        self.entries.append((list(argv), seconds, rc))
-
-    @property
-    def codes(self) -> list[int]:
-        """The exit status of every recorded command."""
-        return [rc for _, _, rc in self.entries]
-
-
-@pytest.fixture
-def log() -> RecordingLog:
-    """A fresh recording command log (requirement 12.8)."""
-    return RecordingLog(entries=[])
-
-
-def cli(stub: UndStub, log: CommandLog, timeout_s: int = 900) -> UndCli:
-    """The wrapper under test, pointed at the stub."""
-    return UndCli(stub.env(), log, timeout_s=timeout_s)
-
-
 def assume_unsorted_readdir(directory: Path) -> None:
     """Assert there is something for sorting to do before pinning a sorted message.
 
@@ -358,11 +165,6 @@ def assume_unsorted_readdir(directory: Path) -> None:
     listed = [path.name for path in directory.iterdir()]
     if listed == sorted(listed):
         pytest.skip(f"this filesystem lists {directory} already sorted; nothing to pin")
-
-
-def db_path(tmp_path: Path) -> Path:
-    """A database path; a ``.und`` database is a directory, so nothing is created here."""
-    return tmp_path / "cache" / "after.und"
 
 
 # --- version --------------------------------------------------------------------
@@ -409,118 +211,6 @@ def test_version_failure_carries_the_command_and_stderr(stub: UndStub, log: Reco
     assert caught.value.command[-1] == "version"
     assert caught.value.command[0] == str(stub.path)
     assert "No valid command found" in caught.value.stderr
-
-
-# --- license --------------------------------------------------------------------
-
-
-def test_license_status_prefers_isundlicensed(stub: UndStub, log: RecordingLog) -> None:
-    """``und -isundlicensed`` prints ``1`` with no newline; one call, no fallback."""
-    stub.plan({"-isundlicensed": {"stdout": "1"}})
-    status = cli(stub, log).license_status()
-    assert status == LicenseStatus(ok=True)
-    assert stub.calls == [["-isundlicensed"]]
-
-
-def test_license_status_reads_zero_as_unlicensed(stub: UndStub, log: RecordingLog) -> None:
-    stub.plan({"-isundlicensed": {"stdout": "0"}})
-    status = cli(stub, log).license_status()
-    assert status.ok is False
-    assert "0" in status.text
-
-
-def test_license_status_falls_back_to_the_license_command(stub: UndStub, log: RecordingLog) -> None:
-    stub.plan(
-        {
-            "-isundlicensed": {"stderr": NO_COMMAND_OUTPUT, "rc": 1},
-            "license": {"stdout": LICENSE_OUTPUT},
-        }
-    )
-    status = cli(stub, log).license_status()
-    assert status.ok is True
-    assert stub.calls == [["-isundlicensed"], ["license"]]
-
-
-def test_license_status_reports_the_licensing_error_text(stub: UndStub, log: RecordingLog) -> None:
-    """Reporting status must answer, never raise: ``doctor`` prints this (requirement 1.5).
-
-    The fallback is forced by making ``-isundlicensed`` fail, because a ``0`` reply is
-    answered before ``und license`` is ever reached.
-    """
-    stub.plan(
-        {
-            "-isundlicensed": {"stderr": NO_COMMAND_OUTPUT, "rc": 1},
-            "license": {"stdout": NO_LICENSE_OUTPUT},
-        }
-    )
-    status = cli(stub, log).license_status()
-    assert status.ok is False
-    assert "No Und License Found" in status.text
-    assert stub.calls == [["-isundlicensed"], ["license"]]
-
-
-def test_license_status_rejects_an_error_line_from_the_license_command(
-    stub: UndStub, log: RecordingLog
-) -> None:
-    """``und license`` can fail at rc 0 with only an ``Error:`` line to say so.
-
-    Without this the ``_has_error_line`` disjunct is unprotected and an ``und`` that
-    cannot answer at all reads as licensed.
-    """
-    stub.plan(
-        {
-            "-isundlicensed": {"stderr": NO_COMMAND_OUTPUT, "rc": 1},
-            "license": {"stdout": "Error: could not contact the license server\n"},
-        }
-    )
-    status = cli(stub, log).license_status()
-    assert status.ok is False
-    assert "license server" in status.text
-
-
-def test_license_status_rejects_a_failing_license_command(stub: UndStub, log: RecordingLog) -> None:
-    """A non-zero ``und license`` is not evidence of a license, whatever it printed.
-
-    The output here is a healthy-looking reply code, so ``rc`` is the only thing that
-    marks it bad -- which is the point: a run that printed a reply and then died has
-    not established a license.
-    """
-    stub.plan(
-        {
-            "-isundlicensed": {"stderr": NO_COMMAND_OUTPUT, "rc": 1},
-            "license": {"stdout": LICENSE_OUTPUT, "rc": 1},
-        }
-    )
-    status = cli(stub, log).license_status()
-    assert status.ok is False
-    assert status.text
-
-
-def test_license_status_answers_zero_without_running_the_license_command(
-    stub: UndStub, log: RecordingLog
-) -> None:
-    """A ``0`` reply is conclusive, so the fallback must not be paid for."""
-    stub.plan({"-isundlicensed": {"stdout": "0"}})
-    assert cli(stub, log).license_status().ok is False
-    assert stub.calls == [["-isundlicensed"]]
-
-
-def test_license_status_never_passes_quiet(stub: UndStub, log: RecordingLog) -> None:
-    """``und -quiet license`` prints nothing, which would read as a healthy license."""
-    stub.plan(
-        {
-            "-isundlicensed": {"stderr": NO_COMMAND_OUTPUT, "rc": 1},
-            "license": {"stdout": LICENSE_OUTPUT},
-        }
-    )
-    cli(stub, log).license_status()
-    assert stub.calls[-1] == ["license"]
-
-
-def test_license_status_is_recorded_in_the_command_log(stub: UndStub, log: RecordingLog) -> None:
-    stub.plan({"-isundlicensed": {"stdout": "1"}})
-    cli(stub, log).license_status()
-    assert log.codes == [0]
 
 
 # --- create, add, remove ---------------------------------------------------------
@@ -759,32 +449,6 @@ def test_analyze_keeps_reporting_parse_errors_rather_than_failing(
 
 
 # --- licence mapping across commands ---------------------------------------------
-
-
-def test_license_text_on_any_command_raises_license_error(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    stub.plan({"analyze": {"stderr": NO_LICENSE_OUTPUT, "rc": 1}})
-    with pytest.raises(LicenseError) as caught:
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
-    assert "No Und License Found" in caught.value.und_output
-
-
-def test_codecheck_without_a_codecheck_license_raises_license_error(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    """Measured on the licensed machine: its license excludes CodeCheck."""
-    stub.plan({"codecheck": {"stderr": CODECHECK_NO_LICENSE, "rc": 1}})
-    with pytest.raises(LicenseError):
-        cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], tmp_path / "out")
-
-
-def test_a_plain_failure_is_not_reported_as_a_license_problem(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    stub.plan({"analyze": {"stderr": BAD_DB_STDERR, "rc": 1}})
-    with pytest.raises(AnalysisFailedError):
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
 
 
 # --- list -metrics settings -------------------------------------------------------
@@ -1939,8 +1603,10 @@ def test_contract_version_reports_a_build(sample_databases: SampleSet) -> None:
 
 @pytest.mark.contract
 def test_contract_license_status_is_ok_on_a_licensed_machine(sample_databases: SampleSet) -> None:
+    """Licensed, with nothing to quote; the option list is the build's to fill (8.0 does)."""
     status = UndCli(understand_env(sample_databases.und), _null_log()).license_status()
-    assert status == LicenseStatus(ok=True)
+    assert status.ok is True
+    assert status.text == ""
 
 
 @pytest.mark.contract

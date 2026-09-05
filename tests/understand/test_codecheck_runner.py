@@ -1493,6 +1493,28 @@ own fix, rather than a green one proving nothing — and not a regression.
 """
 
 
+NO_CSV_EXPORTS = (
+    "Understand 8.0 writes results.sarif from `und codecheck` and, by default, one CSV report, "
+    "CodeCheckResultsByTable.csv, from plugins/Solutions/codecheck6Compatability with the "
+    "columns File, Violation, Line, Column, Entity, Kind, CheckID, Check Name, Check Short "
+    "Description, Severity (read off the install and `und help codecheck`). The three 6.5 "
+    "exports this package reads are gone from its `und`. The licence on the measuring machine "
+    "excludes CodeCheck, so the 8.0 output is unmeasured and the integration is not adapted "
+    "to it yet."
+)
+"""Why the CodeCheck contract cannot be checked on 8.0 yet -- an expected failure, not a skip."""
+
+
+def require_csv_exports(und: Path) -> None:
+    """Expected-fail on a build whose ``und`` no longer carries the CSV export this reads.
+
+    An xfail rather than a skip so the suite keeps saying, run after run, that the contract is
+    open on this build; a skip would read as "nothing to check here".
+    """
+    if VIOLATIONS_EXPORT.encode() not in und.read_bytes():
+        pytest.xfail(NO_CSV_EXPORTS)
+
+
 class SampleSet(Protocol):
     """The part of ``conftest.SampleDatabases`` these tests use.
 
@@ -1526,6 +1548,7 @@ def codecheck_run(
     saying the license is missing skips. On a machine that carries the CodeCheck license the
     same call runs for real and the tests below assert on its output.
     """
+    require_csv_exports(sample_databases.und)
     runner = CodeCheckRunner(UndCli(understand_env(sample_databases.und), _null_log()))
     out_dir = tmp_path_factory.mktemp("codecheck")
     config = os.environ.get(CONFIGURATION_VARIABLE, DEFAULT_CONFIGURATION)
@@ -1592,6 +1615,7 @@ def test_contract_the_fixture_headers_and_export_names_are_compiled_into_und(
     hard-codes, and both are readable straight out of the executable without a CodeCheck
     license — so neither has any excuse to be asserted against itself.
     """
+    require_csv_exports(sample_databases.und)
     executable = sample_databases.und.read_bytes()
     borrowed = (
         VIOLATION_HEADER,

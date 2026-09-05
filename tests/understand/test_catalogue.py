@@ -164,9 +164,14 @@ def test_a_metric_is_described_by_understands_own_text() -> None:
     assert runner_of(catalogue).request_for("catalogue")["describe"] == ["MaxNesting"]
 
 
-def test_a_synthetic_metric_is_described_by_the_gate_because_understand_cannot() -> None:
-    # Measured: `Metric.description("CountParams")` is the empty string — the metric is ours.
-    catalogue = a_catalogue({}, {"CountParams": ""})
+def test_a_synthetic_metric_is_described_by_the_gate_whatever_understand_says() -> None:
+    """The number is the gate's own count, so the description is the gate's own too.
+
+    6.5 answered ``""`` for ``CountParams``; 8.0 ships a HIS plugin metric of that name and
+    describes it, while the value the snapshot reports is still computed here. Neither
+    answer is asked for: a synthetic metric never reaches Understand.
+    """
+    catalogue = a_catalogue({}, {"CountParams": "<p>The number of parameters</p>"})
 
     assert catalogue.describe("CountParams") == SYNTHETIC_METRICS["CountParams"].description
 

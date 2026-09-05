@@ -522,11 +522,11 @@ def test_a_routine_that_gained_parameters_is_ratcheted_like_one_that_did_not(
 GENERIC = "pkg/generic.py"
 CLEAN_FILE = "pkg/clean.py"
 
-PEP695 = '''"""Identity helpers."""
+UNREADABLE = '''"""Identity helpers."""
 
 
-def generic[T](x: T) -> T:
-    """Hand back what it was given."""
+def generic(x:
+    """A declaration Understand cannot finish reading."""
     return x
 
 
@@ -534,14 +534,18 @@ def tail(y):
     """A routine after the one Understand stops at."""
     return y
 '''
-"""One PEP 695 declaration, and one routine after it that the database will not hold.
+"""One declaration no build parses, and one routine after it that the database will not hold.
 
-**Measured against the installed Build 1204**, with a Python 3 interpreter on ``PATH``:
-``und analyze`` answers ``Errors:16``, the first being ``expected token '(' at token [`` at
-line 1, and then ``expected identifier at token dedent`` for every later line down to
-``expected newline at token EOF``. The same module with ``def generic(x):`` answers
-``Errors:0`` and holds both routines. The declaration is not merely unparsed: it takes the
-rest of the file out of the database, which is why ``tail`` is here to be lost.
+**Measured on Build 1262** with a Python 3 interpreter on ``PATH``: ``und analyze`` answers
+``expected identifier at token return`` at the line after the declaration, then ``expected
+token ':' at token EOF``, and the file holds ``generic`` and not ``tail``. The declaration is
+not merely unparsed: it takes the rest of the file out of the database, which is why ``tail``
+is here to be lost.
+
+Until 8.0 this fixture was a PEP 695 declaration, ``def generic[T](x: T) -> T:``, which
+Build 1204 answered with ``Errors:16`` and the same lost tail. 7.2 taught the parser type
+parameters, so the file that no build reads is now one with a parenthesis missing -- the
+same class of failure, without a version it stops applying to.
 """
 
 CLEAN = '''"""A module holding nothing Understand cannot read."""
@@ -583,7 +587,7 @@ def test_a_staged_file_that_does_not_parse_blocks_and_says_what_to_rewrite(
     trip no structural rule, and the commit goes through -- measured, one such declaration
     took ``config/models.py`` from 15 classes to 3 and hid 12 findings.
     """
-    licensed.write(GENERIC, PEP695)
+    licensed.write(GENERIC, UNREADABLE)
     licensed.stage(GENERIC)
 
     done = licensed.cli("check", "--staged", "--format", "json")
@@ -591,7 +595,7 @@ def test_a_staged_file_that_does_not_parse_blocks_and_says_what_to_rewrite(
     assert done.returncode == int(ExitCode.VIOLATIONS), done.stderr
     unreadable = unreadable_findings(done)
     assert [(item["path"], item["blocking"]) for item in unreadable] == [(GENERIC, True)]
-    assert "TypeVar" in str(unreadable[0]["hint"])
+    assert "rewrite the construct" in str(unreadable[0]["hint"])
     assert unparsed_paths(done) == [GENERIC]
 
 
@@ -605,7 +609,7 @@ def test_a_parse_error_outside_the_selection_is_reported_and_lets_the_commit_thr
     therefore the selection, not the error, and the cheapest way to show that is the same file
     that blocks above, committed and then left alone.
     """
-    licensed.write(GENERIC, PEP695)
+    licensed.write(GENERIC, UNREADABLE)
     licensed.stage(GENERIC)
     licensed.git_ok("commit", "--quiet", "--no-verify", "-m", "add the generic helper")
     licensed.write(CLEAN_FILE, CLEAN)
@@ -630,7 +634,7 @@ def test_a_warm_run_reports_the_same_parse_errors_as_the_cold_one(
     left requirement 2.6's report, and 11.11's finding with it, reaching only whoever happened
     to run the gate first. A git hook is always warm.
     """
-    licensed.write(GENERIC, PEP695)
+    licensed.write(GENERIC, UNREADABLE)
     licensed.stage(GENERIC)
 
     cold = licensed.cli("check", "--staged", "--format", "json")

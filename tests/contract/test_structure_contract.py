@@ -313,5 +313,9 @@ def test_an_exported_svg_uses_a_dot_decimal_under_a_comma_decimal_locale(
 
     assert len(written) == 1
     text = written[0].path.read_text(encoding="utf-8")
-    assert 'stroke-opacity="0.000000"' in text, "the butterfly graph must carry an opacity"
+    # 6.5 wrote `stroke-opacity="0.000000"`; 8.0 writes `stroke-opacity="0"`. Either carries
+    # the attribute the locale hazard shows up in, and neither may carry a comma decimal.
+    assert re.search(r'stroke-opacity="0(\.0+)?"', text), (
+        "the butterfly graph must carry an opacity"
+    )
     assert SINGLE_NUMBER.findall(text) == []

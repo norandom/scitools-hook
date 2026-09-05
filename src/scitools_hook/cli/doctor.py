@@ -34,7 +34,7 @@ from scitools_hook import __version__
 from scitools_hook.cli import common
 from scitools_hook.cli.config_cmd import render_settings
 from scitools_hook.models.cache import CachePaths, SyncState
-from scitools_hook.models.understand import UnderstandEnv
+from scitools_hook.models.understand import LicenseStatus, UnderstandEnv
 from scitools_hook.runner.doctor import (
     ApiProbe,
     DoctorReport,
@@ -112,7 +112,8 @@ def _understand_rows(diagnosis: UnderstandDiagnosis) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     rows.extend(_installation_rows(diagnosis.env))
     rows.append(("und version", diagnosis.und_version or NOT_FOUND))
-    rows.append(("license", _license(diagnosis)))
+    rows.extend(_license_rows(diagnosis.license))
+    rows.append(("analysis probe", _analysis(diagnosis)))
     rows.append(("api mode", diagnosis.api_mode or NOT_VERIFIED))
     rows.extend((f"probe {probe.mode}", _probe(probe)) for probe in diagnosis.probes)
     rows.append(("analysis python", _python(diagnosis.python)))
@@ -129,12 +130,27 @@ def _installation_rows(env: UnderstandEnv | None) -> list[tuple[str, str]]:
     return [*rows, ("python api", str(env.python_api_dir))]
 
 
-def _license(diagnosis: UnderstandDiagnosis) -> str:
-    """What ``und`` said about licensing, quoted when it refused one (req 1.4)."""
-    status = diagnosis.license
+def _license_rows(status: LicenseStatus | None) -> list[tuple[str, str]]:
+    """What ``und`` said about licensing, quoted when it refused one (req 1.4).
+
+    The enabled options get a row of their own when ``und license`` listed any, because
+    ``ok`` alone has been wrong in the way that matters: a licence without ``API Access``
+    reads as licensed and cannot measure a thing.
+    """
     if status is None:
+        return [("license", NOT_FOUND)]
+    rows = [("license", "ok" if status.ok else f"unavailable: {status.text}".strip())]
+    if status.options:
+        rows.append(("license options", ", ".join(status.options)))
+    return rows
+
+
+def _analysis(diagnosis: UnderstandDiagnosis) -> str:
+    """Whether a one-file project analyses right now: the question the gate depends on."""
+    probe = diagnosis.analysis
+    if probe is None:
         return NOT_FOUND
-    return "ok" if status.ok else f"unavailable: {status.text}".strip()
+    return "ok" if probe.ok else f"failed: {probe.text}".strip()
 
 
 def _probe(probe: ApiProbe) -> str:
