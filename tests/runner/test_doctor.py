@@ -1203,23 +1203,24 @@ def test_a_working_directory_that_cannot_be_reached_is_not_called_missing(
 
 
 @pytest.mark.parametrize(
-    ("failure", "expected"),
+    "case",
     [(OSError(13, "Permission denied"), "failed:"), (TypeError("bug"), "unexpectedly")],
+    ids=["environment", "defect"],
 )
 def test_an_environment_failure_and_a_defect_are_reported_differently(
     tmp_path: Path,
     git_repo: MakeGitRepo,
     command_log: FakeCommandLog,
     monkeypatch: pytest.MonkeyPatch,
-    failure: Exception,
-    expected: str,
+    case: tuple[Exception, str],
 ) -> None:
     """The whole reason the guard classifies instead of catching everything alike.
 
     An ``OSError`` is the operator's environment; a ``TypeError`` is a bug in the Gate. Only
     the ``GateError`` member of that tuple was pinned, so dropping either of the other two
-    changed nothing any test could see.
+    changed nothing any test could see. ``case`` pairs the failure with the words expected.
     """
+    failure, expected = case
     repo = git_repo()
 
     def broken(self: object) -> str:
