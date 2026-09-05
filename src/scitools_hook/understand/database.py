@@ -115,6 +115,11 @@ from scitools_hook.understand.commit_before import (
     offers,
     serve,
 )
+from scitools_hook.understand.generated_arch import (
+    architecture_for,
+    generated_names,
+    site_for,
+)
 from scitools_hook.understand.und_arch import (
     ARCH_HINT,
     DIRECTORY_STRUCTURE,
@@ -462,7 +467,7 @@ class DatabaseManager:
             done = self._build(side, db, tree, state.languages)
         else:
             done = self._update(db, tree, delta, state.languages)
-        self._declare_architecture(side, db, tree)
+        self._declare_architecture(side, db, tree, state)
         errors = state.record_parse_errors(side, tree, done.result.parse_errors, done.reanalysed)
         state.before_route = SHADOW_ROUTE if side == "before" else state.before_route
         return done.result.model_copy(
@@ -575,8 +580,8 @@ class DatabaseManager:
         committable = exported.rebase(lambda member: _repository_relative(tree, member))
         return write_architecture(committable)
 
-    def _declare_architecture(self, side: Side, db: Path, tree: Path) -> None:
-        """Put the repository's declared architecture into one side's database (req 6.3).
+    def _declare_architecture(self, side: Side, db: Path, tree: Path, state: SyncState) -> None:
+        """Put this run's architecture into one side's database (req 6.3, 4.1).
 
         Runs **after** the analysis and on every run, both of which are measured decisions:
 
@@ -589,6 +594,13 @@ class DatabaseManager:
           database was last built, and an edited declaration would not take effect until the
           next ``db rebuild``.
 
+        **Which** architecture that is comes from ``generated_arch.architecture_for``:
+        the repository's declaration where it supplies the configured name, the built-in
+        directory structure where that is what is configured, and otherwise one generated from
+        the after side's commit. All three arrive here as the same node and are placed the same
+        way, which is what keeps the rules, ``explain`` and the review aids from ever learning
+        where an architecture came from.
+
         Three outcomes per declared member, and each is a different thing:
 
         * **not under the shadow tree at all** -- an absolute path, a ``../`` escape -- is a
@@ -600,7 +612,14 @@ class DatabaseManager:
           document whose every path is wrong, so what came back is compared with what was
           asked for and the difference is named.
         """
-        declared = self.declared_architecture()
+        declared = architecture_for(
+            site_for(
+                self._und, self._paths, self._shadow.repo.root, self._settings, self._progress
+            ),
+            self.declared_architecture(),
+            state,
+            generated_names(self._paths, self._understand_version()),
+        )
         if declared is None:
             return
         inside = {member: _in_shadow(tree, member) for member in declared.paths()}

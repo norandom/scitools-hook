@@ -28,14 +28,25 @@ would read as "nothing crosses a layer".
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final
 
+from scitools_hook.config.models import Settings
 from scitools_hook.errors import AnalysisFailedError
+from scitools_hook.models.cache import CachePaths, SyncState
+from scitools_hook.models.progress import Progress
+from scitools_hook.models.understand import Feature
 from scitools_hook.understand.cache_files import discard
-from scitools_hook.understand.und_arch import ArchNode
+from scitools_hook.understand.features import load_features
+from scitools_hook.understand.und_arch import (
+    DIRECTORY_STRUCTURE,
+    ArchNode,
+    read_architecture,
+    write_architecture,
+)
 from scitools_hook.understand.und_cli import (
     ALL,
     GitSource,
@@ -139,3 +150,144 @@ def _under(member: str, root: Path) -> str | None:
         return PurePosixPath(Path(member).resolve().relative_to(root)).as_posix()
     except ValueError:
         return None
+
+
+EXPORTS: Final = "generated"
+"""The cache directory the generated architecture is kept in between runs.
+
+Kept because a skipped run still has to *hand over* the architecture, not merely decline to
+rebuild it: the rules, ``explain`` and the review aids all read the node, and regenerating it
+to answer a question already answered is what the skip exists to avoid.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class Site:
+    """One run's surroundings, as the architecture step needs them.
+
+    A value rather than five parameters for the reason the notes of tasks 4.2 and 5.2 record:
+    ``DatabaseManager`` is eight methods and fifteen coupled classes past its own limits, so
+    the work lives beside it and takes what it needs in one argument.
+    """
+
+    cli: UndCli
+    paths: CachePaths
+    repo: Path
+    settings: Settings
+    progress: Progress
+
+
+def site_for(
+    cli: UndCli, paths: CachePaths, repo: Path, settings: Settings, progress: Progress
+) -> Site:
+    """Gather a run's surroundings, so the caller need not name :class:`Site`."""
+    return Site(cli=cli, paths=paths, repo=repo, settings=settings, progress=progress)
+
+
+def architecture_for(
+    site: Site, declared: ArchNode | None, state: SyncState, offered: Sequence[str]
+) -> ArchNode | None:
+    """The architecture this run's rules read: generated, declared, or none (req 4.1, 4.5).
+
+    The order is the one an operator would expect. A repository that *declares* the configured
+    architecture supplies it, whatever the build can generate -- a declaration is a decision
+    and generation is a derivation. ``Directory Structure`` is built into every database and
+    needs neither. Anything else is a name the configuration check already established the
+    build can generate (requirement 4.2), so it is generated here.
+
+    A generation that fails is **reported and then stepped over** when the repository declares
+    an architecture of its own, and raised when it does not: a run with no architecture at all
+    evaluates every node-level rule against an empty node set and reports nothing, which is
+    worse than stopping.
+    """
+    name = site.settings.structure.architecture
+    if declared is not None and declared.name == name:
+        return declared
+    if name == DIRECTORY_STRUCTURE or name not in offered:
+        return declared
+    try:
+        return _generated(site, name, state)
+    except AnalysisFailedError as refused:
+        if declared is None:
+            raise
+        site.progress.note(
+            f"the {name!r} architecture could not be generated, so this run used the declared "
+            f"{declared.name!r} instead: {refused}"
+        )
+        return declared
+
+
+def generated_names(paths: CachePaths, build: str) -> list[str]:
+    """The architectures the stored measurement says this build can generate (req 1.4).
+
+    Read from what ``doctor`` recorded rather than probed, for the reason every other
+    availability question is: a check measures nothing about the installation, and a record
+    from another build is not an answer about this one.
+    """
+    report = load_features(paths)
+    if report is None or report.build != build:
+        return []
+    found = report.features.get(Feature.GENERATED_ARCHS)
+    return list(found.generated) if found is not None and found.state == "available" else []
+
+
+def _generated(site: Site, name: str, state: SyncState) -> ArchNode:
+    """The generated architecture, from this run or from the last one that produced it (4.4).
+
+    The skip is keyed on the commit the after side is at, which for a commit target is both
+    "the repository head" and "the after tree id" -- they are the same string. Nothing else
+    can change what ``git log`` says about that commit, so a run whose key matches reads the
+    kept export instead of building a database and generating in it.
+    """
+    kept = site.paths.root / EXPORTS / f"{name}.xml"
+    stamp = _stamp(state)
+    if state.generated_archs.get(name) == stamp and kept.is_file():
+        return read_architecture(kept.read_text(encoding="utf-8"), str(kept))
+    commit = _commit_of(state, name)
+    site.progress.start(f"generating the {name!r} architecture")
+    started = time.monotonic()
+    node = generate_for_commit(site.cli, _request(site, commit, state), name)
+    site.progress.finish(f"generating the {name!r} architecture", time.monotonic() - started)
+    _keep(kept, node)
+    state.generated_archs[name] = stamp
+    return node
+
+
+def _stamp(state: SyncState) -> str:
+    """What a generated architecture is a function of: the commit the after side is at."""
+    return f"{state.after_target or 'none'}:{state.after_tree_id or 'none'}"
+
+
+def _commit_of(state: SyncState, name: str) -> str:
+    """The commit to generate from, or a refusal saying why this run has none (req 4.3)."""
+    if state.after_target != "commit" or not state.after_tree_id:
+        raise AnalysisFailedError(f"{name} cannot be generated for this run", hint=NO_COMMIT)
+    return state.after_tree_id
+
+
+def _request(site: Site, commit: str, state: SyncState) -> Generation:
+    """The generation database goes in the cache, beside the two the run compares.
+
+    The languages come from configuration when it names any and from the record otherwise --
+    the same rule both database routes follow, and it is safe here because the after side has
+    already been analysed and written the set it detected.
+    """
+    return Generation(
+        db=site.paths.root / "generate.und",
+        repo=site.repo,
+        commit=commit,
+        languages=tuple(site.settings.project.languages or state.languages),
+        exclude=tuple(site.settings.project.exclude),
+        options=site.settings.structure.architecture_options or None,
+    )
+
+
+def _keep(target: Path, node: ArchNode) -> None:
+    """Write the export where the next run can read it instead of generating again."""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(write_architecture(node), encoding="utf-8")
+    except OSError:
+        # Losing it costs the next run one generation and nothing else, so it is not worth
+        # failing a run that has already produced the architecture it was asked for.
+        return

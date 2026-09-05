@@ -20,12 +20,16 @@ from pathlib import Path
 import pytest
 from und_stub import RecordingLog, UndStub, cli, write_stub
 
+from scitools_hook.config.defaults import default_settings
 from scitools_hook.errors import AnalysisFailedError
+from scitools_hook.models.cache import CachePaths, SyncState
 from scitools_hook.understand.generated_arch import (
     GIT_ARCHITECTURES,
     NO_COMMIT,
     Generation,
+    architecture_for,
     generate_for_commit,
+    site_for,
 )
 
 COMMIT = "3ca0a97"
@@ -209,3 +213,81 @@ def test_the_reason_a_staged_run_cannot_have_one_names_what_to_do_instead() -> N
     """Requirement 4.3: said out loud, because an empty architecture reads as a clean run."""
     assert "--range" in NO_COMMIT
     assert "declares" in NO_COMMIT
+
+
+# --- the run-level step, where it refuses (requirements 4.3, 4.5) -------------------------
+
+
+STABILITY = "Git Stability"
+OFFERED = ("Directory Structure", "Git Stability", "Git Owner")
+"""What the stored measurement says this build can generate."""
+
+EMPTY = '<!DOCTYPE arch>\n<arch name="Git Stability"></arch>\n'
+"""What ``und`` exports for an architecture it generated over a database with no history."""
+
+
+class Recorder:
+    """A progress port that keeps what it was told, so a fallback can be read back."""
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+
+    def start(self, name: str) -> None:
+        """A phase began."""
+        self.notes.append(name)
+
+    def finish(self, name: str, seconds: float) -> None:
+        """A phase ended."""
+
+    def note(self, message: str) -> None:
+        """Something the run wants the operator to read."""
+        self.notes.append(message)
+
+
+def a_site(tmp_path: Path, stub: UndStub, log: RecordingLog):
+    """The run's surroundings, with ``structure.architecture`` naming a generated one."""
+    root = tmp_path / "cache"
+    root.mkdir(parents=True, exist_ok=True)
+    paths = CachePaths(
+        root=root,
+        before_tree=root / "before",
+        after_tree=root / "after",
+        before_db=root / "before.und",
+        after_db=root / "after.und",
+        state=root / "state.json",
+        graphs=root / "graphs",
+    )
+    settings = default_settings()
+    settings.structure.architecture = STABILITY
+    settings.project.languages = ["Python"]
+    progress = Recorder()
+    return site_for(cli(stub, log), paths, a_request(tmp_path).repo, settings, progress), progress
+
+
+def at_commit() -> SyncState:
+    """A state whose after side is a commit, which is what a generation needs."""
+    return SyncState(after_target="commit", after_tree_id=COMMIT, languages=["Python"])
+
+
+def test_a_run_with_no_commit_says_what_to_do_instead(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """``--staged`` and ``--worktree`` judge code that is in no commit (requirement 4.3)."""
+    site, _ = a_site(tmp_path, stub, log)
+    staged = SyncState(after_target="index", after_tree_id="abc", languages=["Python"])
+
+    with pytest.raises(AnalysisFailedError) as caught:
+        architecture_for(site, None, staged, OFFERED)
+
+    assert "--range" in str(caught.value.hint or ""), caught.value
+
+
+def test_a_failed_generation_with_nothing_to_fall_back_on_stops_the_run(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """A run with no architecture reports nothing from every node-level rule."""
+    site, _ = a_site(tmp_path, stub, log)
+    stub.plan({"export": {"write_argv": '<!DOCTYPE arch>\n<arch name="Git Stability"></arch>\n'}})
+
+    with pytest.raises(AnalysisFailedError):
+        architecture_for(site, None, at_commit(), OFFERED)
