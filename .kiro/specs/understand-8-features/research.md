@@ -127,6 +127,44 @@ Phases of the warm one-line check, which is the run requirements 8.2, 8.3 and 8.
 
 Both are inside requirement 8.4's 15 s, and facdrone only just -- which is worth knowing before 9.5 claims the target, because 8.4 names this repository and facdrone is the larger case.
 
+### After task 4.2: the before route, measured (requirement 8.2)
+
+Same harness, same repository, same mode, 2026-09-05, tool 0.1.0a8 on Build 1262.
+
+| Run | before 4.2 | after 4.2 |
+| --- | --- | --- |
+| warm-up whole project | 12.1 s | 10.7 s |
+| first check, one changed line | 31.5 s | 33.5 s |
+| **warm check, one changed line** | **27.7 s** | **27.8 s** |
+| whole project (`--all`) | 14.6 s | 15.4 s |
+| no selection (nothing changed) | 1.0 s | 1.0 s |
+
+**No change, which is the result the baseline predicted.** The run above takes the shipped
+configuration, and `understand.before_side` ships as `shadow` (requirement 1.3), so the commit
+route did not run at all here. That is deliberate: turning it on for this repository is an
+operator decision and not one this task may take.
+
+What the figures do settle is **how much there is for the route to win**, which the baseline
+had already implied and this run measures directly:
+
+| Phase, warm one-line check | after 4.2 |
+| --- | --- |
+| synchronising the before tree | **0.0 s** |
+| analysing the before database | **0.0 s** |
+| the four snapshot extractions | 24.5 s of 27.8 s (**88%**) |
+
+So on a warm run the whole before side -- export *and* analysis -- costs **0.0 s**, and the
+commit route can therefore remove nothing from it. On the *first* check after an edit, where
+the before side is genuinely built, it costs `0.0 s` of export plus `2.5 s` of analysis, so
+the route's ceiling there is 2.5 s against a 33.5 s run.
+
+**The route is a correctness and reproducibility feature, not a speed one.** Requirement 3's
+objective says as much -- "reproducible by construction and costs less to keep" -- and the
+cost it saves is disk and drift, not wall clock: a commit-built before database needs no
+exported tree to keep in step with the repository, and it is reusable across runs by a key
+rather than by a synchroniser's bookkeeping. The 15 s target of requirement 8.4 is reachable
+only through tasks 9.1 and 9.4, exactly as the baseline concluded.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
