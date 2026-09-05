@@ -90,7 +90,7 @@
   - _Requirements: 2.1, 2.2, 2.4_
 
 - [ ] 4. The before side from the base commit
-- [ ] 4.1 Build and reuse the commit-built before database
+- [x] 4.1 Build and reuse the commit-built before database
   - A builder that creates the before database from the base commit with the after database as reference (which registers the comparison pair) and analyses it once with the accuracy switch; a key of base commit, languages, the settings hash from 1.3 and the build; reuse without analysis when the recorded key matches, removal and rebuild when it does not; the sync state records the route, the commit and the before accuracy; a failure at any step is a typed error carrying und's words
   - Done when unit tests show reuse on an identical key and a rebuild on each changed component, and the sync state records route, commit and accuracy after a build
   - _Depends: 1.6, 1.3_
@@ -273,3 +273,7 @@
 - 3.3: `RunResult.schema_version` is **2**, bumped once for this feature set as task 3.3 asked. `understand_sarif` is the only new key. Four test modules and `docs/guide/agents.md` pinned the old number.
 - 3.3: the fixture seam now honours `-sarif` -- `tests/fixtures/e2e/violating/parselog.sarif`, copied where the switch names, `None` when the fixture has none -- so `tests/e2e/test_sarif_companions.py` runs unlicensed. It writes the feature record itself rather than running `doctor`, because the seam **refuses to probe** (task 2.1) and a probe answering from fixtures would be measuring the fixtures.
 - 3.3: `explain` has no SARIF output format, so the companions are a `check` concern only. Requirement 2.1 names "a check or explain run"; the reading taken is that the clause applies where SARIF exists, and task 10.2 records it on the page.
+- 4.1: the builder is `understand/commit_before.py` -- `BeforeKey` (commit, languages, fingerprint, build), `CommitBuild` (the request), `ensure`/`build`/`record`. `ensure` answers `None` when the recorded key matches **and starts no process at all**, which is the whole of requirement 3.5: not a cheaper analysis, no analysis. The route is part of the key, because a shadow-built `before.und` can sit at the same commit with the same languages and hold a different file set -- the shadow is the working tree filtered by include/exclude, the commit route copies its file set from the after database.
+- 4.1 (**shared, to keep one owner**): `discard` and `present` moved out of `database.py` into `understand/cache_files.py`, with `CACHE_HINT` and `REBUILD_HINT`. The manager imports the builder, so anything both routes need has to sit below both, and a second copy is how two callers come to disagree about symlinks. It also took a method off `DatabaseManager`, which is seven past its `CountDeclMethod` limit and refused a new one in task 3.3.
+- 4.1: the language set is canonicalised (`sorted(set(...))`) inside `BeforeKey.of`, so `["C++", "Python"]` and `["Python", "C++"]` are the same database and do not force a rebuild between two runs that detected languages in a different order.
+- 4.1: `record` writes no accuracy when the build was not asked for one. `None` is not zero -- a run that did not ask has not measured a bad resolution -- and task 4.2 reads the recorded figure for a warm run precisely because there is no `und analyze` to report one.

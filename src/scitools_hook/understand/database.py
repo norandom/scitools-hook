@@ -87,7 +87,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -102,12 +101,13 @@ from scitools_hook.models.ports import ShadowPort
 from scitools_hook.models.progress import NullProgress, Progress
 from scitools_hook.models.snapshot import Side
 from scitools_hook.models.understand import AnalyzeResult
-from scitools_hook.paths import classify_directory, classify_file
+from scitools_hook.paths import classify_file
 
 # The list file `analyze -files` and `remove -file` read is the same format `codecheck
 # -files` reads, and 6.7 measured every way `und` can misread a line in it. One predicate
 # for one format: a second copy here would be a second thing to keep in step with the
 # binary.
+from scitools_hook.understand.cache_files import CACHE_HINT, discard, present
 from scitools_hook.understand.codecheck import unusable_list_file_name
 from scitools_hook.understand.und_arch import (
     ARCH_HINT,
@@ -213,9 +213,6 @@ NO_LANGUAGE_HINT: Final = (
     "recognises are listed by `und list settings <database>`."
 )
 """A repository with nothing Understand can parse is told so rather than gated on nothing."""
-
-CACHE_HINT: Final = "Point understand.db_location or the cache directory somewhere writable."
-"""Every failure to create or clear the cache has the same one fix."""
 
 ARCH_FILE: Final = "scitools-hook.arch.xml"
 """The repository file that *declares* an architecture, beside ``scitools-hook.toml``.
@@ -365,7 +362,7 @@ class DatabaseManager:
         ``db rebuild`` cannot fail on a machine that has no licence at hand.
         """
         for path in (self._paths.before_db, self._paths.after_db, self._paths.state):
-            _discard(path)
+            discard(path)
         self._progress.note(f"discarded the analysis databases under {self._paths.root}")
 
     def build_worktree_project(self, root: Path, tracked: Sequence[str], target: Path) -> Path:
@@ -448,7 +445,7 @@ class DatabaseManager:
         tree = self._paths.before_tree if side == "before" else self._paths.after_tree
         languages = self._languages(state, delta)
         self._invalidate(state, languages)
-        if delta.full or not self._present(db):
+        if delta.full or not present(db):
             done = self._build(side, db, tree, state.languages)
         else:
             done = self._update(db, tree, delta, state.languages)
@@ -489,28 +486,11 @@ class DatabaseManager:
         version = self._understand_version()
         if state.languages == languages and state.created_with == version:
             return
-        _discard(self._paths.before_db)
-        _discard(self._paths.after_db)
+        discard(self._paths.before_db)
+        discard(self._paths.after_db)
         state.languages = languages
         state.created_with = version
         state.forget_parse_errors()
-
-    def _present(self, db: Path) -> bool:
-        """Whether ``db`` is there to be used; a path that is taken but unusable is raised.
-
-        Absence is an answer -- an operator who cleared the cache gets a fresh database --
-        and it is asked for through the shared classifier, because ``Path.exists()`` cannot
-        tell "no database yet" from "a database this user cannot read".
-        """
-        verdict = classify_directory(db)
-        if verdict.absent:
-            return False
-        if not verdict.usable:
-            raise AnalysisFailedError(
-                f"the analysis database {db} {verdict.reason}",
-                hint="Run `scitools-hook db rebuild`, or remove what is at that path.",
-            )
-        return True
 
     # --- the declared architecture (req 6.3, 6.7) --------------------------------
 
@@ -564,7 +544,7 @@ class DatabaseManager:
         wanted = name or DIRECTORY_STRUCTURE
         db = self._paths.before_db if side == "before" else self._paths.after_db
         tree = self._paths.before_tree if side == "before" else self._paths.after_tree
-        if not self._present(db):
+        if not present(db):
             raise AnalysisFailedError(
                 f"there is no {side} analysis database at {db} to export an architecture from",
                 hint="Run `scitools-hook db analyze` first: an architecture is read out of a "
@@ -679,7 +659,7 @@ class DatabaseManager:
         files than the shadow, because those files are then named in a ``-files`` list they
         cannot be in.
         """
-        _discard(db)
+        discard(db)
         self._und.create(db, languages, local=True)
         self._progress.note(
             f"created the {side} analysis database with {', '.join(languages)} enabled"
@@ -942,29 +922,3 @@ def _unlistable(paths: Sequence[Path]) -> str | None:
         if problem is not None:
             return f"{path} {problem}"
     return None
-
-
-def _discard(path: Path) -> None:
-    """Remove a database, a state file or whatever else has taken their place.
-
-    The kind is settled with ``lstat`` before anything is deleted, so a symlink is unlinked
-    rather than followed into someone else's directory tree, and absence is not an error --
-    discarding what is not there is the state this leaves behind anyway.
-    """
-    try:
-        mode = os.lstat(path).st_mode
-    except FileNotFoundError:
-        return
-    except (OSError, ValueError) as unreachable:
-        raise AnalysisFailedError(
-            f"{path} could not be examined: {unreachable}", hint=CACHE_HINT
-        ) from unreachable
-    try:
-        if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
-            shutil.rmtree(path)
-        else:
-            os.unlink(path)
-    except OSError as undeletable:
-        raise AnalysisFailedError(
-            f"{path} could not be removed: {undeletable}", hint=CACHE_HINT
-        ) from undeletable
