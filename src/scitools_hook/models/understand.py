@@ -10,6 +10,7 @@ which ignore patterns, which architecture and depth — travels in the request. 
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -37,6 +38,17 @@ class AnalyzeResult(DataModel):
     parse_errors: list[ParseError] = Field(default_factory=list)
     warnings: int = 0
     seconds: float
+    accuracy: float | None = None
+    """The share of files the analysis parsed with no error or warning (req 7.1).
+
+    ``und analyze -accuracy`` prints ``N of M parsed files had no errors or warnings (P%)``
+    after the summary; this is that fraction. ``None`` means the switch was not passed or the
+    build does not know it, which is not a figure of zero -- a build that reports nothing and
+    a project that resolved nothing must not read alike.
+    """
+
+    sarif_path: Path | None = None
+    """Where ``und analyze -sarif`` wrote its diagnostics, when it was asked to (req 2.1)."""
 
 
 class LicenseStatus(DataModel):
@@ -71,6 +83,55 @@ class AnalysisProbe(DataModel):
 
     ok: bool
     text: str = ""
+
+
+class Feature(StrEnum):
+    """What this specification adds that a given Understand build may or may not offer (1.1).
+
+    Measured rather than inferred from a version number: 6.5 and 8.0 already differ in three
+    of these, and a table of build numbers would be wrong at the next build. ``doctor`` prints
+    one row per member and stores the answers for a check to validate its configuration
+    against.
+    """
+
+    UNDERSTAND_SARIF = "understand_sarif"
+    COMMIT_BEFORE = "commit_before"
+    GENERATED_ARCHS = "generated_archs"
+    PLUGIN_METRICS = "plugin_metrics"
+    UNUSED_RULE = "unused_rule"
+    ACCURACY = "accuracy"
+
+
+class Availability(DataModel):
+    """Whether the installed build offers one feature, and what was learnt while asking.
+
+    Three states, and the third is the one that matters: ``unverified`` is a probe that could
+    not run -- no git on the machine, no scratch directory -- and saying that is not the same
+    as saying the build lacks the feature. A configuration that asks for something
+    ``unverified`` fails closed rather than being quietly ignored.
+    """
+
+    state: Literal["available", "not on this build", "unverified"]
+    detail: str = ""
+    generated: list[str] = Field(default_factory=list)
+    """For the generated architectures, the names ``und arch -list`` offered (req 4.2)."""
+
+
+class FeatureReport(DataModel):
+    """What one build offered, when it was asked; stored between runs and stale on a new build.
+
+    The build string is part of the record because the answers are only about that build. A
+    report from another one is discarded rather than trusted, which is why the check that
+    validates a configuration against this asks for the build it holds.
+    """
+
+    build: str
+    features: dict[Feature, Availability] = Field(default_factory=dict)
+
+    def offers(self, feature: Feature) -> bool:
+        """Whether ``feature`` was measured as available; anything else is a no."""
+        found = self.features.get(feature)
+        return found is not None and found.state == "available"
 
 
 class RawViolation(DataModel):

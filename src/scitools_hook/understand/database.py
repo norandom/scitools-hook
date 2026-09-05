@@ -96,7 +96,7 @@ from typing import Final, NamedTuple, TypeVar
 
 from scitools_hook.config.models import Settings
 from scitools_hook.errors import AnalysisFailedError, LicenseError
-from scitools_hook.models.cache import CachePaths, SyncState
+from scitools_hook.models.cache import CACHE_SCHEMA, CachePaths, SyncState
 from scitools_hook.models.git import SyncDelta, SyncTarget
 from scitools_hook.models.ports import ShadowPort
 from scitools_hook.models.progress import NullProgress, Progress
@@ -771,7 +771,7 @@ class DatabaseManager:
         if not verdict.usable:
             return self._forget_state(verdict.reason)
         try:
-            return SyncState.model_validate_json(self._paths.state.read_text(encoding="utf-8"))
+            state = SyncState.model_validate_json(self._paths.state.read_text(encoding="utf-8"))
         except Exception as unreadable:  # noqa: BLE001 - the outcome is the contract
             # Guarded by outcome: a state is either usable or it is not, and the ways it can
             # fail to be are not enumerable -- `read_text` raises `ValueError` on bytes that
@@ -781,6 +781,14 @@ class DatabaseManager:
             return self._forget_state(
                 f"could not be read ({type(unreadable).__name__}): {unreadable}"
             )
+        if state.stale_layout():
+            # Every field added by a later layout reads as "nothing recorded", and some of
+            # them -- the before route, the analysis fingerprint -- would otherwise be read
+            # as an answer. Discarding costs one full analysis, once.
+            return self._forget_state(
+                f"was written by cache layout {state.schema_version}, not {CACHE_SCHEMA}"
+            )
+        return state
 
     def _forget_state(self, reason: str) -> SyncState:
         """Say why the recorded state is being ignored, and hand back an empty one."""
@@ -800,6 +808,7 @@ class DatabaseManager:
         costs the next run a full analysis, and failing this run over it would turn a slow
         commit into a blocked one.
         """
+        state.schema_version = CACHE_SCHEMA
         try:
             self._replace_state(state.model_dump_json(indent=2) + "\n")
         except Exception as unwritable:  # noqa: BLE001 - the outcome is the contract

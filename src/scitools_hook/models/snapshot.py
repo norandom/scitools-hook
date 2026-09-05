@@ -171,6 +171,13 @@ class EntityRecord(DataModel):
     metrics: dict[str, float] = Field(default_factory=dict)
     archs: list[str] = Field(default_factory=list)
     is_new: bool = False
+    referenced: bool | None = None
+    """Whether anything in the project references this routine (req 6.2), or ``None``.
+
+    ``None`` is "the worker was not asked", which the unused rule reports as unavailable
+    rather than as a project full of dead code -- the difference between a measurement and
+    its absence, which requirement 6.4 asks to be visible.
+    """
 
     @property
     def key(self) -> EntityKey:

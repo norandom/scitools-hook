@@ -28,7 +28,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -54,7 +55,8 @@
       "archs": [
         "Directory Structure/src/understand"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -79,7 +81,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -104,7 +107,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -129,7 +133,8 @@
       "archs": [
         "Directory Structure/src/cli"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -154,7 +159,8 @@
       "archs": [
         "Directory Structure/src/understand"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -179,7 +185,8 @@
       "archs": [
         "Directory Structure/src/util"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -207,7 +214,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -235,7 +243,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -263,7 +272,8 @@
       "archs": [
         "Directory Structure/src/analysis"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -291,7 +301,8 @@
       "archs": [
         "Directory Structure/src/cli"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -319,7 +330,8 @@
       "archs": [
         "Directory Structure/src/cli"
       ],
-      "is_new": true
+      "is_new": true,
+      "referenced": null
     },
     {
       "ref": {
@@ -347,7 +359,8 @@
       "archs": [
         "Directory Structure/src/cli"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -375,7 +388,8 @@
       "archs": [
         "Directory Structure/src/understand"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     },
     {
       "ref": {
@@ -403,7 +417,8 @@
       "archs": [
         "Directory Structure/src/util"
       ],
-      "is_new": false
+      "is_new": false,
+      "referenced": null
     }
   ],
   "file_edges": [

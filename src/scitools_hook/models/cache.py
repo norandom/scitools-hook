@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Collection, Sequence
 from pathlib import Path
-from typing import Final, Self
+from typing import Final, Literal, Self
 
 from platformdirs import user_cache_dir
 from pydantic import Field
@@ -23,6 +23,17 @@ from pydantic import Field
 from scitools_hook.config.models import DbLocation
 from scitools_hook.models.git import SyncTargetKind
 from scitools_hook.models.snapshot import DataModel, ParseError, Side
+
+CACHE_SCHEMA: Final = 1
+"""The layout of ``state.json``. A state that does not carry this number is discarded.
+
+Bumped by the understand-8-features specification, which added the before route, the analysis
+fingerprint, the per-side accuracy and the generated-architecture stamps. A state written
+before them cannot answer any of those questions, and reading it anyway would leave a run
+believing its before database was built from a commit it was not -- a stale-cache bug that
+reports the wrong findings and exits 0. Absent reads as ``0``, so an old file is stale by
+construction; :meth:`SyncState.stale_layout` is what asks.
+"""
 
 APP_NAME: Final = "scitools-hook"
 """Directory name used under the user cache dir and under the git directory."""
@@ -87,6 +98,10 @@ class CachePaths(DataModel):
         )
 
 
+BeforeRoute = Literal["shadow", "commit"]
+"""How a before database came to exist. ``auto`` is a *setting*; this is what actually happened."""
+
+
 class SyncState(DataModel):
     """``state.json``: what the shadows currently hold, so a sync stays incremental (2.3).
 
@@ -113,6 +128,34 @@ class SyncState(DataModel):
     before_commit: str | None = None
     languages: list[str] = Field(default_factory=list)
     created_with: str = ""
+    schema_version: int = 0
+    """The cache layout this state was written by; ``0`` is "before the field existed"."""
+
+    before_route: BeforeRoute | None = None
+    """How the before database was built: an exported shadow tree, or the base commit (3.6)."""
+
+    analysis_settings: str = ""
+    """The analysis fingerprint the databases were built under (req 3.5).
+
+    Empty means "not recorded", which reads as a miss. It is the settings half of the
+    before-database key: the commit alone does not decide what a database holds, because the
+    language set, the file selection and the architecture all do too.
+    """
+
+    accuracy: dict[Side, float] = Field(default_factory=dict)
+    """Each side's last reported accuracy (req 7.1, 7.2).
+
+    Recorded rather than recomputed because a warm run analyses nothing on a side whose
+    commit has not moved -- there is no ``und analyze`` to report a figure, and the last one
+    is still true of the database that is still there.
+    """
+
+    generated_archs: dict[str, str] = Field(default_factory=dict)
+    """Generated architecture name -> the repository head and after tree id it was built from.
+
+    The skip rule of requirement 4.4: a git-derived architecture is regenerated when either
+    has moved and left alone when neither has.
+    """
     parse_errors: dict[Side, list[ParseError]] = Field(default_factory=dict)
     """What each side's database could not read, carried between runs (req 2.6, task 11.13)."""
 
@@ -161,6 +204,10 @@ class SyncState(DataModel):
         errors = _distinct([*kept, *fresh])
         self.parse_errors[side] = errors
         return errors
+
+    def stale_layout(self) -> bool:
+        """Whether this state was written by a different cache layout and must be discarded."""
+        return self.schema_version != CACHE_SCHEMA
 
     def forget_parse_errors(self) -> None:
         """Drop both sides' records, for a run that discarded both databases.
