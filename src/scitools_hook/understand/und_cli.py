@@ -725,6 +725,75 @@ def _reports(accuracy: bool, sarif: Path | None) -> list[str]:
     return asked if sarif is None else [*asked, "-sarif", str(sarif)]
 
 
+@dataclass(frozen=True, slots=True)
+class GitSource:
+    """Where a commit-built database reads its file contents from (req 3.1).
+
+    Measured on Build 1262. ``-gitcommit`` decides **where contents come from, not which
+    files exist**: without ``refdb`` the database starts empty and needs ``und add``; with
+    it, the reference's settings *and* file set are copied and then rescanned against the
+    pinned commit, dropping what the commit does not have. That is why the before side of a
+    check names the after database as its reference -- the two then hold the same files, seen
+    at two commits, which is exactly what a before/after comparison needs.
+
+    ``repo`` is the local repository the contents are read out of. Understand records it as
+    the ``GitRepositoryDirectory`` setting, which is also what the git-derived architectures
+    run ``git log`` in (requirement 4.3).
+    """
+
+    repo: Path
+    commit: str
+    refdb: Path | None = None
+
+    def switches(self) -> list[str]:
+        """The three switches, in the order the measured command used them."""
+        argv = ["-gitrepo", str(self.repo), "-gitcommit", self.commit]
+        return argv if self.refdb is None else [*argv, "-refdb", str(self.refdb)]
+
+
+def create_from_commit(cli: UndCli, db: Path, languages: list[str], source: GitSource) -> None:
+    """Create a database whose contents come from one commit (requirement 3.1).
+
+    A module function rather than a method for the reason task 1.5 recorded: ``UndCli`` is
+    five over its coupling limit, so a new type named inside the class is refused by the
+    gate. Three of the five architecture commands already live here for the same reason.
+
+    ``-local`` matches :meth:`UndCli.create`: the analysis data stays inside the ``.und``
+    directory so the cache can be deleted as one unit.
+
+    **A reference database must be a sibling of the new one.** Measured on Build 1262: with
+    the two in different directories ``und`` answers ``Warning: The new database is not in
+    the same directory as the old database. Comparison might not find matching entities when
+    relative paths don't match.`` and exits 1 -- a warning that is really a refusal, and one
+    whose text says nothing about the switch that caused it. The Gate's own cache puts
+    ``before.und`` and ``after.und`` in one directory, so the condition holds in production
+    and this guard exists to name the mistake if that ever changes.
+    """
+    if source.refdb is not None and source.refdb.parent != db.parent:
+        raise AnalysisFailedError(
+            f"a reference database must be a sibling of the new one: {db} is not beside "
+            f"{source.refdb}",
+            hint="Create both databases in the same directory; und refuses the pair otherwise.",
+        )
+    argv = ["create", *source.switches(), "-languages", *languages, "-local"]
+    _reject_failure(cli.run(argv, db=db, quiet=True))
+
+
+def set_git_repository(cli: UndCli, db: Path, repo: Path) -> None:
+    """Record which repository a database belongs to (requirement 4.3).
+
+    Measured on Build 1262: ``und -db X settings -GitRepositoryDirectory Y`` exits 0 and
+    ``und -db X list settings`` reads the value back. The git-derived architectures need it,
+    because they run ``git log`` in that directory and a shadow tree is not a checkout.
+
+    Never under ``-quiet``: this module has been bitten by ``-quiet`` hiding a refusal, so
+    the whole answer is read and an ``Error:`` line at status 0 is refused like any other.
+    """
+    result = cli.run(["settings", "-GitRepositoryDirectory", str(repo)], db=db)
+    _reject_failure(result)
+    _reject_error_shape(result)
+
+
 def _read_accuracy(text: str) -> float | None:
     """The share of files the analysis parsed cleanly, or ``None`` when it reported none.
 

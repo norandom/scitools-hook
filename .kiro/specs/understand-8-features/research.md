@@ -32,6 +32,17 @@
   - `-gitrepo` is a `create` option, not a setting; the database records it as the setting `GitRepositoryDirectory` (`None` on a plain database).
 - **Implications**: The commit-built route replaces `git archive`-style export for the before side: `create -gitcommit <base> -refdb after.und -gitrepo <repo>`, then `analyze -all` once per base commit. The database is immutable for a given (base commit, settings, build), which makes it the natural cache key for requirement 8. Requirement 5.5's "comparison metrics" reduce to registering the pair; the design records that no comparison metric ids exist on 1262 and offers none until a build ships them.
 
+**A reference database must be a sibling of the new one** (measured 2026-09-05, while implementing task 1.6). With the two in different directories, `und create -gitcommit ... -refdb ...` answers
+
+```
+Warning: The new database is not in the same directory as the old database. Comparison might
+not find matching entities when relative paths don't match.
+```
+
+and **exits 1** -- a warning that is really a refusal, whose text names neither the switch nor the requirement. The Gate's own cache already puts `before.und` and `after.und` in one directory, so the condition holds in production; `create_from_commit` guards it anyway and names both paths, because a message like that one costs an afternoon.
+
+**Recording the repository on a database works**: `und -db X settings -GitRepositoryDirectory Y` exits 0 and `und -db X list settings` reads the value back (measured on Build 1262). That is what task 5.1 needs for a git-derived architecture on a shadow-tree database.
+
 ### Generated architectures (requirement 4)
 - **Context**: Which architectures can `und arch` generate headlessly, and what do they need?
 - **Sources Consulted**: `und help arch`; `help/architecture/architectures-from-git.html`; `und arch -list`, `-generate "Git Stability"` and `"Git Owner"` on a plain database over `src/` and on the commit-built database; `und export -arch` of each.

@@ -136,18 +136,22 @@ int scale(int value, int factor) { return value * factor; }
 
 BASE_SOURCES: dict[str, str] = {
     **SOURCES,
-    "main.py": "from app.entry import entry_point\n\n\ndef main():\n    return entry_point()\n",
+    "main.py": "def main():\n    return 1\n",
 }
-"""The same files one commit earlier: ``main`` without its docstring line.
+"""The same files one commit earlier, with ``main`` shorter and importing nothing.
 
 The contract project needs a history, not just a tree, because three things in the
 understand-8-features specification are about a repository rather than a directory: a before
 database built from a commit (requirement 3.2), a git-derived architecture generated from
 commit dates and authors (requirement 4.3), and the comparison pair the two register with
 each other (requirement 5.5). One commit would give a history with nothing before it, so
-there are two, and the difference is deliberately the smallest thing that still moves a
-metric -- ``main.py`` loses a line -- so that a before/after comparison over this project has
-something to compare while every existing expectation about the *working tree* is untouched.
+there are two, and the difference is deliberately the smallest thing that still moves both a
+metric and the dependency graph: at the base commit ``main`` returns a literal and imports
+nothing, so ``main.py`` is two code lines with no edge to ``app/entry.py``, and the head
+commit adds both. A docstring alone would not do -- ``CountLineCode`` does not count one, so
+the two sides would measure identically and every before/after test over this project would
+pass without comparing anything. Every existing expectation about the *working tree* is
+untouched, because the working tree is the head commit.
 """
 
 FILES: tuple[str, ...] = tuple(sorted(SOURCES))
