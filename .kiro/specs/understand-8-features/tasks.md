@@ -42,7 +42,7 @@
   - Done when unit tests pin the parser on the measured 21-line listing and the argv of a generation, a generation on the stubbed `und` answers the node read back, and an empty export raises the typed error
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 1.8 Answer plugin metrics by lookup and tags in the worker's catalogue
+- [x] 1.8 Answer plugin metrics by lookup and tags in the worker's catalogue
   - A `lookup` request key answers, per id, the targets and languages read from the metric's tags, and null for an unknown id; the fake API's 8.0 shape gains tags
   - Done when unit tests cover a found id, an unknown id and a 7.x API without lookup, and the contract test finds the four Python plugin metrics with their measured tags on 8.0
   - _Requirements: 5.1_
@@ -245,3 +245,4 @@
 - 1.7 (**the module-functions approach paid off**): `GeneratedArch`, `list_generated` and `generate_arch` are module functions in `und_cli.py`, so `UndCli`'s coupling stayed at 16 while three new names entered the module. `und_arch.py` could not host them -- `und_cli` imports it, so the reverse would be circular.
 - 1.7 (measured on Build 1262, all four shapes): `arch -generate` prints `<name>: generated` and **the exit status is unreliable** -- 0 on one database, 1 on another, 87 members exported either way. Success is decided by exporting and reading back; failure by the `Error:` line, of which there are three: `architecture not found`, `architecture name already in use` (without `-force`) and `invalid -options: unknown option` (which then lists the options). `und -db X arch -list` works, so the wrapper's own db placement needs no special case.
 - 1.7: the design's `GeneratedEmptyError` was implemented and then removed -- `errors.py` holds 9 classes against a limit of 6 and the gate refused a tenth. An empty generated architecture raises `AnalysisFailedError` with the cause in its hint instead. Every caller treats any failure from generation the same way (report, fall back to the declared architecture), so one type loses nothing; task 5.3 does not need to tell them apart.
+- 1.8: the `lookup` request key answers `{id: {"targets": [...], "languages": [...]}}` from `Metric.lookup(id).tags()`, and `None` both for an id the build does not know and for a 7.x API with no `lookup` at all -- neither is an error, because requirement 1.3 asks a 6.5 install to behave as it always did. Tags that are neither a target nor a language (`Category:`, `Solution:`, a bare `Dependencies`) are left alone rather than guessed at. Two contract tests prove the four measured metrics on the real build **and** that they are absent from the kind listing, which is the whole reason the second source exists.

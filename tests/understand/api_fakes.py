@@ -332,17 +332,28 @@ class FakeMetrics:
 
 
 class FakeMetricObject:
-    """One ``understand.Metric`` as 8.0 hands it out: an object with ``id()``/``description()``."""
+    """One ``understand.Metric`` as 8.0 hands it out: ``id()``, ``description()``, ``tags()``.
 
-    def __init__(self, metric_id: str, description: str = "") -> None:
+    The tags are how a plugin metric says what it applies to. Measured on Build 1262,
+    ``Metric.lookup("CountGlobalsModified").tags()`` answers ``['Category: Coupling',
+    'Target: Functions', 'Language: C', 'Language: C++', 'Language: Python', ...]`` -- one
+    entry per language, with the target scope beside them.
+    """
+
+    def __init__(self, metric_id: str, description: str = "", tags: Sequence[str] = ()) -> None:
         self._id = metric_id
         self._description = description
+        self._tags = list(tags)
 
     def id(self) -> str:
         return self._id
 
     def description(self) -> str:
         return self._description
+
+    def tags(self) -> list[str]:
+        """What this metric applies to, in Understand's own ``Category: X`` spelling."""
+        return list(self._tags)
 
 
 class FakeMetrics8:
@@ -356,9 +367,11 @@ class FakeMetrics8:
         self,
         by_kind: dict[str, list[str]] | None = None,
         descriptions: dict[str, str] | None = None,
+        tags: dict[str, list[str]] | None = None,
     ) -> None:
         self._by_kind = by_kind or {}
         self._descriptions = descriptions or {}
+        self._tags = tags or {}
 
     def list(self, kindstring: str) -> list[FakeMetricObject]:
         return [
@@ -368,9 +381,15 @@ class FakeMetrics8:
 
     def lookup(self, metricid: str) -> FakeMetricObject | None:
         known = {name for names in self._by_kind.values() for name in names}
-        if metricid not in known and metricid not in self._descriptions:
+        if (
+            metricid not in known
+            and metricid not in self._descriptions
+            and metricid not in self._tags
+        ):
             return None
-        return FakeMetricObject(metricid, self._descriptions.get(metricid, ""))
+        return FakeMetricObject(
+            metricid, self._descriptions.get(metricid, ""), self._tags.get(metricid, ())
+        )
 
 
 class FakeUnderstand(ModuleType):

@@ -474,3 +474,44 @@ def test_snapshot_under_upython_reports_populations_and_unavailable_metrics(
     assert max(routines) == 7
     assert snapshot.populations["project"]["MaxCyclomaticStrict"] == [7]
     assert snapshot.populations["project"]["CyclomaticStrict"] == routines
+
+
+@pytest.mark.contract
+def test_the_plugin_metrics_understand_8_adds_declare_their_targets_and_languages() -> None:
+    """Requirement 5.1 against the installed build: the tags the declaration was written from.
+
+    These are invisible to ``Metric.list`` -- the test below says so -- and are the reason the
+    catalogue needs a second source at all. ``CognitiveComplexity`` is the control: the build
+    carries it and it is C/C++ only, so a Python repository must be told it is unavailable
+    rather than have it silently skipped.
+    """
+    wanted = [
+        "CountGlobalsModified",
+        "CountClassCoupledModified",
+        "CorePercentage",
+        "CognitiveComplexity",
+        "NoSuchMetricAtAll",
+    ]
+
+    answer = run_worker(upython_or_skip(), "catalogue", {"kinds": [], "lookup": wanted})
+
+    lookup = answer["lookup"]
+    assert isinstance(lookup, dict)
+    assert lookup["NoSuchMetricAtAll"] is None
+    assert lookup["CountGlobalsModified"]["targets"] == ["Functions"]
+    assert "Python" in lookup["CountGlobalsModified"]["languages"]
+    assert lookup["CountClassCoupledModified"]["targets"] == ["Classes"]
+    assert set(lookup["CorePercentage"]["targets"]) == {"Architectures", "Project"}
+    assert lookup["CorePercentage"]["languages"] == ["Any"]
+    assert lookup["CognitiveComplexity"]["languages"] == ["C", "C++"]
+    assert "Python" not in lookup["CognitiveComplexity"]["languages"]
+
+
+@pytest.mark.contract
+def test_a_plugin_metric_is_absent_from_the_kind_listing_that_would_be_asked_first() -> None:
+    """Why the lookup exists: the ordinary catalogue answer does not carry these at all."""
+    answer = run_worker(upython_or_skip(), "catalogue", {"kinds": [ROUTINE_KIND]})
+
+    listed = answer["metrics"][ROUTINE_KIND]
+    assert "CyclomaticStrict" in listed, "the kind string still answers the built-in metrics"
+    assert "CountGlobalsModified" not in listed

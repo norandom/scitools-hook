@@ -296,6 +296,111 @@ def test_catalogue_rejects_a_request_without_a_list_of_kinds(
     assert "kinds" in error["message"]
 
 
+PLUGIN_TAGS = {
+    "CountGlobalsModified": [
+        "Category: Coupling",
+        "Target: Functions",
+        "Language: C",
+        "Language: C++",
+        "Language: Python",
+        "Language: Pascal",
+        "Language: Web",
+    ],
+    "CorePercentage": [
+        "Category: Coupling",
+        "Solution: Project Quality",
+        "Language: Any",
+        "Dependencies",
+        "Target: Architectures",
+        "Target: Project",
+    ],
+}
+"""``Metric.lookup(id).tags()`` on Build 1262, verbatim, for one routine and one project metric.
+
+A plugin metric is invisible to ``Metric.list(kind)`` -- measured, the routine kind string
+answers 18 metrics and none of these is among them -- so its tags are the only thing that
+says what it applies to. ``Any`` is Understand's word for no language restriction, and a tag
+that is neither a target nor a language (``Category:``, ``Solution:``, ``Dependencies``) is
+not this feature's business.
+"""
+
+
+def test_catalogue_answers_the_targets_and_languages_a_plugin_metric_declares(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Requirement 5.1: a metric ``Metric.list`` never names is still offered where it applies."""
+    metrics = FakeMetrics8({ROUTINE_KIND: []}, tags=PLUGIN_TAGS)
+    install(monkeypatch, catalogue_api(metrics))  # type: ignore[arg-type]
+
+    result = worker.dispatch("catalogue", {"kinds": [], "lookup": ["CountGlobalsModified"]})
+
+    assert result["lookup"] == {
+        "CountGlobalsModified": {
+            "targets": ["Functions"],
+            "languages": ["C", "C++", "Python", "Pascal", "Web"],
+        }
+    }
+
+
+def test_a_metric_that_applies_to_two_scopes_declares_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CorePercentage`` is an architecture *and* a project metric, and says so in its tags."""
+    metrics = FakeMetrics8({}, tags=PLUGIN_TAGS)
+    install(monkeypatch, catalogue_api(metrics))  # type: ignore[arg-type]
+
+    answer = worker.dispatch("catalogue", {"kinds": [], "lookup": ["CorePercentage"]})
+
+    assert answer["lookup"]["CorePercentage"] == {
+        "targets": ["Architectures", "Project"],
+        "languages": ["Any"],
+    }
+
+
+def test_an_id_this_build_does_not_know_answers_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Metric.lookup`` answers ``None`` for an unknown id, and so does the catalogue."""
+    install(monkeypatch, catalogue_api(FakeMetrics8({}, tags=PLUGIN_TAGS)))  # type: ignore[arg-type]
+
+    answer = worker.dispatch("catalogue", {"kinds": [], "lookup": ["NoSuchMetricAtAll"]})
+
+    assert answer["lookup"] == {"NoSuchMetricAtAll": None}
+
+
+def test_an_api_without_lookup_answers_null_for_every_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """7.x has no ``Metric.lookup``, so nothing can be said about a plugin metric there.
+
+    Null rather than an error: requirement 1.3 asks a 6.5 install to behave as it always
+    did, and "this build cannot say" is the honest answer for it.
+    """
+    install(monkeypatch, catalogue_api(FakeMetrics({ROUTINE_KIND: ["CountLineCode"]})))
+
+    answer = worker.dispatch("catalogue", {"kinds": [], "lookup": ["CountGlobalsModified"]})
+
+    assert answer["lookup"] == {"CountGlobalsModified": None}
+
+
+def test_a_catalogue_asked_for_no_lookup_carries_no_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key is absent, not empty: an unasked question has no answer in the document."""
+    install(monkeypatch, catalogue_api(FakeMetrics({ROUTINE_KIND: ["CountLineCode"]})))
+
+    assert "lookup" not in worker.dispatch("catalogue", {"kinds": [ROUTINE_KIND]})
+
+
+def test_a_lookup_that_is_not_a_list_of_strings_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every request key is validated the same way; a malformed one is a ``BadRequest``."""
+    install(monkeypatch, catalogue_api(FakeMetrics()))
+
+    error = envelope(worker.dispatch("catalogue", {"kinds": [], "lookup": "CountParams"}))
+
+    assert error["type"] == "BadRequest"
+
+
 # --- archs -----------------------------------------------------------------------
 
 

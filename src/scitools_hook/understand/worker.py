@@ -184,7 +184,44 @@ def _op_catalogue(api: Any, request: Mapping[str, object]) -> dict[str, object]:
     if "describe" in request:
         names = _require_str_list(request, "describe")
         answer["descriptions"] = {name: _metric_description(api, name) for name in names}
+    if "lookup" in request:
+        wanted = _require_str_list(request, "lookup")
+        answer["lookup"] = {name: _metric_tags(api, name) for name in wanted}
     return answer
+
+
+def _metric_tags(api: Any, name: str) -> dict[str, list[str]] | None:
+    """What one metric says it applies to, or ``None`` when this build cannot say (req 5.1).
+
+    Understand 8.0 computes some metrics from plugins, and ``Metric.list(kind)`` does not
+    name them: measured on Build 1262, the Python routine kind string answers 18 metrics and
+    ``CountGlobalsModified`` is not among them, while ``Metric.lookup`` finds it. Its tags
+    are the only statement of what it applies to -- ``Target: Functions`` beside one
+    ``Language:`` entry per language -- so they are what the catalogue reads.
+
+    ``None`` covers both a 7.x API, which has no ``lookup`` at all, and an id this build does
+    not know. Neither is an error: requirement 1.3 asks a 6.5 install to behave as it always
+    did, and "this build cannot say" is the honest answer for it.
+    """
+    lookup = getattr(api.Metric, "lookup", None)
+    if not callable(lookup):
+        return None
+    found = lookup(name)
+    if found is None:
+        return None
+    tags = [str(tag) for tag in found.tags()]
+    return {"targets": _tagged(tags, "Target"), "languages": _tagged(tags, "Language")}
+
+
+def _tagged(tags: Sequence[str], prefix: str) -> list[str]:
+    """The values of one tag kind, in the order Understand listed them.
+
+    A tag that is neither a target nor a language -- ``Category: Coupling``, ``Solution:
+    Project Quality``, a bare ``Dependencies`` -- is not this feature's business and is left
+    where it is rather than being guessed at.
+    """
+    head = f"{prefix}:"
+    return [tag[len(head) :].strip() for tag in tags if tag.startswith(head)]
 
 
 def _metric_ids(listed: Any) -> list[str]:
