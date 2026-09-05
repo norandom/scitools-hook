@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeCommandLog, MakeGitRepo
 
+from scitools_hook.cli.doctor import render_report
 from scitools_hook.models.understand import Feature
 from scitools_hook.runner.context import ContextOptions
 from scitools_hook.runner.doctor import run_doctor
@@ -81,3 +82,15 @@ def test_the_probe_leaves_nothing_behind_in_the_repository(
     diagnosis(repo.path, tmp_path / "cache", command_log)
 
     assert sorted(path.name for path in repo.path.iterdir()) == [".git"]
+
+
+def test_the_rows_an_operator_reads_say_available_for_every_feature(
+    git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
+) -> None:
+    """Requirement 1.1 as the operator meets it: six rows in the Understand block."""
+    text = render_report(diagnosis(git_repo().path, tmp_path / "cache", command_log))
+
+    rows = [line.strip() for line in text.splitlines() if line.strip().startswith("feature ")]
+    assert len(rows) == 6, rows
+    answers = [row.split(":", 1)[1].strip() for row in rows]
+    assert all(answer.startswith("available") for answer in answers), rows

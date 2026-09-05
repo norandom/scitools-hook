@@ -143,6 +143,12 @@ Understand
   probe upython:     ok (8.0.1262)
   probe inprocess:   ok (8.0.1262)
   analysis python:   /home/mc/Source/scitools-hook/.venv/bin/python3 (3.14.4)
+  feature understand sarif: available
+  feature commit before: available
+  feature generated archs: available (21 offered)
+  feature plugin metrics: available
+  feature unused rule: available
+  feature accuracy:  available
 
 Repository
   inside a repository: yes

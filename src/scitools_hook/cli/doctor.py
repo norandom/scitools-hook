@@ -34,7 +34,12 @@ from scitools_hook import __version__
 from scitools_hook.cli import common
 from scitools_hook.cli.config_cmd import render_settings
 from scitools_hook.models.cache import CachePaths, SyncState
-from scitools_hook.models.understand import LicenseStatus, UnderstandEnv
+from scitools_hook.models.understand import (
+    Feature,
+    FeatureReport,
+    LicenseStatus,
+    UnderstandEnv,
+)
 from scitools_hook.runner.doctor import (
     ApiProbe,
     DoctorReport,
@@ -117,6 +122,7 @@ def _understand_rows(diagnosis: UnderstandDiagnosis) -> list[tuple[str, str]]:
     rows.append(("api mode", diagnosis.api_mode or NOT_VERIFIED))
     rows.extend((f"probe {probe.mode}", _probe(probe)) for probe in diagnosis.probes)
     rows.append(("analysis python", _python(diagnosis.python)))
+    rows.extend(_feature_rows(diagnosis.features))
     return rows
 
 
@@ -128,6 +134,33 @@ def _installation_rows(env: UnderstandEnv | None) -> list[tuple[str, str]]:
     if env.upython is not None:
         rows.append(("upython", str(env.upython)))
     return [*rows, ("python api", str(env.python_api_dir))]
+
+
+def _feature_rows(report: FeatureReport | None) -> list[tuple[str, str]]:
+    """One row per feature of the understand-8-features specification (requirement 1.1).
+
+    Read from what ``doctor`` measured on this build, not from its version number. No rows at
+    all when the analysis probe never got far enough to ask: there is nothing to say about the
+    features of a build that cannot analyse a one-file project, and six ``unknown`` rows would
+    say it six times.
+    """
+    if report is None:
+        return []
+    return [
+        (f"feature {feature.value.replace('_', ' ')}", _availability(feature, report))
+        for feature in Feature
+    ]
+
+
+def _availability(feature: Feature, report: FeatureReport) -> str:
+    """One feature's answer, with the reason whenever it is not a plain yes."""
+    found = report.features.get(feature)
+    if found is None:
+        return NOT_CHECKED
+    if found.state == "available":
+        offered = len(found.generated)
+        return f"available ({offered} offered)" if offered else "available"
+    return f"{found.state}: {found.detail}".strip(": ")
 
 
 def _license(status: LicenseStatus | None) -> str:

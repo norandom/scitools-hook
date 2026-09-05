@@ -55,6 +55,8 @@ from scitools_hook.models.cache import CachePaths, SyncState
 from scitools_hook.models.snapshot import DataModel
 from scitools_hook.models.understand import (
     AnalysisProbe,
+    Availability,
+    Feature,
     FeatureReport,
     LicenseStatus,
     UnderstandEnv,
@@ -464,6 +466,10 @@ def _fixture_diagnosis(fixtures: Path) -> UnderstandDiagnosis:
         und_version=FixtureUndCli(fixtures).version(),
         license=LicenseStatus(ok=True),
         analysis=AnalysisProbe(ok=True),
+        features=FeatureReport(
+            build=FixtureUndCli(fixtures).version(),
+            features=dict.fromkeys(Feature, Availability(state="unverified", detail=SEAM_REASON)),
+        ),
         probes=[ApiProbe(mode="inprocess", ok=True, version=FIXTURE_API_VERSION, detail=FAKE_VAR)],
         api_mode="inprocess",
     )
@@ -510,6 +516,9 @@ def _diagnose(
         api,
     )
 
+
+SEAM_REASON: Final = "the test seam answers from fixtures and runs no Understand at all"
+"""Why the seam can say nothing about a build: there is no build behind it to ask."""
 
 ANALYSIS_PROBE_SOURCE: Final = "def probe():\n    return 1\n"
 """The whole of the scratch project the analysis probe builds: one routine, no imports."""

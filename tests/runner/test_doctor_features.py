@@ -16,8 +16,9 @@ import json
 from pathlib import Path
 
 from conftest import FakeCommandLog, MakeGitRepo
-from doctor_stubs import UndAnswers, install, isolated_env, options
+from doctor_stubs import UndAnswers, install, isolated_env, options, seam
 
+from scitools_hook.cli.doctor import render_report
 from scitools_hook.models.understand import Feature, FeatureReport
 from scitools_hook.runner.doctor import run_doctor
 from scitools_hook.understand.features import FEATURES_FILE
@@ -187,3 +188,78 @@ def test_a_probe_that_never_ran_stores_nothing_and_says_so(
     assert report.understand.features is None
     assert report.cache is not None
     assert not (report.cache.root / FEATURES_FILE).exists()
+
+
+# --- the rows an operator reads --------------------------------------------------------
+
+
+def test_the_report_prints_one_row_per_feature(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """Requirement 1.1: six rows, named so an operator can match them to the documentation."""
+    home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    for label in (
+        "feature understand sarif",
+        "feature accuracy",
+        "feature generated archs",
+        "feature commit before",
+        "feature plugin metrics",
+        "feature unused rule",
+    ):
+        assert label in text, label
+    assert text.count("available") >= 6
+
+
+def test_a_row_for_a_missing_feature_carries_the_builds_reason(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """`not on this build` on its own would send the operator back to the terminal."""
+    home = install(tmp_path / "scitools")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    assert "not on this build" in text
+    assert "Unrecognized arguments" in text
+
+
+def test_the_generated_row_says_how_many_the_build_offers(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The count is the useful part: the names go in the error when one is misspelt."""
+    home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    assert "feature generated archs" in text
+    assert "available (3 offered)" in text
+
+
+def test_the_test_seam_says_unverified_rather_than_guessing(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """There is no Understand behind the seam, so it can say nothing about a build's features."""
+    fixtures, env = seam(tmp_path)
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    assert text.count("unverified") >= 6
+    assert "runs no Understand at all" in text
+
+
+def test_an_installation_that_never_probed_prints_no_feature_rows(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """Six `unknown` rows would say the same nothing six times over."""
+    no_analysis = UndAnswers(analysis_rc=2, analysis_text="No Server Response")
+    home = install(tmp_path / "scitools", und=no_analysis)
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    assert "feature " not in text

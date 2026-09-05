@@ -219,7 +219,15 @@ def store_features(paths: CachePaths, report: FeatureReport) -> Path | None:
     A report that cannot be stored costs the next check a "run doctor" message and nothing
     else, so a failure here is reported by its absence rather than by stopping the command
     that was diagnosing a broken installation in the first place.
+
+    **A report in which nothing was measured is not stored at all**, and the test seam is the
+    case that matters: it answers from fixtures with no Understand behind it, so every entry
+    is ``unverified``, and writing that would have ``doctor`` create an analysis cache for a
+    repository nothing has ever analysed. A diagnostic reports; it does not manufacture the
+    thing it is diagnosing.
     """
+    if all(found.state == "unverified" for found in report.features.values()):
+        return None
     target = paths.root / FEATURES_FILE
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

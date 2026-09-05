@@ -55,7 +55,7 @@
   - _Depends: 1.5, 1.6, 1.7, 1.8_
   - _Requirements: 1.1, 1.4_
 
-- [ ] 2.2 Print one doctor row per feature
+- [x] 2.2 Print one doctor row per feature
   - One `feature` row per feature with `available`, `not on this build`, or `unverified` and the reason, read from the stored record
   - Done when `doctor` on 8.0 prints six `available` rows (contract) and the fixture seam prints six `unverified` rows with the seam as the reason (unit)
   - _Depends: 2.1_
@@ -249,3 +249,5 @@
 - 2.1: `understand/features.py` holds the probe and the store; `doctor.py` gained one field and two calls, no class (its file is already 7 classes against a limit of 6). The probe runs inside the analysis probe's scratch directory, turns *that* into a one-commit repository for the `-gitcommit` question, and ignores `*.und` in it so a database is never committed. Measured on the real build: all six available, 21 generated architectures offered, and the whole of `doctor` still under a second and a half longer than before.
 - 2.1: the SARIF answer is **the file**, not the exit status -- a build that ignored an unknown switch would otherwise read as offering the feature while writing nothing. The refusal detail carries `und`'s own sentence first and the wrapper's message only as a fallback: the message leads with the whole command line, which on a temporary directory fills the 300-character detail on its own and pushes the useful line off the end.
 - 2.1: `_one_commit` reads the **process** environment for git, not `options.env`, which is why the unit tests find git even though `isolated_env` blanks `PATH`. That is deliberate -- git is ambient, like the interpreter -- but it means a test that wants the `unverified` branch has to make git fail some other way.
+- 2.2 (**a defect the seam caught**): storing the report made `doctor` create an analysis cache directory for a repository nothing had ever analysed -- `tests/runner/test_doctor.py::test_a_never_analysed_repository_reports_nothing_but_the_seam` failed, correctly. A report in which **nothing was measured** (every entry `unverified`, which is exactly the seam) is now not stored at all. A diagnostic reports; it does not manufacture the thing it is diagnosing.
+- 2.2: the rows are `feature <name with spaces>`, six of them, appended after `analysis python`. The generated row carries the count (`available (21 offered)`) because the count is the useful part -- the names go into the error when a configured one is misspelt. No rows at all when the analysis probe never ran: six `unknown` rows would say the same nothing six times.
