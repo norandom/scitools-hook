@@ -67,7 +67,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -658,6 +658,31 @@ def _is_regular_file(path: Path) -> bool:
             f"examined: {unreadable}",
             hint=CONFIG_HINT,
         ) from unreadable
+
+
+def und_exclusions(patterns: Iterable[str]) -> list[str]:
+    """The configured excludes in the form ``und -exclude`` actually honours.
+
+    Measured in task 8.1 and again here: ``und -exclude 'build/**'`` excludes **nothing**,
+    while ``-exclude build`` drops the whole tree. The shadow path never meets this, because
+    ``ShadowSync`` filters before exporting and ``und`` only ever sees files that survived --
+    but a project rooted at the working tree hands ``und`` the whole directory, so the
+    patterns have to be translated or the virtualenv lands in the project. Before this, a
+    build of this repository enrolled 1535 files, most of them ``.venv/``.
+
+    Only the directory-shaped patterns survive: a trailing ``/**`` is dropped and the leading
+    segment kept. A file glob such as ``*.min.js`` is left alone, and anything with a wildcard
+    inside a path segment is discarded rather than passed through, because ``und`` would
+    silently ignore it and an exclusion that silently does nothing is worse than none.
+    """
+    out: list[str] = []
+    for pattern in patterns:
+        head = pattern.split("/", 1)[0]
+        if "*" in head and head != pattern:
+            continue
+        if head not in out:
+            out.append(head)
+    return out
 
 
 def _violations_export(found: list[Path], result: CommandResult, out_dir: Path) -> Path:

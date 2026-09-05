@@ -43,6 +43,71 @@ and **exits 1** -- a warning that is really a refusal, whose text names neither 
 
 **Recording the repository on a database works**: `und -db X settings -GitRepositoryDirectory Y` exits 0 and `und -db X list settings` reads the value back (measured on Build 1262). That is what task 5.1 needs for a git-derived architecture on a shadow-tree database.
 
+### `-gitcommit` pins contents only inside `-gitrepo` (task 4.4, requirement 3.2)
+
+**Measured on Build 1262 while implementing task 4.4, and it invalidated the design's
+construction.** The design built the before database with
+
+```
+und create -db before.und -gitrepo <repo> -gitcommit <base> -refdb after.und
+```
+
+because `-refdb` copies the reference's settings *and file set*, which is exactly the parity a
+before/after comparison wants. It also copies the reference's **file paths**. The Gate's after
+database names its files under a shadow tree in the user's cache
+(`<cache>/<repo-id>/after/pkg/core.py`), and those paths are not inside the `-gitrepo`
+directory -- so Understand read their contents **from disk**, with no warning and exit 0.
+
+The consequence, measured end to end on a two-commit repository whose `core.add` goes from
+one branch to four:
+
+| | before database | after database |
+| --- | --- | --- |
+| `core.add` `CountLineCode` | 7 | 7 |
+| `core.add` `CyclomaticStrict` | 4 | 4 |
+| findings of `check --range base..HEAD` | **1** | (8 through the shadow route) |
+
+The before database held the working tree's code, identical to the after database in every
+metric, and the ratchet compared a side against itself. Seven of the eight findings vanished
+and the run stayed green. That is the exact silent-green shape this tool exists to refuse, and
+nothing in `und`'s output said a word about it.
+
+**Where `-gitcommit` does pin**, measured on the same repository:
+
+| database | rooted at | `core.add` `CountLineCode` |
+| --- | --- | --- |
+| `create -gitrepo <repo> -gitcommit <base>` + `add <repo>` | the repository | **2** (the base commit) |
+| `create ... -refdb <repo-rooted reference>` | the repository | **2** |
+| `create ... -refdb <cache-rooted reference>` | the cache | 7 (the working tree) |
+
+So the route builds the before database **rooted at the repository**: `create -gitrepo
+-gitcommit`, then `add <repo>` under the configured excludes translated by
+`und_cli.und_exclusions`, then `settings -GitRepositoryDirectory`, then `analyze -all`. The
+snapshot extraction is rooted at the repository for that side, which `AnalyzeResult.
+analysis_root` now carries, so an entity has one long name whichever route built its side.
+
+**The two routes then report the same findings.** Measured with the installed console script,
+two runs sharing nothing but the repository, each with its own cache: 8 findings each,
+identical in rule, path, value, before, limit, severity, blocking, pre-existing and entity.
+`tests/contract/test_before_routes_contract.py` is that comparison as a test.
+
+**What giving up `-refdb` costs.** Two things, and both are recorded rather than hidden:
+
+1. **No comparison pair.** Measured: `-refdb` registers the pair on the **reference** --
+   `reference.comparison_db()` answers the derived database and the derived one answers
+   `None`. Nothing reads it: 108 metric ids across file, function, class and project kinds on
+   1262, none of them a comparison metric (`CountClassBase` matches a substring search and
+   nothing else does). So the relation is real and no consumer exists, which is what
+   requirement 5.5 already concluded.
+2. **The before side's file set is the repository's, not the shadow's.** `und add <repo>`
+   enrols under `und -exclude`, while the shadow is `project.include`/`project.exclude` applied
+   by the synchroniser, and the two pattern languages do not agree everywhere
+   (`und -exclude 'build/**'` excludes nothing; `-exclude build` drops the tree). Where they
+   differ, the before side sees a different project from the after side, which changes
+   project-scope ratchet values and the before side's structural view. **This is an
+   operator-visible consequence of turning `understand.before_side` on and belongs in the
+   documentation task.** It does not arise on the shipped default, which is `shadow`.
+
 ### Generated architectures (requirement 4)
 - **Context**: Which architectures can `und arch` generate headlessly, and what do they need?
 - **Sources Consulted**: `und help arch`; `help/architecture/architectures-from-git.html`; `und arch -list`, `-generate "Git Stability"` and `"Git Owner"` on a plain database over `src/` and on the commit-built database; `und export -arch` of each.

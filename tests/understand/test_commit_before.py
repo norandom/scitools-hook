@@ -105,10 +105,10 @@ def _nothing():
 # --- what the build actually runs -------------------------------------------------------
 
 
-def test_the_database_is_created_from_the_commit_with_the_after_database_as_reference(
+def test_the_database_is_created_from_the_commit_and_rooted_at_the_repository(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
-    """``-refdb`` is what copies the file set, which is what makes the two comparable (3.1)."""
+    """Where ``-gitcommit`` pins contents at all, measured on Build 1262 (requirement 3.1)."""
     request = a_request(tmp_path)
 
     build(cli(stub, log), request)
@@ -117,7 +117,39 @@ def test_the_database_is_created_from_the_commit_with_the_after_database_as_refe
     assert created[created.index("-db") + 1] == str(request.paths.before_db)
     assert created[created.index("-gitrepo") + 1] == str(request.repo)
     assert created[created.index("-gitcommit") + 1] == COMMIT
-    assert created[created.index("-refdb") + 1] == str(request.paths.after_db)
+    added = [call for call in stub.calls if "add" in call][0]
+    assert added[-1] == str(request.repo)
+
+
+def test_the_reference_database_is_deliberately_not_used(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """The design used ``-refdb``; measured on Build 1262, it produces a silent self-comparison.
+
+    ``-refdb`` copies the reference's file *paths*, the Gate's after database names its files
+    under a shadow tree in the user's cache, and ``-gitcommit`` pins the contents only of
+    files inside the ``-gitrepo`` directory -- a file outside it is read from disk, with no
+    warning. The before database then held the working tree's code, identical to the after
+    one, and a range check that reported eight ratchet findings reported one.
+    """
+    build(cli(stub, log), a_request(tmp_path))
+
+    assert "-refdb" not in [token for call in stub.calls for token in call]
+
+
+def test_the_configured_exclusions_decide_the_file_set(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Without the reference there is no file set to copy, so ``und add`` decides it."""
+    request = a_request(tmp_path, exclude=("build/**", "*.min.js", "vendor"))
+
+    build(cli(stub, log), request)
+
+    added = [call for call in stub.calls if "add" in call][0]
+    excluded = added[added.index("-exclude") + 1].split(",")
+    assert excluded == ["build", "*.min.js", "vendor"], (
+        "a trailing /** is dropped and the directory kept; a file glob is passed as it stands"
+    )
 
 
 def test_the_repository_directory_is_recorded_on_the_database(

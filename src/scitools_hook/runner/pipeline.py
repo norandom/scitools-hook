@@ -336,11 +336,18 @@ class Engine:
     def extract(
         self, side: Side, files: frozenset[str], analyses: Mapping[Side, AnalyzeResult]
     ) -> ProjectSnapshot:
-        """One side's snapshot, rooted at the shadow tree its database was built from."""
+        """One side's snapshot, rooted at the directory its database names its files under.
+
+        Not always that side's own tree. A commit-built before database is named under the
+        **after** tree, because ``-refdb`` copies the reference's file set with its paths, so
+        the analysis says where it is rooted and this reads it rather than deducing it from the
+        side. The fallback covers a result assembled by hand, which every fake does.
+        """
         paths = self._dbm.paths()
+        own = paths.before_tree if side == "before" else paths.after_tree
         target = SnapshotTarget(
             db=paths.before_db if side == "before" else paths.after_db,
-            root=paths.before_tree if side == "before" else paths.after_tree,
+            root=analyses[side].analysis_root or own,
             side=side,
             files=files,
             parse_errors=tuple(analyses[side].parse_errors),

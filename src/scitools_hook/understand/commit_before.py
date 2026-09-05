@@ -43,6 +43,7 @@ from scitools_hook.understand.und_cli import (
     UndCli,
     create_from_commit,
     set_git_repository,
+    und_exclusions,
 )
 
 COMMIT_ROUTE: Final = "commit"
@@ -104,6 +105,7 @@ class CommitBuild:
     paths: CachePaths
     repo: Path
     key: BeforeKey
+    exclude: tuple[str, ...] = ()
     accuracy: bool = False
     sarif: Path | None = None
 
@@ -136,25 +138,43 @@ def ensure(
 def build(cli: UndCli, request: CommitBuild) -> AnalyzeResult:
     """Create the database from the commit and analyse it once (requirements 3.1, 7.1).
 
-    Three commands, and a failure in any of them raises ``AnalysisFailedError`` carrying
-    ``und``'s own output, because every one of them goes through the wrapper's own refusal.
-    They are not interchangeable and the order matters:
+    Four commands, and a failure in any of them raises ``AnalysisFailedError`` carrying
+    ``und``'s own output, because every one goes through the wrapper's own refusal. They are
+    not interchangeable and the order matters:
 
-    #. ``create`` with ``-gitrepo``, ``-gitcommit`` and ``-refdb <after.und>``. The reference
-       supplies the file set *and* registers the comparison pair, which is what makes the two
-       databases answer a before/after question about the same files.
+    #. ``create`` with ``-gitrepo`` and ``-gitcommit``, **rooted at the repository**.
+    #. ``add <repo>``, with the configured excludes translated into the form ``und -exclude``
+       honours. This is what decides the file set.
     #. ``settings -GitRepositoryDirectory``. ``-gitrepo`` decides where contents are read
-       from; this is what the git-derived architectures run ``git log`` in (requirement 4.3),
-       and a database that has one but not the other generates an empty architecture.
+       from; this is what the git-derived architectures run ``git log`` in (requirement 4.3).
     #. ``analyze -all``, once. The whole database is new, so there is nothing selective to do.
+
+    **There is no ``-refdb``, and that is the measurement this route turns on.** The design
+    used it -- it copies the reference's settings and file set, which is exactly the parity a
+    before/after comparison wants. Measured on Build 1262, it cannot be used here: ``-refdb``
+    copies the reference's file *paths* as well, the Gate's after database names its files
+    under a shadow tree in the user's cache, and **``-gitcommit`` pins the contents only of
+    files that are inside the ``-gitrepo`` directory**. A file outside it is read from disk,
+    silently. The before database then held the *working tree's* code -- identical to the
+    after database, byte for byte in every metric -- and a range check that reported eight
+    ratchet findings through the shadow route reported one. A gate comparing a side against
+    itself is the exact silent green this tool exists to refuse.
+
+    So the database is rooted at the repository, where ``-gitcommit`` does pin contents
+    (measured: ``core.add`` is ``CountLineCode 2`` at the base commit and ``7`` at head), and
+    the file set comes from ``und add`` under the configured excludes rather than from the
+    reference. The consequence is recorded in ``research.md``: the before side's file set is
+    the repository's, not the shadow's, and the two can differ where a glob means different
+    things to Understand and to the synchroniser.
     """
     discard(request.paths.before_db)
     create_from_commit(
         cli,
         request.paths.before_db,
         list(request.key.languages),
-        GitSource(repo=request.repo, commit=request.key.commit, refdb=request.paths.after_db),
+        GitSource(repo=request.repo, commit=request.key.commit),
     )
+    cli.add(request.paths.before_db, request.repo, und_exclusions(request.exclude))
     set_git_repository(cli, request.paths.before_db, request.repo)
     return cli.analyze(request.paths.before_db, ALL, accuracy=request.accuracy, sarif=request.sarif)
 
@@ -228,6 +248,12 @@ def serve(
 
     A run this route serves never exports a shadow tree for the before side (requirement 3.1),
     which is where its saving comes from: the tree is the expensive half.
+
+    **The database is named under the repository, not under a shadow tree**, which is why the
+    result carries ``analysis_root`` and why the parse errors are made relative to the same
+    directory: an entity has to have one long name whichever route built its side, and the
+    after side's is a cache path. :func:`build` records why the reference database cannot be
+    used to get that parity for free.
     """
     if side != BEFORE or target.kind != "commit":
         return None
@@ -246,10 +272,11 @@ def serve(
             f"{_said(refused)}"
         )
         return None
+    root = attempt.repo
     if fresh is None:
-        return _reused(state)
-    errors = state.record_parse_errors(BEFORE, attempt.repo, fresh.parse_errors, None)
-    return fresh.model_copy(update={"parse_errors": errors})
+        return _reused(state).model_copy(update={"analysis_root": root})
+    errors = state.record_parse_errors(BEFORE, root, fresh.parse_errors, None)
+    return fresh.model_copy(update={"parse_errors": errors, "analysis_root": root})
 
 
 def _said(refused: AnalysisFailedError) -> str:
@@ -295,6 +322,7 @@ def _request(attempt: Attempt, commit: str, state: SyncState, build: str) -> Com
     return CommitBuild(
         paths=attempt.paths,
         repo=attempt.repo,
+        exclude=tuple(attempt.settings.project.exclude),
         key=BeforeKey.of(
             commit=commit,
             languages=attempt.settings.project.languages or state.languages,

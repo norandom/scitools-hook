@@ -125,6 +125,7 @@ from scitools_hook.understand.und_arch import (
 from scitools_hook.understand.und_cli import (
     ALL,
     UndCli,
+    und_exclusions,
 )
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
@@ -302,31 +303,6 @@ def _remember_accuracy(state: SyncState, side: Side, result: AnalyzeResult) -> f
     return state.accuracy.get(side)
 
 
-def _und_exclusions(patterns: Iterable[str]) -> list[str]:
-    """The configured excludes in the form ``und -exclude`` actually honours.
-
-    Measured in task 8.1 and again here: ``und -exclude 'build/**'`` excludes **nothing**,
-    while ``-exclude build`` drops the whole tree. The shadow path never meets this, because
-    ``ShadowSync`` filters before exporting and ``und`` only ever sees files that survived --
-    but a project rooted at the working tree hands ``und`` the whole directory, so the
-    patterns have to be translated or the virtualenv lands in the project. Before this, a
-    build of this repository enrolled 1535 files, most of them ``.venv/``.
-
-    Only the directory-shaped patterns survive: a trailing ``/**`` is dropped and the leading
-    segment kept. A file glob such as ``*.min.js`` is left alone, and anything with a wildcard
-    inside a path segment is discarded rather than passed through, because ``und`` would
-    silently ignore it and an exclusion that silently does nothing is worse than none.
-    """
-    out: list[str] = []
-    for pattern in patterns:
-        head = pattern.split("/", 1)[0]
-        if "*" in head and head != pattern:
-            continue
-        if head not in out:
-            out.append(head)
-    return out
-
-
 class DatabaseManager:
     """The cache directory's owner: shadows, databases, ``state.json`` (requirements 2.1-2.8).
 
@@ -447,7 +423,7 @@ class DatabaseManager:
                     f"Try {target.with_suffix('.und')}."
                 ),
             )
-        self._und.add(target, root, _und_exclusions(self._settings.project.exclude))
+        self._und.add(target, root, und_exclusions(self._settings.project.exclude))
         self._und.analyze(target, ALL)
         return target
 
@@ -493,6 +469,7 @@ class DatabaseManager:
             update={
                 "parse_errors": errors,
                 "accuracy": _remember_accuracy(state, side, done.result),
+                "analysis_root": tree,
             }
         )
 

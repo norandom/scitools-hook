@@ -50,6 +50,20 @@ class AnalyzeResult(DataModel):
     sarif_path: Path | None = None
     """Where ``und analyze -sarif`` wrote its diagnostics, when it was asked to (req 2.1)."""
 
+    analysis_root: Path | None = None
+    """The directory this database's files are named under (requirements 3.1, 4.2).
+
+    Not deducible from the side, which is why it is carried. A shadow-built database is
+    named under its own exported tree; a **commit-built** one is named under the *reference's*
+    tree, because ``-refdb`` copies the reference's file set with its paths and
+    ``-gitcommit`` changes only where the contents are read from. Measured on Build 1262: a
+    before database built from the base commit with ``after.und`` as its reference lists
+    ``<cache>/after/pkg/core.py``, holding that file as the base commit had it.
+
+    The snapshot extraction is rooted here, so an entity's long name is the same on both
+    sides of a comparison whichever route built them. ``None`` is "not recorded", which
+    leaves the caller to fall back on the side's own tree."""
+
 
 class LicenseStatus(DataModel):
     """What ``und -isundlicensed`` said; ``text`` quotes ``und`` when not ok (req 1.4).
