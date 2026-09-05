@@ -76,6 +76,46 @@
   - Every extraction walks the whole project once for populations, call resolution and (since 0.1.0a8) architecture edges; that fixed cost, not the recorded entities, is the 4 s floor.
 - **Implications**: (a) cache the before snapshot keyed by base commit, settings, selection, worker version and build -- the before side is immutable per commit, and with requirement 3 its database is too; (b) one extraction per side that records the selected files and two rings around them, narrowed in-process to exactly the set the second pass would have asked for, with a contract test proving the narrowed document equals the two-pass one; (c) no `analyze -changed` on a before side whose commit is unchanged. Paper estimate for the measured run: 5.1 + ~7.5 = 12.6 s, under the 15 s target.
 
+### The harness baseline, 2026-09-05 (task 8.1, requirement 8.1)
+
+Taken with `tests/perf/warm_run_timing.py` (committed in task 1.1) so tasks 4.2, 9.4 and 9.5 can re-run exactly this and compare. Tool 0.1.0a8, Understand Build 1262, 4 cores. `scitools-hook` measured in place on a clean tree; `facdrone` measured in a `git clone --local --no-hardlinks` because its working tree carries another session's uncommitted work, so its warm-up row is a genuinely cold cache and is not comparable with the rest.
+
+| Run | scitools-hook (in-place) | facdrone (clone) |
+| --- | --- | --- |
+| warm-up whole project | 12.1 s | 26.9 s (cold cache) |
+| first check, one changed line | 31.5 s | 52.8 s |
+| **warm check, one changed line** | **27.7 s wall, 27.4 s CPU** | **38.7 s wall, 38.3 s CPU** |
+| whole project (`--all`) | 14.6 s | 26.4 s |
+| no selection (nothing changed) | 1.0 s | 1.1 s |
+
+Phases of the warm one-line check, which is the run requirements 8.2, 8.3 and 8.4 are about:
+
+| Phase | scitools-hook | facdrone |
+| --- | --- | --- |
+| synchronising the after tree | 0.1 s | 0.2 s |
+| analysing the after database | 3.5 s | 2.9 s |
+| synchronising the before tree | 0.0 s | 0.1 s |
+| analysing the before database | **0.0 s** | **0.0 s** |
+| reading the after snapshot, pass 1 | 4.9 s | 6.2 s |
+| reading the before snapshot, pass 1 | 5.0 s | 6.1 s |
+| reading the after snapshot, pass 2 | 6.6 s | 11.1 s |
+| reading the before snapshot, pass 2 | 6.5 s | 11.0 s |
+| **the four extractions together** | **23.0 s of 27.7 s (83%)** | **34.4 s of 38.7 s (89%)** |
+
+**Two corrections to what the design assumed, both from these figures.**
+
+1. **The before analysis is already free.** The design's requirement 8.2 pairs "do not extract the before snapshot again" with "run no analysis on an unchanged before side", and the 2026-09-05 hand measurement showed 3.6 s for that analysis. Measured properly warm, on both repositories, it is **0.0 s** -- `und analyze -changed` finds nothing changed in a shadow tree that is still at the same commit. The 3.6 s in the earlier table was a re-sync after an `explain --range` run had moved the after shadow, which is the note `doctor` already prints. So requirement 8.2's analysis half buys nothing on a warm run; **its snapshot half is the whole of it**, and task 4.2's timing run should be expected to show no improvement from the route change alone.
+2. **The second pass costs more than the first**, 6.6 s against 4.9 s here and 11.1 s against 6.2 s on facdrone, although both walk the whole project. The extra is the entities the wider set records, so a single pass that records two rings will cost about what the second pass costs today, not the sum.
+
+**What the levers are therefore worth.** One extraction per side (9.2, 9.3, 9.4) plus the before side served from cache (9.1) leaves sync + after analysis + one after extraction:
+
+| | scitools-hook | facdrone |
+| --- | --- | --- |
+| projected warm run | 0.1 + 3.5 + 6.6 = **10.2 s** | 0.2 + 2.9 + 11.1 = **14.2 s** |
+| against the baseline | 27.7 s | 38.7 s |
+
+Both are inside requirement 8.4's 15 s, and facdrone only just -- which is worth knowing before 9.5 claims the target, because 8.4 names this repository and facdrone is the larger case.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |

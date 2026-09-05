@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: baseline, configuration, models, fixture history, and the wrapper commands every later group needs
-- [ ] 1.1 Record the warm-run baseline on both repositories
+- [x] 1.1 Record the warm-run baseline on both repositories
   - A repeatable timing script under the test tree that runs a warm check with one changed line and a whole-project check with CPU accounting and prints the per-phase times from the verbose output
   - Run it on this repository and on facdrone before any other task changes behaviour; the figures go into the research log beside the ones measured on 2026-09-05
   - Done when the script runs to completion on this repository and the research log carries a dated table for both repositories
@@ -226,3 +226,7 @@
   - Done when the strict docs build passes and each of the four pages carries the named section
   - _Depends: 10.1_
   - _Requirements: 2.5, 5.5, 9.1, 9.2, 9.3_
+
+## Implementation Notes
+- 1.1: the harness is `tests/perf/warm_run_timing.py`, run as `uv run python tests/perf/warm_run_timing.py <repo> [--mode in-place|clone] [--target-wall 15]`. It is not collected by pytest (no `test_` prefix); its pure parts are tested in `tests/perf/test_warm_run_timing.py`. It refuses `in-place` on a tree with uncommitted work and clones instead, which is how facdrone must be measured while another session is working there. Measure the same probe file each time or the figures are not comparable -- it picks the median tracked `.py` under `src/` by default.
+- 1.1 (measured, affects task 4.2 and 9.x): `analysing the before database` is **0.0 s** on a genuinely warm run on both repositories, so requirement 8.2's "no analysis on an unchanged before side" is worth nothing by itself; the four snapshot extractions are 83% (scitools-hook) and 89% (facdrone) of the warm run. Do not expect task 4.2's timing run to improve the headline figure -- the improvement is 9.1 plus 9.4. Projected warm runs after both levers: 10.2 s here, 14.2 s on facdrone, against a 15 s target that names this repository.
