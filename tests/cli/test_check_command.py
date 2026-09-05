@@ -163,7 +163,7 @@ def test_the_json_document_is_the_only_thing_on_standard_output(
     assembler.assembly.check_pipeline.findings = BLOCKING
     result = run("check", "--all", "--format", "json")
     assert result.stdout == render_json(a_result("all", BLOCKING)) + "\n"
-    assert json.loads(result.stdout)["schema_version"] == 1
+    assert json.loads(result.stdout)["schema_version"] == 2
 
 
 def test_the_sarif_document_can_be_the_report_itself(assembler: StubAssembler) -> None:
@@ -215,7 +215,7 @@ def test_sarif_and_a_json_report_are_two_documents_in_two_places(
     assembler.assembly.check_pipeline.findings = BLOCKING
     target = tmp_path / "report.sarif"
     result = run("check", "--all", "--format", "json", "--sarif", str(target))
-    assert json.loads(result.stdout)["schema_version"] == 1
+    assert json.loads(result.stdout)["schema_version"] == 2
     assert json.loads(target.read_text(encoding="utf-8"))["version"] == "2.1.0"
 
 

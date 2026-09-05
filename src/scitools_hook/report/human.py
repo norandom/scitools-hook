@@ -94,7 +94,13 @@ from typing import Final, Literal, NamedTuple
 from scitools_hook.config.metric_names import SCOPES, Scope
 from scitools_hook.config.models import Severity
 from scitools_hook.exit_codes import ExitCode, describe
-from scitools_hook.models.findings import Finding, HighestValue, RunResult, TightenedLimit
+from scitools_hook.models.findings import (
+    Finding,
+    HighestValue,
+    RunResult,
+    TightenedLimit,
+    UnderstandSarif,
+)
 from scitools_hook.models.snapshot import ParseError
 
 
@@ -137,6 +143,7 @@ _UNAVAILABLE_LEAD: Final[tuple[str, ...]] = (
 )
 IGNORED_HEADER: Final = "ignored entities: matched an ignore pattern, so no rule ran on them"
 TIGHTENED_HEADER: Final = "tightened limits: the baseline moved down to what this run measured"
+COMPANION_HEADER: Final = "Understand's own SARIF: uploaded beside the Gate's, never merged into it"
 HIGHEST_HEADER: Final = (
     "highest values: the largest value per metric, whether or not it breaks a limit"
 )
@@ -499,7 +506,31 @@ def _note_sections(
         sections.append(_tightened_section(result.tightened, style))
     if show_highest and result.highest:
         sections.append(_highest_section(result.highest, style))
+    if result.understand_sarif:
+        sections.append(_companion_section(result.understand_sarif, style))
     return sections
+
+
+def _companion_section(companions: Sequence[UnderstandSarif], style: _Style) -> str:
+    """Where Understand's own SARIF documents went, and why any of them did not (2.1, 2.4).
+
+    Every entry says one of three things: written *here*, prepared but not asked for, or
+    absent with the reason. None of them is a finding and none of them moves the exit code --
+    they are what the run did with the files, reported so the operator can upload them.
+    """
+    lines = [style.strong(COMPANION_HEADER)]
+    for one in companions:
+        lines.append(f"  {one.kind}  {_companion_state(one)}")
+    return "\n".join(lines)
+
+
+def _companion_state(one: UnderstandSarif) -> str:
+    """One companion's outcome, in the order a reader cares about: where, or why not."""
+    if one.written is not None:
+        return one.written
+    if one.problem:
+        return f"not written: {one.problem}"
+    return f"prepared at {one.source} (pass --sarif PATH to write it beside the Gate's)"
 
 
 def _ignored_section(counts: Mapping[Scope, int], style: _Style) -> str:

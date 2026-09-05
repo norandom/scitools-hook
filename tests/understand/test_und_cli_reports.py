@@ -102,7 +102,7 @@ def test_both_reports_can_be_asked_for_at_once(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
     target = tmp_path / "parselog.sarif"
-    stub.plan({"analyze": {"stdout": ACCURACY_OUTPUT}})
+    stub.plan({"analyze": {"stdout": ACCURACY_OUTPUT, "write_switch": {"-sarif": "{}"}}})
 
     result = cli(stub, log).analyze(db_path(tmp_path), ALL, accuracy=True, sarif=target)
 
@@ -110,6 +110,24 @@ def test_both_reports_can_be_asked_for_at_once(
     assert "-sarif" in stub.argv
     assert result.accuracy == pytest.approx(25 / 92)
     assert result.sarif_path == target
+
+
+def test_the_sarif_path_that_comes_back_is_the_file_and_not_the_switch(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """A build that ignored ``-sarif`` and exited 0 must not report a document (req 2.1).
+
+    The same rule ``doctor``'s probe follows: the answer is the file. Reported as written, a
+    document that was never written becomes a companion the run promises and cannot produce,
+    or worse a stale one from an earlier pass.
+    """
+    target = tmp_path / "never-written.sarif"
+    stub.plan({"analyze": {}})
+
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL, sarif=target)
+
+    assert "-sarif" in stub.argv
+    assert result.sarif_path is None
 
 
 # --- what comes back ---------------------------------------------------------------

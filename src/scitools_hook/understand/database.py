@@ -258,6 +258,32 @@ class _Pass(NamedTuple):
     reanalysed: frozenset[Path] | None
 
 
+def _diagnostics(db: Path, settings: Settings) -> Path | None:
+    """Where a **whole-project** pass writes Understand's own SARIF, or ``None`` (req 2.1).
+
+    Asked for only by the two full passes, and that is the correctness of the feature
+    rather than a saving. Measured on Build 1262: ``und analyze -sarif`` reports **the
+    pass**, not the database. A selective pass over one clean file writes a document
+    whose ``results`` array is empty while the database still holds three parse errors,
+    and the ``artifacts`` table lists every file either way, so nothing in the document
+    says it is partial. Published, that document tells GitHub a repository parses
+    cleanly when it does not -- the silent green this whole tool exists to refuse.
+
+    So a partial pass produces no document, ``AnalyzeResult.sarif_path`` stays ``None``,
+    and the run reports that there is no companion and why (requirement 2.4). The Gate's
+    own SARIF is unaffected: its parse errors come from ``SyncState.parse_errors``, which
+    is a property of the database and survives a warm run.
+
+    A module function rather than a method because ``DatabaseManager`` is seven methods
+    over its own ``CountDeclMethod`` limit already, so any new one trips the ratchet.
+
+    Named after the database rather than after the side so no caller has to carry one:
+    ``<cache>/after.und`` writes ``<cache>/after.sarif``. Both sides write one; only the
+    after side's is ever offered as a companion.
+    """
+    return db.with_suffix(".sarif") if settings.understand.sarif else None
+
+
 def _und_exclusions(patterns: Iterable[str]) -> list[str]:
     """The configured excludes in the form ``und -exclude`` actually honours.
 
@@ -659,7 +685,7 @@ class DatabaseManager:
             f"created the {side} analysis database with {', '.join(languages)} enabled"
         )
         self._und.add(db, tree, [])
-        return _Pass(self._und.analyze(db, ALL), None)
+        return _Pass(self._und.analyze(db, ALL, sarif=_diagnostics(db, self._settings)), None)
 
     def _update(self, db: Path, tree: Path, delta: SyncDelta, languages: list[str]) -> _Pass:
         """Apply one delta to a database that already holds the previous shadow (req 2.3).
@@ -729,7 +755,7 @@ class DatabaseManager:
         way round for a gate.
         """
         self._progress.note(f"analysing the whole project rather than the change: {reason}")
-        return _Pass(self._und.analyze(db, ALL), None)
+        return _Pass(self._und.analyze(db, ALL, sarif=_diagnostics(db, self._settings)), None)
 
     # --- the cache directory and its state ---------------------------------------
 

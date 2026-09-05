@@ -90,6 +90,12 @@ and 10.2 should still assert that its fixture produced the parse errors it meant
 ANALYZE_STEM: Final = "analyze"
 """The stem a near-miss is measured against; the suffix is checked separately."""
 
+DIAGNOSTICS_FILE: Final = "parselog.sarif"
+"""What ``und analyze -sarif`` answers with: one SARIF document, copied where it is asked.
+
+Optional, like the real switch: a fixture without one stands for a build that was not
+asked, or that wrote nothing, and the run then reports no analysis companion."""
+
 CODECHECK_FILE: Final = "codecheck.csv"
 """What ``und codecheck`` answers with: a violations export in the real CSV shape (req 6.9)."""
 
@@ -251,7 +257,20 @@ class FixtureUndCli(UndCli):
         therefore refused by name.
         """
         with _fixture_contract("reading the analysis fixture"):
-            return self._analysis()
+            return self._analysis().model_copy(update={"sarif_path": self._diagnostics(sarif)})
+
+    def _diagnostics(self, target: Path | None) -> Path | None:
+        """Copy the fixture's SARIF to where ``-sarif`` asked for it, when both are there.
+
+        The answer is the file on this side too (task 2.1): a fixture with no document reports
+        ``None`` rather than a path to something that was never written, which is what a build
+        that ignored the switch would do.
+        """
+        source = self.directory / DIAGNOSTICS_FILE
+        if target is None or not source.is_file():
+            return None
+        target.write_bytes(source.read_bytes())
+        return target
 
     def _analysis(self) -> AnalyzeResult:
         """The analysis the fixture directory describes, or the reason it cannot be read."""

@@ -219,6 +219,32 @@ class HighestValue(DataModel):
     entity: EntityRef | None = None
 
 
+class UnderstandSarif(DataModel):
+    """One of Understand's own SARIF documents, as this run left it (req 2.1, 2.4).
+
+    Three states, and the fields say which: ``source`` set and ``written`` set is a companion
+    that was produced and copied beside the Gate's file; ``source`` set and ``written`` unset
+    is one the run prepared but nothing asked for, because ``--sarif`` was not given;
+    ``problem`` set is one that could not be produced, and then neither path is.
+
+    A problem is **reported and not raised**. The Gate's own SARIF is the deliverable and
+    these are extra, so a run must not fail, or change its exit code, over a file it was
+    copying as a convenience.
+    """
+
+    kind: str
+    """``analysis`` for ``und analyze -sarif``, ``codecheck`` for an inspection's results."""
+
+    source: str | None = None
+    """The prepared document in the analysis cache, already re-rooted on the repository."""
+
+    written: str | None = None
+    """Where it was copied beside the Gate's SARIF, once ``--sarif PATH`` asked for one."""
+
+    problem: str = ""
+    """Why there is no document, in Understand's or the filesystem's own words."""
+
+
 class RunResult(DataModel):
     """Everything one ``check`` run produced; the JSON output contract (req 7.4).
 
@@ -227,7 +253,7 @@ class RunResult(DataModel):
     by the pipeline.
     """
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     tool_version: str
     understand_version: str
     repo_root: str
@@ -248,6 +274,14 @@ class RunResult(DataModel):
     parse_errors: list[ParseError] = Field(default_factory=list)
     tightened: list[TightenedLimit] = Field(default_factory=list)
     highest: list[HighestValue] = Field(default_factory=list)
+    understand_sarif: list[UnderstandSarif] = Field(default_factory=list)
+    """Understand's own SARIF documents, beside the Gate's rather than merged into it (2.1).
+
+    Empty unless ``understand.sarif`` is on. Merging was refused deliberately: GitHub code
+    scanning accepts several tools in one upload and tells them apart by
+    ``tool.driver.name``, while merging would mix fingerprints and rule ids from tools that
+    know nothing about each other (requirement 2.2)."""
+
     analyzed_files: int = 0
     blocking_count: int = 0
     warning_count: int = 0

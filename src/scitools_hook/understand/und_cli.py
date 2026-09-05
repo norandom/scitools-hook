@@ -314,6 +314,10 @@ class UndCli:
         6.5 install and an 8.0 one with the keys off send byte-identical argv (req 1.3). What
         they add comes back on the result: the share of files that parsed with neither an
         error nor a warning, and the file the diagnostics were written to (req 2.1, 7.1).
+
+        ``sarif_path`` is **the file, not the switch**: a build that ignored ``-sarif`` and
+        exited 0 would otherwise report a document that was never written, which is the same
+        mistake ``doctor``'s probe refuses (task 2.1).
         """
         if isinstance(selection, list) and not selection:
             return AnalyzeResult(seconds=0.0)
@@ -327,7 +331,7 @@ class UndCli:
             warnings=warnings,
             seconds=result.seconds,
             accuracy=_read_accuracy(result.stdout) if accuracy else None,
-            sarif_path=sarif,
+            sarif_path=sarif if sarif is not None and sarif.is_file() else None,
         )
 
     # --- architectures (und import -arch / export -arch) --------------------------

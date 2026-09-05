@@ -179,7 +179,7 @@ is the cheapest way to make the command exit 0.
 scitools-hook check --staged --format json
 ```
 
-One document, `schema_version: 1`. The keys:
+One document, `schema_version: 2`. The keys:
 
 | Key | Contents |
 | --- | --- |
@@ -191,6 +191,7 @@ One document, `schema_version: 1`. The keys:
 | `parse_errors` | Files the analyser could not read. |
 | `unavailable_metrics` | Keyed **language &rarr; metrics**. Rules that were not evaluated. |
 | `ignored_counts`, `tightened`, `highest`, `analyzed_files` | Skipped entities, baseline movements, worst values, and how much was analysed. |
+| `understand_sarif` | Understand's own SARIF documents, one entry per kind: `written` where it went beside `--sarif`, `source` where it was prepared, `problem` why there is none. Empty unless `understand.sarif` is on. |
 
 One finding:
 

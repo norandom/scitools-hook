@@ -126,6 +126,12 @@ for name in PLAN.get("symlink_loop", []):
 for name, text in PLAN.get("write", {}).items():
     with open(os.path.join(OUT, name), "w", encoding="utf-8") as handle:
         handle.write(text)
+# `analyze -sarif <file>` names the file it writes after a switch rather than at the end, so
+# a plan that could only write into a directory or at the tail could not stand in for it.
+for switch, text in PLAN.get("write_switch", {}).items():
+    if switch in ARGV and ARGV.index(switch) + 1 < len(ARGV):
+        with open(ARGV[ARGV.index(switch) + 1], "w", encoding="utf-8") as handle:
+            handle.write(text)
 # `export -arch <name> <file>` names the file it writes as its last argument, so a plan that
 # could only write into a directory could not stand in for it at all.
 if "write_argv" in PLAN and ARGV:

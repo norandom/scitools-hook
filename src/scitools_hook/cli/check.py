@@ -31,6 +31,11 @@ delivered *first*, so a run whose SARIF file cannot be written still shows its f
 ``--sarif /dev/null`` stores nothing and is left alone: it is a legitimate discard, and
 nothing at the filesystem level distinguishes a discard from a mistake.
 
+**Understand's own SARIF is placed before either write.** The companions are copies of
+files the run already produced (requirement 2.1); putting them first is what lets the
+primary report name each one, and it keeps that report ahead of the Gate's own SARIF, so a
+destination that cannot be written still shows its findings.
+
 **The exit code is the verdict, and only the verdict.** ``blocking_count > 0`` is exit 1
 (req 7.9); everything else is an error raising its own typed exception, which
 :class:`~scitools_hook.cli.common.GateGroup` maps. There is deliberately no ``try``/``except``
@@ -52,6 +57,7 @@ from scitools_hook.models.findings import RunResult
 from scitools_hook.report.human import render_human
 from scitools_hook.report.json_out import render_json
 from scitools_hook.report.sarif import render_sarif
+from scitools_hook.runner.companions import write_beside
 
 HELP = "Check a change against the maintainability rules."
 
@@ -139,6 +145,8 @@ def check(
         options, overrides(strict=strict, adaptive=adaptive, show_highest=show_highest)
     )
     result = run.check().run(target)
+    if sarif is not None:
+        result = write_beside(result, sarif)
     common.emit_findings(render(result, output_format, run.ctx.settings, options, output), output)
     if sarif is not None:
         common.emit_findings(render_sarif(result, result.tool_version), sarif, option=SARIF_OPTION)

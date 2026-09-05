@@ -85,7 +85,7 @@ def test_the_json_document_is_the_whole_of_standard_output() -> None:
     """Parsed from the raw bytes of the pipe, so anything before or after it fails here."""
     done = run("check", "--all", "--format", "json")
     document = json.loads(done.stdout)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert done.stdout.startswith("{")
     assert done.stdout.endswith("}\n")
 
@@ -100,7 +100,7 @@ def test_the_diagnostics_of_the_same_run_are_on_standard_error() -> None:
 def test_a_verbose_json_run_still_writes_only_the_document(tmp_path: Path) -> None:
     """``--verbose`` adds the command log, which requirement 12.8 puts on standard error."""
     done = run("--verbose", "check", "--all", "--format", "json")
-    assert json.loads(done.stdout)["schema_version"] == 1
+    assert json.loads(done.stdout)["schema_version"] == 2
     assert DIAGNOSTIC in done.stderr
 
 

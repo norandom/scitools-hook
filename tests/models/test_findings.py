@@ -259,10 +259,11 @@ def _run_result(**overrides: object) -> RunResult:
     return RunResult.model_validate(fields)
 
 
-def test_run_result_pins_schema_version_one() -> None:
-    assert _run_result().schema_version == 1
+def test_run_result_pins_the_schema_version_it_declares() -> None:
+    """Bumped to 2 by the Understand 8.0 feature set, once, for `understand_sarif`."""
+    assert _run_result().schema_version == 2
     with pytest.raises(ValidationError):
-        _run_result(schema_version=2)
+        _run_result(schema_version=1)
 
 
 def test_run_result_defaults_are_empty() -> None:

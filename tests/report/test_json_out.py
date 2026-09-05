@@ -205,7 +205,7 @@ def test_document_carries_everything_requirement_7_4_lists() -> None:
     """Run metadata, effective thresholds, findings, ignored counts, unavailable, parse errors."""
     document = payload(full_run())
 
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["tool_version"] == "0.1.0"
     assert document["understand_version"] == "Understand 7.0"
     assert document["repo_root"] == "/repo"

@@ -101,6 +101,7 @@ from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.paths import classify_file
 from scitools_hook.report.hints import HintCatalogue, construct_of
 from scitools_hook.runner.baseline_store import BaselineStore
+from scitools_hook.runner.companions import for_run, keep_inspection
 from scitools_hook.runner.context import RunContext
 from scitools_hook.runner.pipeline import (
     AnalysisPlan,
@@ -176,6 +177,13 @@ class CheckPipeline:
         self._hints = HintCatalogue(ctx.settings.hints)
         self._before_unparsed: Sequence[str] = ()
         """Files the before side could not read; set per run, read by ``_finish``."""
+        self._inspection: Path | None = None
+        """Where CodeCheck's own SARIF was kept, set per run, read by :meth:`_companions`.
+
+        CodeCheck runs in a throwaway directory that is deleted the moment the run ends, so
+        the document has to be taken out of it there and then; a path recorded and read
+        later would name a directory that no longer exists.
+        """
 
     def run(self, selection: Selection | CommitRange) -> RunResult:
         """Evaluate ``selection`` and return everything the run produced (req 4.1-4.11).
@@ -225,6 +233,13 @@ class CheckPipeline:
             parse_errors=_merge_parse_errors(analyses),
             tightened=self._adapt(plan.mode, after, specs, stored),
             highest=outcome.highest,
+            understand_sarif=for_run(
+                self.ctx.settings,
+                self._dbm.paths(),
+                repo.root,
+                analyses["after"].sarif_path,
+                self._inspection,
+            ),
             analyzed_files=len({key.path for key in after.entities}),
             blocking_count=sum(1 for finding in findings if finding.blocking),
             warning_count=sum(1 for finding in findings if finding.severity == "warning"),
@@ -408,6 +423,12 @@ class CheckPipeline:
             return []
         with TemporaryDirectory(prefix="scitools-hook-codecheck-") as scratch:
             rows = self._codecheck.run(self._dbm.paths().after_db, config, listed, Path(scratch))
+            self._inspection = keep_inspection(
+                Path(scratch),
+                self._dbm.paths().root,
+                self.ctx.progress.note,
+                self.ctx.settings.understand.sarif,
+            )
         return map_violations(rows, self.ctx.settings.codecheck.severity, tree)
 
     def _listable(self, paths: Sequence[str], tree: Path) -> list[str]:
