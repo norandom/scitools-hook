@@ -96,6 +96,28 @@ hint: Set the installation directory with --scitools-home, the SCITOOLS_HOME env
 variable, or understand.home in the configuration file.
 ```
 
+## Licensing is done from the command line
+
+The gate reads every metric through Understand's Python API, so the licence in force has to
+list **API Access** — `und analyze` running is not enough. `scitools-hook doctor` prints the
+enabled options and says so when that one is missing.
+
+Licensing is the operator's and the vendor's business, done with `und` itself; this tool never
+sets, probes or repairs a licence. The vendor's page is the reference:
+<https://docs.scitools.com/help/licensing/command-line-licensing.html>. The offline sequence,
+as run on this project's machine (codes omitted):
+
+```bash
+und -enterofflinemode                      # "No Server Response" here is expected offline
+und -createofflinerequestcode              # prints the request code to send to SciTools
+und -setofflinereplycode <REPLY-CODE> -expiration YYYY-MM-DD -maintenance YYYY-MM-DD
+und license                                # must list: API Access
+```
+
+Two things measured on Understand 8.0 that make the last line the one that matters: a licence
+can be valid for the GUI and the command line and still refuse the API, and the `-show…`
+switches are not read-only — they regenerated a request code and dropped the stored reply.
+
 ## Check it works
 
 `doctor` is the command to run when something is wrong. It reports rather than judging, and
@@ -105,7 +127,7 @@ a CI job running `doctor` must not be told a commit had violations that were nev
 ```console
 $ scitools-hook doctor
 scitools-hook
-  version:           0.1.0a1
+  version:           0.1.0a6
   python:            3.14.4
 
 Understand
@@ -114,11 +136,13 @@ Understand
   und:               /home/mc/scitools/bin/linux64/und
   upython:           /home/mc/scitools/bin/linux64/upython
   python api:        /home/mc/scitools/bin/linux64/Python
-  und version:       (Build 1204)
+  und version:       (Build 1262)
   license:           ok
+  license options:   GUI Access, Perpetual License, Export & Share Reports/Metrics, Command Line Access via Und, API Access, VS Code Plugin, Onboard
+  analysis probe:    ok
   api mode:          upython
-  probe upython:     ok (6.5.1204)
-  probe inprocess:   ok (6.5.1204)
+  probe upython:     ok (8.0.1262)
+  probe inprocess:   ok (8.0.1262)
   analysis python:   /home/mc/Source/scitools-hook/.venv/bin/python3 (3.14.4)
 
 Repository
@@ -135,17 +159,33 @@ Analysis cache
   after target:      index (483373f949466958089d40e535053a525330cd9e)
   before commit:     none
   languages:         Python
-  built with:        (Build 1204)
+  built with:        (Build 1262)
 
 Problems
   none
 ```
 
-Four rows in that output are worth understanding before you need them.
+Six rows in that output are worth understanding before you need them.
 
-**`und version` says `(Build 1204)` and nothing else.** That is what `und version` prints on
-this build. No product version. The Python API, asked separately, reports `6.5.1204`, which
-is why the two probe rows show a different string from the `und version` row.
+**`und version` says `(Build 1262)` and nothing else.** That is what `und version` prints on
+this build, as `(Build 1204)` was on 6.5. No product version. The Python API, asked
+separately, reports `8.0.1262`, which is why the two probe rows show a different string from
+the `und version` row.
+
+**`license options` is the row that says whether the gate can measure anything.** `license:
+ok` means `und -isundlicensed` printed `1`, and that has been true on a machine where every
+metric read failed: a licence carries options, and the one the gate reads every metric
+through is **API Access**. When `und license` lists the options and that one is missing,
+`doctor` records a problem naming it and pointing at the vendor's [command-line licensing
+page](https://docs.scitools.com/help/licensing/command-line-licensing.html). A build that
+prints no option list gets no row and no problem: unknown is not missing.
+
+**`analysis probe` runs what the hook runs.** The licence probe and the two API probes ask
+whether `und` and the `understand` module answer; none of them asks whether an analysis
+works. Measured on 8.0.1262 the morning the install was replaced: all three said yes while
+every `und analyze` on the machine failed with `No Server Response`. So `doctor` creates,
+adds and analyses a one-file project in a scratch directory and reports the result, quoting
+`und`'s own words when it fails.
 
 **Both API probes are reported, not just the one in use.** The normal resolution path stops
 at the first mode that works. A diagnosis has the opposite job, so `doctor` runs both. This

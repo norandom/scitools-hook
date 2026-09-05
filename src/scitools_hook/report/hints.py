@@ -78,6 +78,15 @@ PARSE_CONSTRUCTS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 """The constructs Understand 6.5.1204 refuses, matched against the line the parse stopped at.
 
+**Understand 7.2 added all four to its parser** (its release notes: "type parameters, type
+alias declarations, except-star blocks"), and 8.0.1262 -- the version this project now
+targets -- was measured on 2026-09-05 with the same thirteen files under the Python 3
+dialect the wrapper pins: ``Analyze Completed (Errors:0 Warnings:0)``. No parse error means
+no point for the cascade to start from. Whether every routine after such a construct is
+present in an 8.0 database was not confirmed the same day, because the API licence was not
+available for the check; the hints below say which version they describe so an agent on 8.0
+re-runs rather than rewrites.
+
 **Measured, one file per construct, with a Python 3 interpreter on ``PATH``** -- which matters,
 because without one Understand analyses Python 2 and a far wider set of ordinary code fails
 (task 11.10). Under Python 3 these four declarations, and no others of the thirteen tried,
@@ -273,23 +282,26 @@ _PARSE_HINTS: Final[dict[str, str]] = {
     PARSE_ERROR_RULE: (
         "Understand stopped reading this file at the line named and never saw the rest of it, "
         "so nothing below that line was checked: rewrite the construct there in a spelling "
-        "Understand 6.5 parses, then re-run. Suppressing the finding leaves the file "
+        "Understand parses, then re-run. Suppressing the finding leaves the file "
         "unmeasured, which is the state that lets a real violation through"
     ),
     f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}type_params": (
-        "PEP 695 type parameters: Understand 6.5 cannot parse a type-parameter list, and one "
+        "PEP 695 type parameters: Understand 6.5 cannot parse a type-parameter list (8.0 can; "
+        "re-run there), and one "
         "of them costs the rest of the file. Declare the variable explicitly instead -- "
         '`T = TypeVar("T")` at module level, then `def generic(x: T) -> T:` and '
         "`class Box(Generic[T]):` -- which is the same type with a spelling the analysis reads"
     ),
     f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}type_alias": (
-        "PEP 695 `type X = ...`: Understand 6.5 cannot parse the `type` statement, and it "
+        "PEP 695 `type X = ...`: Understand 6.5 cannot parse the `type` statement (8.0 can; "
+        "re-run there), and it "
         "costs the rest of the file. Write the alias as an assignment instead -- "
         "`X: TypeAlias = ...`, or a plain `X = ...` -- which means the same thing to a type "
         "checker and leaves the file readable"
     ),
     f"{PARSE_ERROR_RULE}{VARIANT_SEPARATOR}except_star": (
-        "PEP 654 `except*`: Understand 6.5 cannot parse it, and it costs the rest of the "
+        "PEP 654 `except*`: Understand 6.5 cannot parse it (8.0 can; re-run there), and it costs "
+        "the rest of the "
         "file. Catch the group with a plain `except ExceptionGroup as group:` and dispatch on "
         "its `.exceptions` inside, until the analyser catches up"
     ),

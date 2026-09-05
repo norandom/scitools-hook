@@ -72,6 +72,9 @@ select = ["E", "F", "I", "UP", "B"]
 # there. Measured in task 10.4 -- five declarations cost five files, and the routine at the
 # declaration swallowed the remainder of its file into its own metrics. This project has to
 # be analysable by its own gate, so the older spelling stays until Understand catches up.
+# Understand caught up in 7.2, and 8.0.1262 parses all three spellings with zero errors
+# (measured 2026-09-05). The ignore stays until an API-licensed run confirms the routines
+# after such a declaration are present in the database, not only that the parse finishes.
 ignore = ["UP040", "UP046", "UP047"]
 
 [tool.mypy]

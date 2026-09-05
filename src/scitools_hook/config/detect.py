@@ -528,15 +528,18 @@ def _plain_header_comments(text: str) -> list[str]:
 
 PARSE_REASONS: Final[dict[str, str]] = {
     "pep695": (
-        "Understand 6.5 stops at a PEP 695 type-parameter list: the parse error cascades to "
+        "Understand 6.5 stops at a PEP 695 type-parameter list (8.0 parses it -- verify with "
+        "`check --files` and drop this entry on 8.0): the parse error cascades to "
         "the end of the file and nothing after the declaration is measured."
     ),
     "pep695-alias": (
-        "Understand 6.5 rejects a PEP 695 'type' statement: the parse error is reported and "
+        "Understand 6.5 rejects a PEP 695 'type' statement (8.0 parses it): the parse error is "
+        "reported and "
         "the rest of the file IS still measured. Measured on 6.5.1204."
     ),
     "fstring-escape": (
-        "Understand 6.5 cannot parse an f-string whose interpolation is followed by a "
+        "Understand 6.5 cannot parse an f-string whose interpolation is followed by a (8.0 "
+        "parses it -- verify and drop on 8.0) "
         "backslash-escaped opening brace; the parse error cascades to the end of the file "
         "and nothing after it is measured. Measured on 6.5.1204."
     ),

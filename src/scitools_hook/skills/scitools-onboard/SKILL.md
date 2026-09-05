@@ -73,11 +73,15 @@ scitools-hook init --detect
 ## Step 2 — the hooks and the agent's copy of the rules
 
 ```bash
-scitools-hook install-hook                    # the commit boundary
-scitools-hook install-hook --pre-push         # the push boundary, optional
+scitools-hook install-hook --pre-push         # the push boundary: one range check per push
+scitools-hook install-hook                    # the commit boundary, optional: every commit
 scitools-hook agent-rules --write AGENTS.md   # the limits where your agent already reads
 scitools-hook install-skills                  # gate, improve, adapt, and this one
 ```
+
+Pre-push is the lighter gate and the one this project's own repositories run: commits stay
+cheap and the range is judged once, when it leaves the machine. Pre-commit judges every commit
+and is the right choice when commits are what gets reviewed.
 
 Do this **before** the measurement, not after: the gate is useful from the first commit even
 on shipped defaults, and a repository is not "enabled" until a commit actually meets it.

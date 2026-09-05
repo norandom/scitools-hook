@@ -52,6 +52,12 @@ Read three rows of that output before going further:
 
 `doctor` always exits 0. It reports; it does not judge. Read the `Problems` section.
 
+**Licensing is the user's, done from the command line, never yours.** If `license` is not
+`ok`, if `license options` lacks `API Access`, or if any run says `NoApiLicense`, `No Server
+Response` or `Licensing Error`: quote the exact output, stop, and hand the user
+<https://docs.scitools.com/help/licensing/command-line-licensing.html>. Do not run `und
+license` or any `und -*license*` switch yourself -- some of them rewrite the licence file.
+
 If Understand is not installed at all, say so and stop. Do not guess at the numbers.
 
 ## Protocol

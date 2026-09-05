@@ -48,9 +48,17 @@ def first[T](items: list[T]) -> T: ...
 That is a correct, idiomatic modernisation, and `ruff --fix` will apply it across your
 repository without asking.
 
-**Understand 6.5 cannot parse a type-parameter list.** Measured against Build 1204, one such
+**Understand 6.5 could not parse a type-parameter list.** Measured against Build 1204, one such
 declaration aborts the parse at the declaration and the error cascades to the end of the
 file. Everything after it is absent from the database. Not reported as failed. Absent.
+
+!!! note "Understand 8.0 parses all of these"
+
+    7.2 added type parameters, `type` aliases and `except*` to the Python parser. Measured
+    on 8.0.1262 (2026-09-05), the same thirteen files under the Python 3 dialect the hook
+    pins: `Analyze Completed (Errors:0 Warnings:0)`. **8.0 is the version this project now
+    targets**; the 6.5 measurement below is kept because it is what the acknowledgement
+    machinery was built against, and because a repository on a 6.5 install still meets it.
 
 The measured constructs, from `report/hints.py`, with a Python 3 interpreter on `PATH`:
 

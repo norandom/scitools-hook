@@ -148,7 +148,9 @@ Two boundaries keep this usable:
 
 ### The constructs that fail, on 6.5.1204
 
-Measured with a Python 3 interpreter on `PATH`. Four declarations of thirteen tried aborted
+Measured on 6.5.1204 with a Python 3 interpreter on `PATH`; on 8.0.1262 all thirteen parse with
+zero errors (2026-09-05), so the rest of this section describes a 6.5 install. Four
+declarations of thirteen tried aborted
 the parse:
 
 ```text
@@ -216,6 +218,15 @@ cannot produce a licence.
 
 A separate licence line covers CodeCheck. On a licence that excludes it, `und codecheck`
 answers `Licensing Error: No license for CodeCheck.` and writes nothing.
+
+### `NoApiLicense`, `No Server Response`, "requires a license with exporting enabled"
+
+All three are licensing, all three are the operator's to fix with `und` itself, and none is
+this tool's to work around. See [licensing is done from the command
+line](../guide/install.md#licensing-is-done-from-the-command-line). The option the gate needs
+is **API Access**; `doctor` lists the enabled options and names it when it is missing. On 8.0
+CodeCheck refuses with *"No checks in this configuration are licensed to run"*, which the
+wrapper reports as a licence refusal (exit 4) rather than a broken analysis.
 
 ## API modes
 
