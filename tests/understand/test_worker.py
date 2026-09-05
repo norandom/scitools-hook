@@ -50,7 +50,6 @@ from api_fakes import (
     FakeRef,
     FakeUnderstand,
     InteractiveStdin,
-    declare_arch_root,
     directory_structure,
     envelope,
     install,
@@ -619,15 +618,12 @@ def fake_project() -> FakeProject:
     root = FakeArch(
         "Directory Structure",
         children=[
-            FakeArch(
-                "Directory Structure/cli", ents=[app], depends={"Directory Structure/util": 3}
-            ),
+            FakeArch("Directory Structure/cli", ents=[app]),
             FakeArch("Directory Structure/util", ents=[text]),
             FakeArch("Directory Structure/native", ents=[native]),
             FakeArch("Directory Structure/vendor", ents=[vendored]),
         ],
     )
-    declare_arch_root(root)
     db = FakeDb(
         [root],
         entities={
@@ -854,7 +850,6 @@ def shadow_db(segment: str = "after", root: str = ANALYSIS_ROOT) -> FakeDb:
     inner = FakeArch(f"Directory Structure/{segment}/pkg", ents=[core])
     shadow = FakeArch(f"Directory Structure/{segment}", children=[inner], ents=[main])
     top = FakeArch("Directory Structure", children=[shadow])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [main, core]})
 
 
@@ -863,7 +858,6 @@ def root_only_db(segment: str, root: str) -> FakeDb:
     main = shadow_file("main.py", segment, root)
     shadow = FakeArch(f"Directory Structure/{segment}", ents=[main])
     top = FakeArch("Directory Structure", children=[shadow])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [main]})
 
 
@@ -890,7 +884,6 @@ def nested_db() -> FakeDb:
     core = FakeArch("Directory Structure/app/core", children=[deep])
     app = FakeArch("Directory Structure/app", children=[core], ents=[entry])
     top = FakeArch("Directory Structure", children=[app])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [entry, mod]})
 
 
@@ -921,7 +914,6 @@ def test_snapshot_falls_back_to_the_relative_name_outside_the_analysis_root(
     stray = FakeEnt(path="vendor/x.py", qualified="/elsewhere/vendor/x.py", kind_path="python File")
     inside = a_file("cli/app.py")
     root = FakeArch("Directory Structure", ents=[inside])
-    declare_arch_root(root)
     install(monkeypatch, FakeUnderstand(db=FakeDb([root], entities={FILE_KIND: [stray, inside]})))
     document = worker.dispatch(
         "snapshot",
@@ -991,15 +983,10 @@ def shadow_edges_db(segment: str, root: str) -> FakeDb:
     text = shadow_file("util/text.py", segment, root)
     app.deps = {text: [object()] * 2}
     text.deps_by = {app: [object()] * 2}
-    cli_node = FakeArch(
-        f"Directory Structure/{segment}/cli",
-        ents=[app],
-        depends={f"Directory Structure/{segment}/util": 2},
-    )
+    cli_node = FakeArch(f"Directory Structure/{segment}/cli", ents=[app])
     util_node = FakeArch(f"Directory Structure/{segment}/util", ents=[text])
     shadow = FakeArch(f"Directory Structure/{segment}", children=[cli_node, util_node], ents=[main])
     top = FakeArch("Directory Structure", children=[shadow])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [main, app, text]})
 
 
@@ -1009,14 +996,9 @@ def child_to_root_db(segment: str, root: str) -> FakeDb:
     core = shadow_file("pkg/core.py", segment, root)
     core.deps = {main: [object()] * 3}
     main.deps_by = {core: [object()] * 3}
-    pkg_node = FakeArch(
-        f"Directory Structure/{segment}/pkg",
-        ents=[core],
-        depends={f"Directory Structure/{segment}": 3},
-    )
+    pkg_node = FakeArch(f"Directory Structure/{segment}/pkg", ents=[core])
     shadow = FakeArch(f"Directory Structure/{segment}", children=[pkg_node], ents=[main])
     top = FakeArch("Directory Structure", children=[shadow])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [main, core]})
 
 
@@ -1087,7 +1069,6 @@ def name_clash_db(segment: str, root: str) -> FakeDb:
     )
     node = FakeArch(f"Directory Structure/{segment}", ents=[inner])
     top = FakeArch("Directory Structure", children=[node])
-    declare_arch_root(top)
     return FakeDb([top], entities={FILE_KIND: [inner]})
 
 
@@ -1187,7 +1168,6 @@ def test_snapshot_does_not_take_a_sibling_directory_for_the_analysis_root(
     )
     inside = a_file("cli/app.py")
     top = FakeArch("Directory Structure", ents=[inside])
-    declare_arch_root(top)
     install(monkeypatch, FakeUnderstand(db=FakeDb([top], entities={FILE_KIND: [sibling, inside]})))
     document = worker.dispatch(
         "snapshot",
@@ -1221,7 +1201,6 @@ def test_snapshot_accepts_any_root_for_a_database_that_holds_no_file(
     # An empty database resolves nothing because there is nothing to resolve; that is an
     # empty snapshot, not a caller error.
     top = FakeArch("Directory Structure")
-    declare_arch_root(top)
     install(monkeypatch, FakeUnderstand(db=FakeDb([top], entities={FILE_KIND: []})))
     document = worker.dispatch("snapshot", snapshot_request(kinds_by_scope=FILE_ONLY))
     assert listing(document, "entities") == []
@@ -1238,7 +1217,6 @@ def test_snapshot_keeps_a_real_directory_that_happens_to_hold_every_file(
     core = a_file("src/core.py")
     node = FakeArch("Directory Structure/src", ents=[core])
     root = FakeArch("Directory Structure", children=[node])
-    declare_arch_root(root)
     install(monkeypatch, FakeUnderstand(db=FakeDb([root], entities={FILE_KIND: [core]})))
     document = worker.dispatch(
         "snapshot", snapshot_request(files=["src/core.py"], kinds_by_scope=FILE_ONLY)
@@ -1263,7 +1241,6 @@ def test_snapshot_does_not_call_an_edge_crossing_when_one_end_has_no_node(
     root = FakeArch(
         "Directory Structure", children=[FakeArch("Directory Structure/cli", ents=[app])]
     )
-    declare_arch_root(root)
     install(monkeypatch, FakeUnderstand(db=FakeDb([root], entities={FILE_KIND: [app, orphan]})))
     document = worker.dispatch(
         "snapshot", snapshot_request(files=["cli/app.py"], kinds_by_scope=FILE_ONLY)
@@ -1293,7 +1270,6 @@ def test_snapshot_takes_the_first_architecture_node_of_a_file_in_sorted_order(
             FakeArch("Directory Structure/alpha", ents=[app]),
         ],
     )
-    declare_arch_root(root)
     install(monkeypatch, FakeUnderstand(db=FakeDb([root], entities={FILE_KIND: [app, other]})))
     document = worker.dispatch(
         "snapshot", snapshot_request(files=["cli/app.py"], kinds_by_scope=FILE_ONLY)
@@ -1665,13 +1641,26 @@ def test_snapshot_lists_the_architecture_nodes_at_the_requested_depth(
 def test_snapshot_reports_architecture_edges_with_their_reference_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """One architecture edge per pair of nodes whose files depend on each other, refs summed.
+
+    ``util -> native`` is here because ``util/text.py`` depends on ``native/util.c``: the
+    architecture edges are the file edges resolved to their nodes, so a file dependency
+    across two nodes is an architecture dependency whether or not ``Arch.depends()`` would
+    have named it.
+    """
     assert listing(snapshot(monkeypatch), "arch_edges") == [
         {
             "src": "Directory Structure/cli",
             "dst": "Directory Structure/util",
             "refs": 3,
             "crosses_arch": True,
-        }
+        },
+        {
+            "src": "Directory Structure/util",
+            "dst": "Directory Structure/native",
+            "refs": 2,
+            "crosses_arch": True,
+        },
     ]
 
 
@@ -1682,39 +1671,35 @@ def test_snapshot_drops_an_architecture_edge_that_trims_onto_its_own_node(
     assert snapshot(monkeypatch, depth=0)["arch_edges"] == []
 
 
-def deep_architecture() -> FakeArch:
-    """A two-level tree whose ``cli`` node depends on a node below the level in question."""
+def deep_architecture() -> FakeDb:
+    """A two-level tree whose ``cli`` file depends on a file below the level in question."""
+    app = a_file("cli/app.py")
+    text = a_file("util/helpers/text.py")
+    app.deps = {text: [object()] * 5}
+    text.deps_by = {app: [object()] * 5}
     root = FakeArch(
         "Directory Structure",
         children=[
-            FakeArch(
-                "Directory Structure/cli",
-                ents=[a_file("cli/app.py")],
-                depends={"Directory Structure/util/helpers": 5},
-            ),
+            FakeArch("Directory Structure/cli", ents=[app]),
             FakeArch(
                 "Directory Structure/util",
-                children=[
-                    FakeArch(
-                        "Directory Structure/util/helpers", ents=[a_file("util/helpers/text.py")]
-                    )
-                ],
+                children=[FakeArch("Directory Structure/util/helpers", ents=[text])],
             ),
         ],
     )
-    declare_arch_root(root)
-    return root
+    return FakeDb([root], entities={FILE_KIND: [app, text]})
 
 
 def test_snapshot_trims_an_architecture_edge_to_the_requested_depth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A node may depend on one deeper than the level the structural rules work at.
+    """A file may depend on one deeper than the level the structural rules work at.
 
-    The dependency belongs to the depth the caller asked for, so its target is trimmed to
-    that depth; dropping it instead would hide the dependency from every rule at that level.
+    The dependency belongs to the depth the caller asked for, so its target is the node that
+    publishes the file at that depth; dropping it instead would hide the dependency from
+    every rule at that level.
     """
-    install(monkeypatch, FakeUnderstand(db=FakeDb([deep_architecture()])))
+    install(monkeypatch, FakeUnderstand(db=deep_architecture()))
     document = worker.dispatch("snapshot", snapshot_request(files=[]))
     assert listing(document, "arch_edges") == [
         {
@@ -2776,7 +2761,6 @@ def import_project(source: str | None = DEFERRING_SOURCE) -> ImportProject:
         ],
     }
     top = FakeArch("Directory Structure", children=[FakeArch("Directory Structure/mod")])
-    declare_arch_root(top)
     db = FakeDb([top], entities={FILE_KIND: [mod, runtime, typedep, localdep]})
     return ImportProject(db, mod, runtime, typedep, localdep)
 
@@ -2849,7 +2833,6 @@ def test_snapshot_leaves_import_time_off_a_cpp_file_edge(
     unit = a_file("lib.cpp", language="C++", source='#include "lib.h"\nint f() { return 1; }\n')
     unit.deps = {header: [a_dep_ref(header, 1, "c Include")]}
     top = FakeArch("Directory Structure", children=[FakeArch("Directory Structure/lib")])
-    declare_arch_root(top)
     install(monkeypatch, FakeUnderstand(db=FakeDb([top], entities={FILE_KIND: [unit, header]})))
     document = worker.dispatch(
         "snapshot", snapshot_request(files=["lib.cpp"], kinds_by_scope=FILE_ONLY, depth=1)
@@ -3040,7 +3023,6 @@ def call_project() -> CallProject:
     clamp.refs_to = [scale, parameter]
 
     top = FakeArch("Directory Structure", children=[FakeArch("Directory Structure/app")])
-    declare_arch_root(top)
     db = FakeDb(
         [top],
         entities={

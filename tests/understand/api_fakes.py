@@ -226,20 +226,6 @@ class FakeEnt:
         return dict(self.deps_by)
 
 
-_ARCH_ROOT: FakeArch | None = None
-"""The architecture every node reports as its root; set by the test that builds a project.
-
-``FakeArch.roots`` reads it so a node's ``depends`` can resolve its siblings by name, the
-way Understand resolves them through the architecture a node was declared under.
-"""
-
-
-def declare_arch_root(root: FakeArch | None) -> None:
-    """Make ``root`` the architecture every node reports; ``None`` returns nodes to themselves."""
-    global _ARCH_ROOT
-    _ARCH_ROOT = root
-
-
 class FakeArch:
     """An architecture node: a long name, child nodes and member entities."""
 
@@ -248,12 +234,10 @@ class FakeArch:
         longname: str,
         children: Sequence[FakeArch] = (),
         ents: Sequence[FakeEnt] = (),
-        depends: dict[str, int] | None = None,
     ) -> None:
         self._longname = longname
         self._children = list(children)
         self._ents = list(ents)
-        self._depends = dict(depends or {})
 
     def longname(self) -> str:
         """The full path of the node, e.g. ``Directory Structure/cli``."""
@@ -271,17 +255,8 @@ class FakeArch:
                 found.extend(child.ents(True))
         return found
 
-    def depends(self) -> dict[FakeArch, list[object]]:
-        """Node -> the references that make this node depend on it (verified shape)."""
-        found = {node.longname(): node for root in self.roots() for node in root.walk()}
-        return {found[name]: [object()] * count for name, count in self._depends.items()}
-
-    def roots(self) -> list[FakeArch]:
-        """The architecture this node was declared under; a fake needs only itself."""
-        return [_ARCH_ROOT] if _ARCH_ROOT is not None else [self]
-
     def walk(self) -> list[FakeArch]:
-        """This node and every descendant, depth first."""
+        """This node and every descendant, depth first; what ``lookup_arch`` searches."""
         found = [self]
         for child in self._children:
             found.extend(child.walk())

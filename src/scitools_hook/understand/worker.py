@@ -1073,16 +1073,6 @@ class _Extractor:
             return f"{self.arch_name}/{longname[len(self.walk_root) + 1 :]}"
         return longname
 
-    def _trim(self, longname: str) -> str | None:
-        """Trim an architecture path to the requested depth, or ``None`` when it is elsewhere."""
-        path = self._node_path(longname)
-        if path == self.arch_name:
-            return self.arch_name
-        if not path.startswith(f"{self.arch_name}/"):
-            return None
-        parts = path[len(self.arch_name) + 1 :].split("/")[: self.plan.depth]
-        return "/".join([self.arch_name, *parts]) if parts else self.arch_name
-
     def _nodes_of(self, path: str) -> list[str]:
         """The architecture nodes a file belongs to, in sorted order (req 9.7).
 
@@ -1519,30 +1509,40 @@ class _Extractor:
         return self._crosses(self.class_ents[src][1], self.class_ents[dst][1])
 
     def _arch_edges(self) -> list[dict[str, object]]:
-        """Dependencies between the architecture nodes, trimmed to the requested depth (6.2).
+        """Dependencies between the published architecture nodes, counted from file edges (6.2).
 
-        The walk root has no OUTGOING dependencies: it contains every analysed file, so there
-        is nothing outside it to depend on, and ``Arch.depends()`` on it is empty (measured on
-        a shadow with a top-level file and on a nested source tree). Understand does not report
-        a parent -> descendant dependency, so a dependency that STARTS at a file sitting
-        directly in the analysis root has no architecture edge and is visible only as a file
-        edge with ``crosses_arch`` set.
+        Built from every project file's ``depends()`` rather than from ``Arch.depends()``,
+        because the nodes Understand reports dependencies between are not always the nodes
+        this answer publishes. At the shipped default depth of 2, a ``pkg/`` holding
+        ``core.py`` and ``inner/`` publishes ``pkg/inner`` and attributes ``core.py`` to the
+        architecture itself; ``Arch.depends()`` on ``app`` then names ``pkg``, which is no
+        published node, and trimming that name to the depth found nothing to attach it to.
+        Measured on the contract project: the one dependency Understand reports survived at
+        depth 1 and was dropped at depth 2, so the arch-cycle and coupling rules evaluated an
+        empty edge set on an ordinary layout. Resolving each dependency's two files to the
+        nodes that publish them makes the architecture edges agree with the file edges by
+        construction: a file edge marked ``crosses_arch`` is an architecture edge between the
+        same two nodes, with the same references.
 
-        The INCOMING direction is real and must not be dropped: a deeper node that depends on
-        a root-level file yields ``Directory Structure/pkg -> Directory Structure`` (measured
-        at 3 refs). The walk root is therefore a valid edge endpoint exactly when the answer
-        publishes it as a node, which is what :meth:`_arch_documents` decides.
+        The walk root is a destination and never a source. As a destination it is the
+        pseudo-node holding the files no deeper node publishes, and a deeper node that
+        depends on one of them yields ``Directory Structure/app -> Directory Structure``
+        (4 refs on the contract project; measured live at 3 on a shadow with a top-level
+        file). As a source it would be the whole project, and every dependency of an
+        unplaced file would become a cycle through the pseudo-node; those stay visible as
+        file edges with ``crosses_arch`` set.
         """
         counts: dict[tuple[str, str], int] = {}
-        paths = {self._node_path(node.longname()) for node in self.nodes}
-        if self.uncovered:
-            paths.add(self.arch_name)
-        for node in self.nodes:
-            src = self._node_path(node.longname())
-            for other, refs in node.depends().items():
-                dst = self._trim(other.longname())
-                if dst is not None and dst != src and dst in paths:
-                    counts[(src, dst)] = counts.get((src, dst), 0) + len(refs)
+        for path, ent in self.file_ents.items():
+            src = self._node_of(path)
+            if src is None or src == self.arch_name:
+                continue
+            for other, refs in ent.depends().items():
+                target = self._file_of(other)
+                dst = None if target is None else self._node_of(target)
+                if dst is None or dst == src:
+                    continue
+                counts[(src, dst)] = counts.get((src, dst), 0) + len(refs)
         return [
             {"src": src, "dst": dst, "refs": count, "crosses_arch": True}
             for (src, dst), count in sorted(counts.items())

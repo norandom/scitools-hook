@@ -10,11 +10,11 @@ The sample project is built so the depth actually decides something. ``pkg/`` ho
 directly in the analysis root -- which between them cover the three shapes the node walk has
 been wrong about before.
 
-One test here is an expected failure. It is not a stylistic choice: the architecture
-dependency Understand reports for this project survives at depth 1 and is dropped at the
-shipped default depth of 2, so the arch-cycle and coupling rules evaluate an empty edge set on
-an ordinary layout. That is a defect in the worker, outside this task's boundary, and it is
-recorded here in the form that will stop being an expected failure the moment it is fixed.
+One test here was an expected failure until 0.1.0a8: the architecture dependency Understand
+reports for this project survived at depth 1 and was dropped at the shipped default depth of
+2, so the arch-cycle and coupling rules evaluated an empty edge set on an ordinary layout.
+The worker now derives architecture edges from the file dependencies, resolved to the nodes
+that publish each file, and the test asserts the edge that arrives at the default depth.
 """
 
 from __future__ import annotations
@@ -206,33 +206,24 @@ def test_the_architecture_dependency_understand_reports_is_published_at_depth_on
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "worker._arch_edges trims a reported dependency to the requested depth and then "
-        "requires the trimmed path to be a published node. At depth 2 the target trims to "
-        "'Directory Structure/pkg', which is not published because pkg/core.py falls back to "
-        "the architecture itself -- so the edge is dropped and the arch-cycle and coupling "
-        "rules see an empty edge set at the SHIPPED DEFAULT depth. Outside task 10.1's "
-        "boundary; remove this marker when it is fixed."
-    ),
-)
 def test_the_same_architecture_dependency_survives_at_the_default_depth(
     alpha: ProjectSnapshot,
 ) -> None:
-    """The defect, stated as the property that should hold rather than as the symptom.
+    """The property, not the symptom: a file edge that crosses is an architecture edge too.
 
     Nothing about the project changed between depth 1 and depth 2, and Understand still
-    reports ``app -> pkg`` at 4 references. The file edge ``app/entry.py -> pkg/core.py`` is
-    still marked as crossing a boundary. So the answer contradicts itself: a crossing is
-    published at file level and denied at architecture level.
+    reports ``app -> pkg`` at 4 references. At depth 2 ``pkg`` is not a published node --
+    ``pkg/inner`` is, and ``pkg/core.py`` is attributed to the architecture itself -- so the
+    edge arrives at the node that publishes ``pkg/core.py``: the walk root, as a destination.
+    Before 0.1.0a8 the worker trimmed the node Understand named and found nothing to attach
+    it to, and every crossing file edge here had no architecture edge at all.
     """
     crossing = [edge for edge in alpha.file_edges if edge.crosses_arch]
     assert crossing, "the fixture must still have a boundary-crossing file edge"
 
-    sources = {edge.src for edge in alpha.arch_edges}
-    assert f"{ARCH}/app" in sources
-    assert sum(edge.refs for edge in alpha.arch_edges) == 4
+    assert [(edge.src, edge.dst, edge.refs) for edge in alpha.arch_edges] == [
+        (f"{ARCH}/app", ARCH, 4)
+    ]
 
 
 # --- exported graphs (requirement 9.4) --------------------------------------------
