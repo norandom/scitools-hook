@@ -83,6 +83,7 @@ from scitools_hook.understand.und_arch import (
     DIRECTORY_STRUCTURE,
 )
 from scitools_hook.understand.und_cli import (
+    ALL,
     UndCli,
 )
 
@@ -516,7 +517,7 @@ def _analysis_probe(cli: UndCli, api: ApiRunner | None, problems: list[str]) -> 
             db = root / "probe.und"
             cli.create(db, ["Python"])
             cli.add(db, root, [])
-            cli.analyze(db, None, all=True)
+            cli.analyze(db, ALL)
             if api is not None:
                 api.run("archs", {"db": str(db), "architecture": DIRECTORY_STRUCTURE, "depth": 1})
     except GateError as failed:

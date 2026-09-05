@@ -43,6 +43,7 @@ from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.snapshot import ParseError
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus
 from scitools_hook.understand.und_cli import (
+    ALL,
     MISSING_RC,
     TIMEOUT_RC,
     UndCli,
@@ -266,7 +267,7 @@ def test_analyze_all_asks_for_errors_and_warnings(
     """``-quiet`` silences the parse errors requirement 2.6 needs; ``-errors`` keeps them."""
     database = db_path(tmp_path)
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}})
-    cli(stub, log).analyze(database, None, all=True)
+    cli(stub, log).analyze(database, ALL)
     assert stub.argv == ["-db", str(database), "analyze", "-all", "-errors", "-warnings"]
 
 
@@ -304,7 +305,7 @@ def test_analyze_parses_errors_with_their_file_and_line(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert result.parse_errors == [
         ParseError(path=Path("/src/bad.py"), line=1, message="expected identifier at token :"),
         ParseError(path=Path("/src/bad.py"), line=None, message="expected token ':' at token EOF"),
@@ -316,7 +317,7 @@ def test_analyze_does_not_repeat_an_error_reported_by_both_passes(
 ) -> None:
     """Understand's Python analyzer reports pass 1 and pass 2; the answer must list one."""
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert len(result.parse_errors) == 2
 
 
@@ -324,7 +325,7 @@ def test_analyze_takes_the_warning_count_from_the_summary(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}})
-    assert cli(stub, log).analyze(db_path(tmp_path), None, all=True).warnings == 2
+    assert cli(stub, log).analyze(db_path(tmp_path), ALL).warnings == 2
 
 
 def test_analyze_reads_a_location_that_also_carries_a_column(
@@ -332,7 +333,7 @@ def test_analyze_reads_a_location_that_also_carries_a_column(
 ) -> None:
     """The C parser appends ``Col:``; the line number must survive it."""
     stub.plan({"analyze": {"stdout": ANALYZE_C_OUTPUT}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert [(str(error.path), error.line) for error in result.parse_errors] == [
         ("/src/bad.c", 2),
         ("/src/bad.c", 2),
@@ -343,7 +344,7 @@ def test_analyze_of_a_clean_project_reports_nothing(
     stub: UndStub, log: RecordingLog, tmp_path: Path
 ) -> None:
     stub.plan({"analyze": {"stdout": "Analyze Completed (Errors:0 Warnings:0)\n"}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert result.parse_errors == []
     assert result.warnings == 0
 
@@ -353,7 +354,7 @@ def test_analyze_without_a_summary_line_still_answers(
 ) -> None:
     """Measured: an analysis with nothing to do prints no summary at all and exits 0."""
     stub.plan({"analyze": {"stdout": ""}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert result.warnings == 0
     assert result.seconds >= 0
 
@@ -374,12 +375,12 @@ def test_analyze_counts_warning_lines_when_und_printed_no_summary(
             }
         }
     )
-    assert cli(stub, log).analyze(db_path(tmp_path), None, all=True).warnings == 2
+    assert cli(stub, log).analyze(db_path(tmp_path), ALL).warnings == 2
 
 
 def test_analyze_records_how_long_it_took(stub: UndStub, log: RecordingLog, tmp_path: Path) -> None:
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT, "sleep": 0.05}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert result.seconds >= 0.05
 
 
@@ -388,7 +389,7 @@ def test_analyze_failure_maps_to_analysis_failed(
 ) -> None:
     stub.plan({"analyze": {"stderr": BAD_DB_STDERR, "rc": 1}})
     with pytest.raises(AnalysisFailedError) as caught:
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert caught.value.stderr.startswith("Error: unable to open")
     assert "analyze" in caught.value.command
 
@@ -398,7 +399,7 @@ def test_analyze_keeps_reporting_parse_errors_rather_than_failing(
 ) -> None:
     """Requirement 2.6: parse errors are data, not a failure — every rule still runs."""
     stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT, "rc": 0}})
-    result = cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+    result = cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert result.parse_errors
 
 
@@ -550,7 +551,7 @@ def test_a_command_that_never_returns_becomes_an_analysis_failure(
     """``subprocess.TimeoutExpired`` is not an ``OSError``; catching only ``OSError`` misses it."""
     stub.plan({"analyze": {"sleep": 5}})
     with pytest.raises(AnalysisFailedError) as caught:
-        cli(stub, log, timeout_s=1).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log, timeout_s=1).analyze(db_path(tmp_path), ALL)
     assert "timed out" in str(caught.value)
     assert caught.value.command[0] == str(stub.path)
 
@@ -570,7 +571,7 @@ def test_a_timeout_is_still_recorded_in_the_command_log(
     """
     stub.plan({"analyze": {"sleep": 5}})
     with pytest.raises(AnalysisFailedError):
-        cli(stub, log, timeout_s=1).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log, timeout_s=1).analyze(db_path(tmp_path), ALL)
     assert log.codes == [TIMEOUT_KILLED_STATUS]
     (_, seconds, _) = log.entries[-1]
     assert seconds >= KILLED_FLOOR_S, f"a command killed at a 1s limit logged {seconds}s"
@@ -618,7 +619,7 @@ def test_every_command_is_recorded_with_its_argv_timing_and_status(
     wrapper = cli(stub, log)
     wrapper.create(database, ["python"])
     wrapper.add(database, tmp_path / "work", [])
-    wrapper.analyze(database, None, all=True)
+    wrapper.analyze(database, ALL)
     wrapper.version()
     assert [argv[0] for argv, _, _ in log.entries] == [str(stub.path)] * 4
     switches = {"-db", "-quiet", str(database)}
@@ -679,7 +680,7 @@ def test_a_failing_command_is_recorded_before_the_error_is_raised(
 ) -> None:
     stub.plan({"analyze": {"stderr": BAD_DB_STDERR, "rc": 1}})
     with pytest.raises(AnalysisFailedError):
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert log.codes == [1]
     (_, seconds, _) = log.entries[-1]
     assert seconds > 0.0
@@ -692,10 +693,10 @@ def test_a_failing_command_is_recorded_before_the_error_is_raised(
 def test_fake_und_cli_records_every_call() -> None:
     fake = FakeUndCli()
     fake.create(Path("db.und"), ["python"])
-    fake.analyze(Path("db.und"), None, all=True)
+    fake.analyze(Path("db.und"), ALL)
     assert [call.command for call in fake.calls] == ["create", "analyze"]
     assert fake.calls[0].arguments["languages"] == ["python"]
-    assert fake.calls[1].arguments["all"] is True
+    assert fake.calls[1].arguments["selection"] == ALL
 
 
 def test_fake_und_cli_returns_the_configured_analyze_results() -> None:
@@ -704,14 +705,14 @@ def test_fake_und_cli_returns_the_configured_analyze_results() -> None:
         parse_errors=[ParseError(path=Path("a.py"), line=2, message="boom")], seconds=2.0
     )
     fake = FakeUndCli(analyze_results=[first, second])
-    assert fake.analyze(Path("db.und"), None, all=True) == first
+    assert fake.analyze(Path("db.und"), ALL) == first
     assert fake.analyze(Path("db.und"), [Path("a.py")]) == second
 
 
 def test_fake_und_cli_falls_back_to_an_empty_result_when_none_are_left() -> None:
     fake = FakeUndCli(analyze_results=[AnalyzeResult(seconds=1.0)])
-    fake.analyze(Path("db.und"), None, all=True)
-    spare = fake.analyze(Path("db.und"), None, all=True)
+    fake.analyze(Path("db.und"), ALL)
+    spare = fake.analyze(Path("db.und"), ALL)
     assert spare.parse_errors == []
     assert spare.warnings == 0
 

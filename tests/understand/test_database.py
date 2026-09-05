@@ -58,6 +58,7 @@ from scitools_hook.understand.und_arch import (
     ArchNode,
     write_architecture,
 )
+from scitools_hook.understand.und_cli import ALL, AnalysisSelection
 
 LEAKED_GIT_VARS = (
     "GIT_DIR",
@@ -113,10 +114,16 @@ class UndStub(FakeUndCli):
         super().remove_files(db, files)
         self._maybe_fail("remove_files")
 
-    def analyze(self, db: Path, files: list[Path] | None, all: bool = False) -> AnalyzeResult:
+    def analyze(
+        self,
+        db: Path,
+        selection: AnalysisSelection,
+        accuracy: bool = False,
+        sarif: Path | None = None,
+    ) -> AnalyzeResult:
         """Record the analysis, then fail if this test asked the selective form to fail."""
-        result = super().analyze(db, files, all)
-        self._maybe_fail("analyze-all" if all else "analyze")
+        result = super().analyze(db, selection, accuracy, sarif)
+        self._maybe_fail("analyze-all" if selection == ALL else "analyze")
         return result
 
     def declare_architecture(self, db: Path, root: ArchNode) -> frozenset[str]:
@@ -192,7 +199,7 @@ class Harness:
 
     def analysed(self) -> list[str]:
         """The paths of the last ``analyze``, relative to the after shadow, sorted."""
-        files = self.last("analyze").arguments["files"]
+        files = self.last("analyze").arguments["selection"]
         assert isinstance(files, list)
         return sorted(Path(path).relative_to(self.paths.after_tree).as_posix() for path in files)
 
@@ -277,8 +284,7 @@ def test_a_first_run_creates_the_database_and_analyses_all_of_it(harness: Harnes
     assert create.arguments["local"] is True
     assert harness.last("add").arguments["root"] == harness.paths.after_tree
     analyze = harness.last("analyze")
-    assert analyze.arguments["all"] is True
-    assert analyze.arguments["files"] is None
+    assert analyze.arguments["selection"] == ALL
     assert result.parse_errors == []
 
 
@@ -374,7 +380,7 @@ def test_a_second_run_analyses_only_the_changed_file(harness: Harness) -> None:
     harness.ensure()
 
     assert harness.analysed() == ["src/a.py", "src/b.py"]
-    assert harness.last("analyze").arguments["all"] is False
+    assert harness.last("analyze").arguments["selection"] != ALL
     assert harness.calls("create") == []
 
 
@@ -470,7 +476,7 @@ def test_a_change_of_only_unanalysable_files_starts_no_analysis(harness: Harness
     harness.ensure()
 
     assert harness.analysed() == []
-    assert harness.last("analyze").arguments["all"] is False
+    assert harness.last("analyze").arguments["selection"] != ALL
 
 
 # --- names that cannot be written into a list file ------------------------------
@@ -488,8 +494,7 @@ def test_a_name_und_would_misread_falls_back_to_analysing_everything(
     harness.ensure()
 
     analyze = harness.last("analyze")
-    assert analyze.arguments["all"] is True
-    assert analyze.arguments["files"] is None
+    assert analyze.arguments["selection"] == ALL
     assert any("od#d.py" in note for note in harness.progress.notes), harness.progress.notes
 
 
@@ -507,7 +512,7 @@ def test_a_deleted_name_und_would_misread_falls_back_to_analysing_everything(
     harness.ensure()
 
     assert harness.calls("remove_files") == []
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 @pytest.mark.parametrize(
@@ -526,7 +531,7 @@ def test_every_measured_list_file_hazard_falls_back_to_analysing_everything(
 
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_a_line_break_in_a_name_falls_back_to_analysing_everything(harness: Harness) -> None:
@@ -538,7 +543,7 @@ def test_a_line_break_in_a_name_falls_back_to_analysing_everything(harness: Harn
 
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_a_relative_cache_root_falls_back_to_analysing_everything(
@@ -564,7 +569,7 @@ def test_a_relative_cache_root_falls_back_to_analysing_everything(
     harness.reset()
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_a_hazard_in_a_directory_component_is_caught_too(harness: Harness) -> None:
@@ -576,7 +581,7 @@ def test_a_hazard_in_a_directory_component_is_caught_too(harness: Harness) -> No
 
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 # --- when und refuses anyway (a build whose file types differ) ------------------
@@ -594,7 +599,10 @@ def test_a_refused_selective_analysis_is_retried_over_the_whole_project(
 
     harness.ensure()
 
-    assert [call.arguments["all"] for call in harness.calls("analyze")] == [False, True]
+    assert [call.arguments["selection"] == ALL for call in harness.calls("analyze")] == [
+        False,
+        True,
+    ]
     assert any("whole project" in note for note in harness.progress.notes), harness.progress.notes
 
 
@@ -607,7 +615,7 @@ def test_a_refused_removal_is_answered_by_analysing_everything(harness: Harness)
 
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_the_retry_guards_the_outcome_and_not_one_exception_type(harness: Harness) -> None:
@@ -620,7 +628,10 @@ def test_the_retry_guards_the_outcome_and_not_one_exception_type(harness: Harnes
 
     harness.ensure()
 
-    assert [call.arguments["all"] for call in harness.calls("analyze")] == [False, True]
+    assert [call.arguments["selection"] == ALL for call in harness.calls("analyze")] == [
+        False,
+        True,
+    ]
 
 
 def test_a_licence_failure_is_never_retried(harness: Harness) -> None:
@@ -634,7 +645,7 @@ def test_a_licence_failure_is_never_retried(harness: Harness) -> None:
     with pytest.raises(LicenseError):
         harness.ensure()
 
-    assert [call.arguments["all"] for call in harness.calls("analyze")] == [False]
+    assert [call.arguments["selection"] == ALL for call in harness.calls("analyze")] == [False]
 
 
 def test_a_whole_project_analysis_that_fails_is_not_retried_forever(harness: Harness) -> None:
@@ -663,7 +674,7 @@ def test_a_shadow_rebuilt_from_scratch_rebuilds_the_database(harness: Harness) -
     harness.ensure("after", WorktreeTarget())
 
     assert harness.commands == ["create", "add", "analyze"]
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_the_old_database_is_discarded_rather_than_created_over(harness: Harness) -> None:
@@ -857,7 +868,7 @@ def test_rebuild_keeps_the_shadows_and_the_next_run_is_a_full_analysis(
 
     assert (harness.paths.after_tree / "src" / "a.py").exists()
     assert harness.commands == ["create", "add", "analyze"]
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
 
 
 def test_rebuild_on_a_cache_that_was_never_built_is_not_an_error(harness: Harness) -> None:
@@ -894,7 +905,7 @@ def test_the_before_side_stays_incremental_across_two_commits(harness: Harness) 
     harness.before()
 
     assert harness.commands == ["analyze"]
-    files = harness.last("analyze").arguments["files"]
+    files = harness.last("analyze").arguments["selection"]
     assert isinstance(files, list)
     assert [Path(path).name for path in files] == ["a.py"]
 
@@ -923,7 +934,7 @@ def test_an_unreadable_state_file_costs_a_full_analysis_and_not_the_run(
 
     harness.ensure()
 
-    assert harness.last("analyze").arguments["all"] is True
+    assert harness.last("analyze").arguments["selection"] == ALL
     # "state" alone would be satisfied by the tmp path this note embeds, which carries this
     # test's own name -- so the phrase asserted is one only the module can produce.
     assert any("analysing from scratch" in note for note in harness.progress.notes), (
@@ -1096,7 +1107,9 @@ def test_a_warm_run_still_names_what_the_database_could_not_read(harness: Harnes
 
     warm = harness.ensure()
 
-    assert harness.last("analyze").arguments["files"] == [], "nothing changed, so nothing re-read"
+    assert harness.last("analyze").arguments["selection"] == [], (
+        "nothing changed, so nothing re-read"
+    )
     assert [error.path.as_posix() for error in cold.parse_errors] == ["src/a.py"]
     assert [error.path.as_posix() for error in warm.parse_errors] == ["src/a.py"]
 
@@ -1177,7 +1190,7 @@ def test_discarding_the_databases_forgets_what_they_could_not_read(harness: Harn
     upgraded = harness.restart(version_text="(Build 1300)")
     fresh = upgraded.ensure()
 
-    assert upgraded.last("analyze").arguments["all"] is True
+    assert upgraded.last("analyze").arguments["selection"] == ALL
     assert fresh.parse_errors == []
     assert upgraded.state().parse_errors == {"after": []}
 

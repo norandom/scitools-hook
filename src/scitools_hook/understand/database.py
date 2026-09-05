@@ -117,6 +117,7 @@ from scitools_hook.understand.und_arch import (
     write_architecture,
 )
 from scitools_hook.understand.und_cli import (
+    ALL,
     UndCli,
 )
 
@@ -387,7 +388,7 @@ class DatabaseManager:
                 ),
             )
         self._und.add(target, root, _und_exclusions(self._settings.project.exclude))
-        self._und.analyze(target, None, all=True)
+        self._und.analyze(target, ALL)
         return target
 
     def detect_languages(self, files: Iterable[Path]) -> list[str]:
@@ -658,7 +659,7 @@ class DatabaseManager:
             f"created the {side} analysis database with {', '.join(languages)} enabled"
         )
         self._und.add(db, tree, [])
-        return _Pass(self._und.analyze(db, None, all=True), None)
+        return _Pass(self._und.analyze(db, ALL), None)
 
     def _update(self, db: Path, tree: Path, delta: SyncDelta, languages: list[str]) -> _Pass:
         """Apply one delta to a database that already holds the previous shadow (req 2.3).
@@ -714,7 +715,7 @@ class DatabaseManager:
             self._und.add(db, tree, [])
         # A removal is a re-read too, in the only sense that matters here: the file has left
         # the database, so whatever it could not parse is no longer this project's problem.
-        return _Pass(self._und.analyze(db, changed, all=False), frozenset({*removals, *changed}))
+        return _Pass(self._und.analyze(db, changed), frozenset({*removals, *changed}))
 
     def _analyse_everything(self, db: Path, reason: str) -> _Pass:
         """The fallback: one full pass, which is correct for every kind of change.
@@ -728,7 +729,7 @@ class DatabaseManager:
         way round for a gate.
         """
         self._progress.note(f"analysing the whole project rather than the change: {reason}")
-        return _Pass(self._und.analyze(db, None, all=True), None)
+        return _Pass(self._und.analyze(db, ALL), None)
 
     # --- the cache directory and its state ---------------------------------------
 

@@ -37,6 +37,7 @@ from scitools_hook.errors import LicenseError
 from scitools_hook.models.progress import NullCommandLog
 from scitools_hook.understand.codecheck import CodeCheckRunner
 from scitools_hook.understand.und_cli import (
+    ALL,
     UndCli,
 )
 
@@ -318,7 +319,7 @@ def test_the_wrapper_pins_the_interpreter_whatever_the_path_says(
 
     cli.create(db, ["python"], local=True)
     cli.add(db, root, [])
-    analysed_result = cli.analyze(db, None, all=True)
+    analysed_result = cli.analyze(db, ALL)
 
     assert language_model_of(db) == [], "the wrapper must never leave a Python 2 database"
     routines = routines_of(db, root)

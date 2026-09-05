@@ -19,6 +19,7 @@ from pathlib import Path
 
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus
 from scitools_hook.understand.und_cli import (
+    AnalysisSelection,
     UndCli,
 )
 
@@ -70,15 +71,26 @@ class FakeUndCli(UndCli):
         """Record a removal, including the empty one the real wrapper skips."""
         self.calls.append(FakeCall("remove_files", {"db": db, "files": list(files)}))
 
-    def analyze(self, db: Path, files: list[Path] | None, all: bool = False) -> AnalyzeResult:
+    def analyze(
+        self,
+        db: Path,
+        selection: AnalysisSelection,
+        accuracy: bool = False,
+        sarif: Path | None = None,
+    ) -> AnalyzeResult:
         """Record the analysis and answer with the next scripted result.
 
         Once the script runs out the answer is an empty result, so a test that scripts one
         analysis and triggers two sees the second as "nothing happened" rather than as a
         silent repeat of the first.
         """
-        selected = None if files is None else list(files)
-        self.calls.append(FakeCall("analyze", {"db": db, "files": selected, "all": all}))
+        selected = list(selection) if isinstance(selection, list) else selection
+        self.calls.append(
+            FakeCall(
+                "analyze",
+                {"db": db, "selection": selected, "accuracy": accuracy, "sarif": sarif},
+            )
+        )
         if not self.analyze_results:
             return AnalyzeResult(seconds=0.0)
         return self.analyze_results.pop(0)

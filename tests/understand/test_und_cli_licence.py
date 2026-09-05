@@ -28,6 +28,7 @@ from und_stub import (
 from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.models.understand import LicenseStatus
 from scitools_hook.understand.und_cli import (
+    ALL,
     LICENSE_TEXT,
 )
 
@@ -130,7 +131,7 @@ def test_license_text_on_any_command_raises_license_error(
 ) -> None:
     stub.plan({"analyze": {"stderr": NO_LICENSE_OUTPUT, "rc": 1}})
     with pytest.raises(LicenseError) as caught:
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log).analyze(db_path(tmp_path), ALL)
     assert "No Und License Found" in caught.value.und_output
 
 
@@ -148,4 +149,4 @@ def test_a_plain_failure_is_not_reported_as_a_license_problem(
 ) -> None:
     stub.plan({"analyze": {"stderr": BAD_DB_STDERR, "rc": 1}})
     with pytest.raises(AnalysisFailedError):
-        cli(stub, log).analyze(db_path(tmp_path), None, all=True)
+        cli(stub, log).analyze(db_path(tmp_path), ALL)

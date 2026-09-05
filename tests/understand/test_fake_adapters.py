@@ -32,6 +32,7 @@ from scitools_hook.understand.fake import (
     fixture_problem,
 )
 from scitools_hook.understand.und_cli import (
+    ALL,
     UndCli,
 )
 
@@ -156,7 +157,7 @@ def test_analyze_answers_with_the_parse_errors_the_fixture_records(tmp_path: Pat
             "seconds": 0.5,
         },
     )
-    result = FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True)
+    result = FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL)
     assert [str(error.path) for error in result.parse_errors] == ["src/broken.py"]
     assert result.warnings == 1
 
@@ -172,7 +173,7 @@ def test_analyze_refuses_a_fixture_it_cannot_read_as_a_result(tmp_path: Path) ->
     """A malformed ``analyze.json`` is a broken fixture, not an analysis with no errors."""
     write(tmp_path, "analyze.json", {"parse_errors": "not a list", "seconds": 0.0})
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True)
+        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL)
     assert "analyze.json" in raised.value.message
 
 
@@ -233,7 +234,7 @@ def test_an_unrelated_file_does_not_block_a_clean_analysis(tmp_path: Path) -> No
     """The near-miss rule must not fire on the fixtures a directory legitimately holds."""
     write(tmp_path, "snapshot.after.json", snapshot_document("after"))
     write(tmp_path, "catalogue.json", {"metrics": {}})
-    assert FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True).warnings == 0
+    assert FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL).warnings == 0
 
 
 def test_a_side_the_models_do_not_know_is_not_used_to_build_a_filename(tmp_path: Path) -> None:
@@ -300,7 +301,7 @@ def test_a_fixture_directory_that_cannot_be_read_fails_in_the_module_s_own_terms
     directory.chmod(mode)
     try:
         with pytest.raises(AnalysisFailedError) as raised:
-            FixtureUndCli(directory).analyze(directory / "after.und", None, all=True)
+            FixtureUndCli(directory).analyze(directory / "after.und", ALL)
     finally:
         directory.chmod(0o755)
     assert str(directory) in raised.value.message
@@ -340,7 +341,7 @@ def test_a_misspelt_analysis_fixture_is_refused_whatever_the_typo(
     directory = tmp_path / name.replace(".", "-")
     write(directory, name, {"parse_errors": [], "seconds": 0.0})
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(directory).analyze(directory / "after.und", None, all=True)
+        FixtureUndCli(directory).analyze(directory / "after.und", ALL)
     assert name in raised.value.message
     assert "analyze.json" in raised.value.message
 
@@ -384,7 +385,7 @@ def test_legitimate_fixture_content_is_never_mistaken_for_a_typo(tmp_path: Path)
         (tmp_path / name).write_text("{}", encoding="utf-8")
     for directory in ("analyzer", "analysis", "analyze"):
         (tmp_path / directory).mkdir()
-    result = FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True)
+    result = FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL)
     assert result.parse_errors == []
 
 
@@ -472,7 +473,7 @@ def test_a_misspelt_fixture_is_refused_whatever_kind_of_thing_it_is(
     target = directory / "analyse.json"
     _make(target, shape)
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(directory).analyze(directory / "after.und", None, all=True)
+        FixtureUndCli(directory).analyze(directory / "after.und", ALL)
     assert "analyse.json" in raised.value.message
 
 
@@ -497,7 +498,7 @@ def test_an_analysis_fixture_that_is_not_a_readable_file_is_refused(
     directory.mkdir()
     _make(directory / "analyze.json", shape)
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(directory).analyze(directory / "after.und", None, all=True)
+        FixtureUndCli(directory).analyze(directory / "after.und", ALL)
     assert "analyze.json" in raised.value.message
     # The message is the point, not merely the raise: without the explicit kind check the
     # generic reader still refuses, but it reports "no fixture answers the 'analyze'
@@ -572,7 +573,7 @@ def test_a_near_miss_is_found_even_when_other_fixtures_sort_before_it(tmp_path: 
     write(tmp_path, "catalogue.json", {"metrics": {}})
     write(tmp_path, "reanalyze.json", {"parse_errors": [], "seconds": 0.0})
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True)
+        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL)
     assert "reanalyze.json" in raised.value.message
 
 
@@ -636,6 +637,6 @@ def test_the_first_near_miss_reported_does_not_depend_on_the_directory_order(
     shuffled = sorted(tmp_path.iterdir(), reverse=True)
     monkeypatch.setattr(Path, "iterdir", lambda self: iter(shuffled))
     with pytest.raises(AnalysisFailedError) as raised:
-        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", None, all=True)
+        FixtureUndCli(tmp_path).analyze(tmp_path / "after.und", ALL)
     assert "analyse.json" in raised.value.message
     assert "reanalyze.json" not in raised.value.message

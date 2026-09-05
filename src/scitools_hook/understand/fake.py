@@ -51,6 +51,7 @@ from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, Unders
 from scitools_hook.paths import classify_directory, classify_file
 from scitools_hook.understand.api_runner import ApiRunner, Operation
 from scitools_hook.understand.und_cli import (
+    AnalysisSelection,
     UndCli,
 )
 
@@ -229,7 +230,13 @@ class FixtureUndCli(UndCli):
     def remove_files(self, db: Path, files: list[Path]) -> None:
         """Nothing to remove, for the same reason."""
 
-    def analyze(self, db: Path, files: list[Path] | None, all: bool = False) -> AnalyzeResult:
+    def analyze(
+        self,
+        db: Path,
+        selection: AnalysisSelection,
+        accuracy: bool = False,
+        sarif: Path | None = None,
+    ) -> AnalyzeResult:
         """The analysis ``analyze.json`` describes; a directory without one parsed cleanly.
 
         The absent file is an answer here, unlike everywhere else in this module: "no parse

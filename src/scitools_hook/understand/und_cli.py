@@ -71,7 +71,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
@@ -156,6 +156,29 @@ directory-*tree* export: it groups violations under file rows whose check id is 
 header repeats the ``CheckID`` column, and ``-flattentree`` exists precisely because its
 files are "presented in a directory tree format". The per-violation export is the one whose
 every row is a violation, so it is asked for by name.
+"""
+
+
+AnalysisSelection = list[Path] | Literal["all"] | None
+"""What one ``und analyze`` covers: every file, whatever changed, or exactly these."""
+
+ALL: Final[Literal["all"]] = "all"
+"""Analyse every file in the database, whatever changed: :meth:`UndCli.analyze`'s ``selection``.
+
+The three selections ``und analyze`` offers are ``-all``, ``-changed`` and ``-files``, and
+they are exclusive. They used to reach :meth:`UndCli.analyze` as a list *and* a flag, which
+made ``files=[], all=True`` expressible and meaningless; one parameter cannot express it.
+"""
+
+ACCURACY_LINE: Final = re.compile(
+    r"^\s*(?P<clean>\d+) of (?P<parsed>\d+) parsed files had no errors or warnings"
+)
+"""What ``und analyze -accuracy`` prints after the summary, measured on Build 1262.
+
+``25 of 92 parsed files had no errors or warnings (27%)``. The two counts are read rather
+than the rounded percentage beside them, because a floor of 0.8 cannot be compared against
+a figure that has already lost two digits. Note what the numerator excludes: a file with a
+*warning* is not counted, which is why this repository scores 27% with zero errors.
 """
 
 
@@ -271,21 +294,40 @@ class UndCli:
             argv = ["remove", "-file", f"@{listing}"]
             _reject_failure(self.run(argv, db=db, quiet=True))
 
-    def analyze(self, db: Path, files: list[Path] | None, all: bool = False) -> AnalyzeResult:
+    def analyze(
+        self,
+        db: Path,
+        selection: AnalysisSelection,
+        accuracy: bool = False,
+        sarif: Path | None = None,
+    ) -> AnalyzeResult:
         """Analyze the whole project, only what changed, or only ``files`` (req 2.3, 2.6).
 
-        ``files=None`` means ``-changed``; an explicit empty list means there is nothing to
-        do, which ``und`` itself treats as a no-op exiting 0, so no process is started. The
-        parse errors and the warning count come back as data: requirement 2.6 asks for them
-        to be reported while every rule still runs.
+        ``selection`` is :data:`ALL` for the whole project, ``None`` for ``-changed``, or a
+        list of files; an explicit empty list means there is nothing to do, which ``und``
+        itself treats as a no-op exiting 0, so no process is started. The parse errors and
+        the warning count come back as data: requirement 2.6 asks for them to be reported
+        while every rule still runs.
+
+        ``accuracy`` and ``sarif`` are 8.0's optional reports and are off by default, so a
+        6.5 install and an 8.0 one with the keys off send byte-identical argv (req 1.3). What
+        they add comes back on the result: the share of files that parsed with neither an
+        error nor a warning, and the file the diagnostics were written to (req 2.1, 7.1).
         """
-        if files is not None and not files:
+        if isinstance(selection, list) and not selection:
             return AnalyzeResult(seconds=0.0)
-        with _analysis_selection(files, all=all) as selection:
-            result = self.run(["analyze", *selection, "-errors", "-warnings"], db=db)
+        with _analysis_selection(selection) as switches:
+            argv = ["analyze", *switches, "-errors", "-warnings", *_reports(accuracy, sarif)]
+            result = self.run(argv, db=db)
         _reject_failure(result)
         errors, warnings = _read_analysis(result.stdout)
-        return AnalyzeResult(parse_errors=errors, warnings=warnings, seconds=result.seconds)
+        return AnalyzeResult(
+            parse_errors=errors,
+            warnings=warnings,
+            seconds=result.seconds,
+            accuracy=_read_accuracy(result.stdout) if accuracy else None,
+            sarif_path=sarif,
+        )
 
     # --- architectures (und import -arch / export -arch) --------------------------
 
@@ -662,15 +704,41 @@ def _list_file(paths: Sequence[Path]) -> Iterator[Path]:
 
 
 @contextmanager
-def _analysis_selection(files: Sequence[Path] | None, all: bool) -> Iterator[list[str]]:
-    """The switches naming what to analyze, holding any list file open while ``und`` runs."""
-    if all:
-        yield ["-all"]
-    elif files is None:
+def _analysis_selection(selection: AnalysisSelection) -> Iterator[list[str]]:
+    """The switches naming what to analyze, holding any list file open while ``und`` runs.
+
+    Ordered so the string case is the narrowing one: the signature admits exactly one string,
+    :data:`ALL`, so ``isinstance`` here is a type narrowing rather than a value check.
+    """
+    if selection is None:
         yield ["-changed"]
+    elif isinstance(selection, str):
+        yield ["-all"]
     else:
-        with _list_file(files) as listing:
+        with _list_file(selection) as listing:
             yield ["-files", f"@{listing}"]
+
+
+def _reports(accuracy: bool, sarif: Path | None) -> list[str]:
+    """The switches 8.0's optional reports add, in the order ``und help analyze`` gives them."""
+    asked = ["-accuracy"] if accuracy else []
+    return asked if sarif is None else [*asked, "-sarif", str(sarif)]
+
+
+def _read_accuracy(text: str) -> float | None:
+    """The share of files the analysis parsed cleanly, or ``None`` when it reported none.
+
+    ``None`` is the answer a build that does not know ``-accuracy`` gives, and it is not
+    zero: a build that says nothing and a project that resolved nothing must not read alike
+    (requirement 7.1). A project with no parsed files at all answers ``None`` for the same
+    reason -- there is no fraction of nothing.
+    """
+    for line in text.splitlines():
+        found = ACCURACY_LINE.match(line)
+        if found is not None:
+            parsed = int(found["parsed"])
+            return int(found["clean"]) / parsed if parsed else None
+    return None
 
 
 def _read_analysis(text: str) -> tuple[list[ParseError], int]:
