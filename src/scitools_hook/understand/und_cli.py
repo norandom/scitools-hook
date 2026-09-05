@@ -67,7 +67,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -792,6 +792,117 @@ def set_git_repository(cli: UndCli, db: Path, repo: Path) -> None:
     result = cli.run(["settings", "-GitRepositoryDirectory", str(repo)], db=db)
     _reject_failure(result)
     _reject_error_shape(result)
+
+
+ARCH_STATUSES: Final = ("active", "available")
+"""What ``und arch -list`` prints after each name; anything else on a line is not one."""
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedArch:
+    """One architecture this build can generate by itself, and whether it already exists.
+
+    ``active`` means the database holds an instance of it -- every database holds
+    ``Directory Structure`` -- and ``available`` means it could be generated. Build 1262
+    offers 21, three of them derived from git history (measured 2026-09-05).
+    """
+
+    name: str
+    status: str
+
+
+def list_generated(cli: UndCli, db: Path) -> list[GeneratedArch]:
+    """Every automatic architecture this build offers for ``db`` (requirement 4.2).
+
+    Read rather than assumed, so a configuration naming one the build does not have is
+    refused at configuration time with the names it does have. An empty answer is a broken
+    install: every database holds ``Directory Structure``, active, from the moment it exists.
+    """
+    result = cli.run(["arch", "-list"], db=db)
+    _reject_failure(result)
+    _reject_error_shape(result)
+    offered = _read_generated(result.stdout)
+    if not offered:
+        raise AnalysisFailedError(
+            f"und arch -list named no architecture in {db}, and every database offers at "
+            "least 'Directory Structure'",
+            command=result.argv,
+            stderr=result.stderr,
+            hint="Run the command by hand: a silent und usually means a broken install.",
+        )
+    return offered
+
+
+def generate_arch(
+    cli: UndCli,
+    db: Path,
+    name: str,
+    instance: str | None = None,
+    options: Mapping[str, str] | None = None,
+) -> ArchNode:
+    """Generate one automatic architecture and answer it as the node the rules read (req 4.1).
+
+    **The exit status is not the answer.** Measured on Build 1262, the same command printed
+    ``Git Stability: generated`` and exited 1 on one database and 0 on another, with 87
+    members exported either way. So the status is ignored, the ``Error:`` line ``und`` prints
+    for each of its three refusals is not, and success is the export coming back with
+    something in it.
+
+    ``-force`` is always passed: a warm database still holds the instance the last run
+    generated, and without it that is an error rather than a refresh.
+
+    An architecture that generates with **no members at all** is a failure, not an answer.
+    Measured on Build 1262: ``Git Stability`` on a database that knows no repository prints
+    ``generated``, exits 0 and exports ``<arch name="Git Stability"></arch>``; every
+    node-level rule would then evaluate an empty node set and report nothing, which is the
+    silent-green shape the Gate exists to refuse. The design named a ``GeneratedEmptyError``
+    of its own for it; ``errors.py`` is four classes over its own limit and the gate refuses
+    a tenth, so the failure is an ``AnalysisFailedError`` whose hint names the likely cause.
+    Every caller of this function treats any failure here the same way -- report it and fall
+    back to the declared architecture -- so one type loses nothing.
+    """
+    argv = ["arch", "-generate", name]
+    argv += ["-name", instance] if instance else []
+    argv += ["-options", _arch_options(options)] if options else []
+    result = cli.run([*argv, "-force"], db=db)
+    _reject_error_shape(result)
+    node = _read_back(cli, db, instance or name)
+    if not any(node.paths()):
+        raise AnalysisFailedError(
+            f"und generated the architecture {node.name!r} with no members at all",
+            command=result.argv,
+            hint=(
+                "A git-derived architecture reads `git log` in the database's repository. "
+                "Set it with `und -db <db> settings -GitRepositoryDirectory <repo>` first."
+            ),
+        )
+    return node
+
+
+def _arch_options(options: Mapping[str, str]) -> str:
+    """``und help arch``: one argument of ``name=value`` pairs separated by semicolons."""
+    return ";".join(f"{name}={value}" for name, value in options.items())
+
+
+def _read_back(cli: UndCli, db: Path, name: str) -> ArchNode:
+    """Export the architecture just generated and parse it; the export is what says it worked."""
+    with tempfile.TemporaryDirectory(prefix="scitools-hook-arch-") as scratch:
+        return cli.export_arch(db, name, Path(scratch) / "generated.xml")
+
+
+def _read_generated(text: str) -> list[GeneratedArch]:
+    """The listing as rows, keeping names that hold spaces and punctuation whole.
+
+    ``Visual Studio Structure ( C/C++ )  available`` is one name and one status, so the split
+    is from the right and only the two known statuses make a row -- which also skips any
+    heading a later build decides to print.
+    """
+    found: list[GeneratedArch] = []
+    for line in text.splitlines():
+        parts = line.strip().rsplit(maxsplit=1)
+        if len(parts) == 2 and parts[1] in ARCH_STATUSES:
+            found.append(GeneratedArch(name=parts[0], status=parts[1]))
+    return found
 
 
 def _read_accuracy(text: str) -> float | None:
