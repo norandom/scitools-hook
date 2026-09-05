@@ -100,7 +100,7 @@ from scitools_hook.models.git import SyncDelta, SyncTarget
 from scitools_hook.models.ports import ShadowPort
 from scitools_hook.models.progress import NullProgress, Progress
 from scitools_hook.models.snapshot import Side
-from scitools_hook.models.understand import AnalyzeResult
+from scitools_hook.models.understand import AnalyzeResult, Feature
 from scitools_hook.paths import classify_file
 
 # The list file `analyze -files` and `remove -file` read is the same format `codecheck
@@ -109,6 +109,12 @@ from scitools_hook.paths import classify_file
 # binary.
 from scitools_hook.understand.cache_files import CACHE_HINT, discard, present
 from scitools_hook.understand.codecheck import unusable_list_file_name
+from scitools_hook.understand.commit_before import (
+    SHADOW_ROUTE,
+    attempt_for,
+    offers,
+    serve,
+)
 from scitools_hook.understand.und_arch import (
     ARCH_HINT,
     DIRECTORY_STRUCTURE,
@@ -255,30 +261,45 @@ class _Pass(NamedTuple):
     reanalysed: frozenset[Path] | None
 
 
-def _diagnostics(db: Path, settings: Settings) -> Path | None:
-    """Where a **whole-project** pass writes Understand's own SARIF, or ``None`` (req 2.1).
+def _reports(
+    paths: CachePaths, build: str, db: Path, settings: Settings
+) -> tuple[bool, Path | None]:
+    """The two optional reports a **whole-project** pass may ask for (req 2.1, 7.1).
 
-    Asked for only by the two full passes, and that is the correctness of the feature
-    rather than a saving. Measured on Build 1262: ``und analyze -sarif`` reports **the
-    pass**, not the database. A selective pass over one clean file writes a document
-    whose ``results`` array is empty while the database still holds three parse errors,
-    and the ``artifacts`` table lists every file either way, so nothing in the document
-    says it is partial. Published, that document tells GitHub a repository parses
-    cleanly when it does not -- the silent green this whole tool exists to refuse.
+    Measured on Build 1262, twice over, and it is the same finding both times:
+    ``-accuracy`` and ``-sarif`` describe **the pass**, not the database. A selective pass
+    over one clean file prints ``1 of 1 parsed files had no errors or warnings (100%)`` and
+    writes a SARIF whose ``results`` array is empty, while the database still holds three
+    parse errors; a ``-changed`` pass with nothing to do prints ``0 of 0 ... (100%)``.
+    Either published is a clean bill of health for code that has none.
 
-    So a partial pass produces no document, ``AnalyzeResult.sarif_path`` stays ``None``,
-    and the run reports that there is no companion and why (requirement 2.4). The Gate's
-    own SARIF is unaffected: its parse errors come from ``SyncState.parse_errors``, which
-    is a property of the database and survives a warm run.
+    So only the two full passes ask, a selective pass asks for neither, and a run that did
+    not do a full pass answers from what the last one recorded -- which is exactly why
+    ``SyncState`` carries the figure at all.
 
-    A module function rather than a method because ``DatabaseManager`` is seven methods
-    over its own ``CountDeclMethod`` limit already, so any new one trips the ratchet.
+    A module function, not a method: ``DatabaseManager`` is eight methods past its own
+    limit, and naming ``Feature`` inside it is what its coupling count counts.
 
-    Named after the database rather than after the side so no caller has to carry one:
-    ``<cache>/after.und`` writes ``<cache>/after.sarif``. Both sides write one; only the
-    after side's is ever offered as a companion.
+    The accuracy switch is asked for on what the *installed build* was measured to offer
+    (requirement 1.4); the SARIF switch also needs the companion key, because it writes a
+    file and requirement 1.3 ships every feature off.
     """
-    return db.with_suffix(".sarif") if settings.understand.sarif else None
+    accuracy = offers(paths, build, Feature.ACCURACY)
+    sarif = db.with_suffix(".sarif") if settings.understand.sarif else None
+    return accuracy, sarif
+
+
+def _remember_accuracy(state: SyncState, side: Side, result: AnalyzeResult) -> float | None:
+    """Record what a full pass measured, and answer with the figure that describes the database.
+
+    A partial pass asks for no figure, so ``result.accuracy`` is ``None`` and the record stands
+    -- which is the point: the database has not changed in a way the last figure does not
+    describe. ``None`` is never written, because a run that did not ask has not measured a
+    perfect resolution, and a zero here would be read as one.
+    """
+    if result.accuracy is not None:
+        state.accuracy[side] = result.accuracy
+    return state.accuracy.get(side)
 
 
 def _und_exclusions(patterns: Iterable[str]) -> list[str]:
@@ -344,6 +365,22 @@ class DatabaseManager:
         """
         self._prepare_root()
         state = self._load_state()
+        # Not a phase: the route decides for itself whether it applies, and announcing
+        # "building the after database from its commit" before every after side -- or before a
+        # 6.5 install that has no such route -- would be a phase that mostly does not happen.
+        # `serve` announces what it actually did, including the fallback of requirement 3.4.
+        built = serve(
+            attempt_for(
+                self._und, self._paths, self._shadow.repo.root, self._settings, self._progress
+            ),
+            side,
+            target,
+            state,
+            self._understand_version(),
+        )
+        if built is not None:
+            self._save_state(state)
+            return built
         delta = self._phase(
             f"synchronising the {side} tree", lambda: self._shadow.sync(side, target, state)
         )
@@ -451,7 +488,13 @@ class DatabaseManager:
             done = self._update(db, tree, delta, state.languages)
         self._declare_architecture(side, db, tree)
         errors = state.record_parse_errors(side, tree, done.result.parse_errors, done.reanalysed)
-        return done.result.model_copy(update={"parse_errors": errors})
+        state.before_route = SHADOW_ROUTE if side == "before" else state.before_route
+        return done.result.model_copy(
+            update={
+                "parse_errors": errors,
+                "accuracy": _remember_accuracy(state, side, done.result),
+            }
+        )
 
     def _languages(self, state: SyncState, delta: SyncDelta) -> list[str]:
         """Which languages this repository needs, from configuration or from its files (2.4).
@@ -665,7 +708,12 @@ class DatabaseManager:
             f"created the {side} analysis database with {', '.join(languages)} enabled"
         )
         self._und.add(db, tree, [])
-        return _Pass(self._und.analyze(db, ALL, sarif=_diagnostics(db, self._settings)), None)
+        return _Pass(
+            self._und.analyze(
+                db, ALL, *_reports(self._paths, self._understand_version(), db, self._settings)
+            ),
+            None,
+        )
 
     def _update(self, db: Path, tree: Path, delta: SyncDelta, languages: list[str]) -> _Pass:
         """Apply one delta to a database that already holds the previous shadow (req 2.3).
@@ -735,7 +783,12 @@ class DatabaseManager:
         way round for a gate.
         """
         self._progress.note(f"analysing the whole project rather than the change: {reason}")
-        return _Pass(self._und.analyze(db, ALL, sarif=_diagnostics(db, self._settings)), None)
+        return _Pass(
+            self._und.analyze(
+                db, ALL, *_reports(self._paths, self._understand_version(), db, self._settings)
+            ),
+            None,
+        )
 
     # --- the cache directory and its state ---------------------------------------
 

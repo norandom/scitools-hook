@@ -20,9 +20,19 @@ from pathlib import Path
 import pytest
 from und_stub import RecordingLog, UndStub, cli, write_stub
 
+from scitools_hook.config.defaults import default_settings
 from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.models.cache import CachePaths, SyncState
-from scitools_hook.understand.commit_before import BeforeKey, CommitBuild, build, ensure, record
+from scitools_hook.models.git import CommitTarget, IndexTarget
+from scitools_hook.understand.commit_before import (
+    BeforeKey,
+    CommitBuild,
+    attempt_for,
+    build,
+    ensure,
+    record,
+    serve,
+)
 
 BUILD = "(Build 1262)"
 COMMIT = "3ca0a97"
@@ -285,3 +295,147 @@ def test_a_path_that_is_taken_by_something_unusable_is_refused_rather_than_reuse
         ensure(cli(stub, log), a_request(tmp_path), state)
 
     assert str(layout(tmp_path).before_db) in str(caught.value)
+
+
+# --- serving one run: what the route does, and what it declines to do (3.1, 3.4, 3.5) -----
+
+
+class Recorder:
+    """A progress port that keeps what it was told, so a fallback can be read back.
+
+    Local rather than imported: the file-level dependency rule leaves a test module room for
+    about five imports, and this needs three characters of behaviour.
+    """
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+
+    def start(self, name: str) -> None:
+        """A phase began; the name is enough for these assertions."""
+        self.notes.append(name)
+
+    def finish(self, name: str, seconds: float) -> None:
+        """A phase ended."""
+
+    def note(self, message: str) -> None:
+        """Something the run wants the operator to read."""
+        self.notes.append(message)
+
+
+def forced(tmp_path: Path, stub: UndStub, log: RecordingLog) -> tuple[object, Recorder]:
+    """The route turned on by configuration, which needs no measurement of the build.
+
+    ``commit`` rather than ``auto`` on purpose: ``auto`` consults the record ``doctor`` wrote,
+    and that decision is ``test_before_route`` s subject. Here the question is what the route
+    *does* once it has been chosen.
+    """
+    settings = default_settings()
+    settings.understand.before_side = "commit"
+    progress = Recorder()
+    return (
+        attempt_for(cli(stub, log), layout(tmp_path), tmp_path / "repo", settings, progress),
+        progress,
+    )
+
+
+def a_state() -> SyncState:
+    """A state as the after side would have left it, before the before side is asked for."""
+    return SyncState(languages=["Python"], created_with=BUILD)
+
+
+def test_the_after_side_is_never_commit_built(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 3.1 is about the before side; the after side is the change under test."""
+    attempt, _ = forced(tmp_path, stub, log)
+
+    assert serve(attempt, "after", CommitTarget(commit=COMMIT), a_state(), BUILD) is None
+    assert stub.calls == []
+
+
+def test_a_before_side_that_is_not_a_commit_falls_through(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """``check --all`` has no before side to build, and an index target is not a commit."""
+    attempt, _ = forced(tmp_path, stub, log)
+
+    assert serve(attempt, "before", IndexTarget(), a_state(), BUILD) is None
+    assert stub.calls == []
+
+
+def test_the_shipped_configuration_asks_the_build_nothing_at_all(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 1.3: the key ships off, so an untouched repository never meets this."""
+    progress = Recorder()
+    attempt = attempt_for(
+        cli(stub, log), layout(tmp_path), tmp_path / "repo", default_settings(), progress
+    )
+
+    assert serve(attempt, "before", CommitTarget(commit=COMMIT), a_state(), BUILD) is None
+    assert stub.calls == []
+
+
+def test_the_route_builds_the_database_and_answers_the_run(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    stub.plan({"analyze": {"stdout": ACCURACY_OUTPUT}})
+    attempt, progress = forced(tmp_path, stub, log)
+    state = a_state()
+
+    answer = serve(attempt, "before", CommitTarget(commit=COMMIT), state, BUILD)
+
+    assert answer is not None
+    assert state.before_route == "commit"
+    assert state.before_commit == COMMIT
+    assert any("commit" in note for note in progress.notes), "a build that ran announces itself"
+
+
+def test_a_run_this_route_serves_exports_no_shadow_tree(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 3.1, and where the saving is: the tree is the expensive half."""
+    attempt, _ = forced(tmp_path, stub, log)
+
+    serve(attempt, "before", CommitTarget(commit=COMMIT), a_state(), BUILD)
+
+    assert not layout(tmp_path).before_tree.exists()
+
+
+def test_a_recorded_database_is_reused_and_nothing_runs(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 3.5: not a cheaper analysis, no analysis.
+
+    Measured on Build 1262: ``analyze -changed`` with nothing to do prints ``0 of 0 parsed
+    files had no errors or warnings (100%)``. Recomputing here would report a perfect
+    resolution for a database nothing looked at, so the recorded figure is what comes back.
+    """
+    attempt, _ = forced(tmp_path, stub, log)
+    state = a_state()
+    serve(attempt, "before", CommitTarget(commit=COMMIT), state, BUILD)
+    layout(tmp_path).before_db.mkdir(parents=True, exist_ok=True)  # what `und create` leaves
+    state.accuracy["before"] = 0.42
+    built = len(stub.calls)
+
+    again = serve(attempt, "before", CommitTarget(commit=COMMIT), state, BUILD)
+
+    assert stub.calls[built:] == [], "a warm before side runs nothing at all"
+    assert again is not None
+    assert again.accuracy == pytest.approx(0.42)
+    assert again.seconds == 0.0
+
+
+def test_a_failed_build_is_reported_and_the_shadow_route_serves_the_run(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """Requirement 3.4: the run continues, and it says which route actually ran."""
+    stub.plan({"create": {"rc": 1, "stderr": "Error: unknown revision 3ca0a97\n"}})
+    attempt, progress = forced(tmp_path, stub, log)
+
+    answer = serve(attempt, "before", CommitTarget(commit=COMMIT), a_state(), BUILD)
+
+    assert answer is None, "falling through is what sends the run to the shadow route"
+    said = " ".join(progress.notes)
+    assert "shadow tree" in said
+    assert "unknown revision 3ca0a97" in said, "und's own words, not the wrapper's summary"

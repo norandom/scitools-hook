@@ -20,6 +20,7 @@ from pathlib import Path
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus
 from scitools_hook.understand.und_cli import (
     AnalysisSelection,
+    CommandResult,
     UndCli,
 )
 
@@ -39,6 +40,7 @@ class FakeUndCli(UndCli):
     version_text: str = "(Build 1204)"
     license: LicenseStatus = field(default_factory=lambda: LicenseStatus(ok=True))
     analyze_results: list[AnalyzeResult] = field(default_factory=list)
+    run_results: list[CommandResult] = field(default_factory=list)
     violations_csv: Path | None = None
     calls: list[FakeCall] = field(default_factory=list)
 
@@ -94,6 +96,19 @@ class FakeUndCli(UndCli):
         if not self.analyze_results:
             return AnalyzeResult(seconds=0.0)
         return self.analyze_results.pop(0)
+
+    def run(self, argv: list[str], db: Path | None = None, quiet: bool = False) -> CommandResult:
+        """Record a raw ``und`` command and answer the next scripted result, or a success.
+
+        The commands that live beside :class:`~scitools_hook.understand.und_cli.UndCli` rather
+        than on it -- the commit-built database, the architecture generation -- all reach
+        Understand through here, so a fake without this override sends them at the real
+        subprocess machinery of a wrapper that was never given an installation.
+        """
+        self.calls.append(FakeCall("run", {"argv": list(argv), "db": db, "quiet": quiet}))
+        if not self.run_results:
+            return CommandResult(argv=list(argv), rc=0, stdout="", stderr="", seconds=0.0)
+        return self.run_results.pop(0)
 
     def codecheck(self, db: Path, config: str, files: list[Path], out_dir: Path) -> Path:
         """Record the run and answer with the configured violations CSV."""

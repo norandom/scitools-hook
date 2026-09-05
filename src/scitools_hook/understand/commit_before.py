@@ -22,13 +22,21 @@ answers only "make the before database be that commit, or tell me it already is"
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Self
 
+from scitools_hook.config.fingerprint import analysis_fingerprint
+from scitools_hook.config.models import Settings
+from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.models.cache import CachePaths, SyncState
-from scitools_hook.models.understand import AnalyzeResult
+from scitools_hook.models.git import SyncTarget
+from scitools_hook.models.progress import NullProgress, Progress
+from scitools_hook.models.snapshot import Side
+from scitools_hook.models.understand import AnalyzeResult, Feature
 from scitools_hook.understand.cache_files import discard, present
+from scitools_hook.understand.features import load_features
 from scitools_hook.understand.und_cli import (
     ALL,
     GitSource,
@@ -100,22 +108,28 @@ class CommitBuild:
     sarif: Path | None = None
 
 
-def ensure(cli: UndCli, request: CommitBuild, state: SyncState) -> AnalyzeResult | None:
+def ensure(
+    cli: UndCli, request: CommitBuild, state: SyncState, progress: Progress | None = None
+) -> AnalyzeResult | None:
     """Make the before database be ``request.key``, and say whether that cost an analysis.
 
     ``None`` means the recorded database was reused and **nothing ran** -- no ``create``, no
     ``analyze``, no process at all. That is the whole point of the key, and it is why the
     caller must answer such a run from the state rather than from a fresh result: there is no
-    fresh result.
+    fresh result. A reuse announces nothing either, having done nothing to announce.
 
     A rebuild removes what is there first. ``und create`` over an existing database rewrites
-    its settings and keeps its file list (measured, task 2.x), so re-creating in place would
-    carry the previous key's files into a database built for this one.
+    its settings and keeps its file list (measured), so re-creating in place would carry the
+    previous key's files into a database built for this one.
     """
     if request.key.recorded_by(state) and present(request.paths.before_db):
         return None
+    reporter = progress if progress is not None else NullProgress()
+    reporter.start(BUILDING)
+    started = time.monotonic()
     result = build(cli, request)
     record(state, request.key, result)
+    reporter.finish(BUILDING, time.monotonic() - started)
     return result
 
 
@@ -160,3 +174,151 @@ def record(state: SyncState, key: BeforeKey, result: AnalyzeResult) -> None:
     state.created_with = key.build
     if result.accuracy is not None:
         state.accuracy[BEFORE] = result.accuracy
+
+
+BUILDING: Final = "building the before database from the base commit"
+"""The phase name a commit build announces; a reuse announces nothing, having done nothing."""
+
+SHADOW_ROUTE: Final = "shadow"
+"""What the exported-tree route records; the manager sets it whenever it builds that way."""
+
+
+@dataclass(frozen=True, slots=True)
+class Attempt:
+    """Everything the route decision needs, gathered by the manager that owns it.
+
+    A value rather than five parameters, and the reason is the gate: ``DatabaseManager`` is
+    eight methods past its ``CountDeclMethod`` limit, so the decision cannot become a method
+    on it, and it is built by :func:`attempt_for` rather than named in the manager, because
+    naming a class there is what its ``CountClassCoupled`` counts.
+
+    The Understand build is **not** here: the manager already looks it up once per run and
+    caches it, and a second lookup through this value would be a second ``und`` process on
+    every run for a string that is already in hand. It is passed to :func:`serve` instead.
+    """
+
+    cli: UndCli
+    paths: CachePaths
+    repo: Path
+    settings: Settings
+    progress: Progress
+
+
+def attempt_for(
+    cli: UndCli, paths: CachePaths, repo: Path, settings: Settings, progress: Progress
+) -> Attempt:
+    """Gather what the route decision needs, so the caller need not name :class:`Attempt`.
+
+    A function rather than the constructor because the caller is ``DatabaseManager``, whose
+    ``CountClassCoupled`` counts every class its methods name and which is fifteen over that
+    limit already.
+    """
+    return Attempt(cli=cli, paths=paths, repo=repo, settings=settings, progress=progress)
+
+
+def serve(
+    attempt: Attempt, side: Side, target: SyncTarget, state: SyncState, build: str
+) -> AnalyzeResult | None:
+    """The before side through the commit route, or ``None`` when the shadow route must (3.3).
+
+    ``None`` is not a failure. It is the answer for every run this route does not apply to --
+    the after side, a before side that is not a commit, a build that cannot do it, a
+    configuration that asked for the shadow tree -- and for a commit build that *failed*,
+    which requirement 3.4 says must fall back and say so rather than stop the run.
+
+    A run this route serves never exports a shadow tree for the before side (requirement 3.1),
+    which is where its saving comes from: the tree is the expensive half.
+    """
+    if side != BEFORE or target.kind != "commit":
+        return None
+    if not wanted(attempt.settings, offers(attempt.paths, build, Feature.COMMIT_BEFORE)):
+        return None
+    request = _request(attempt, target.commit, state, build)
+    try:
+        fresh = ensure(attempt.cli, request, state, attempt.progress)
+    except LicenseError:
+        # Requirement 1.4 wants this exit code out of here unaltered, and falling back would
+        # not help: the shadow route needs the same licence this one was refused.
+        raise
+    except AnalysisFailedError as refused:
+        attempt.progress.note(
+            "the commit-built before database failed, so this run used the shadow tree: "
+            f"{_said(refused)}"
+        )
+        return None
+    if fresh is None:
+        return _reused(state)
+    errors = state.record_parse_errors(BEFORE, attempt.repo, fresh.parse_errors, None)
+    return fresh.model_copy(update={"parse_errors": errors})
+
+
+def _said(refused: AnalysisFailedError) -> str:
+    """What ``und`` said, or the wrapper's own sentence when it said nothing.
+
+    Understand's words first, for the reason task 2.1 recorded one refusal over: the wrapper's
+    message leads with the whole command line, which on a cache path fills the line on its own
+    and pushes the useful sentence off the end of it.
+    """
+    said = " ".join(refused.stderr.split())
+    return said or str(refused)
+
+
+def wanted(settings: Settings, offered: bool) -> bool:
+    """Whether this run should take the commit route at all (requirement 3.3).
+
+    ``auto`` is the interesting value and the reason the setting is three-valued rather than a
+    flag: it asks for the route *if the build has it* and falls back silently otherwise, so a
+    6.5 install keeps today's behaviour with no configuration change and no refusal.
+    """
+    chosen = settings.understand.before_side
+    return chosen == COMMIT_ROUTE or (chosen == "auto" and offered)
+
+
+def offers(paths: CachePaths, build: str, feature: Feature) -> bool:
+    """Whether the stored measurement says *this* build offers ``feature`` (req 1.2, 1.4).
+
+    Read from the record ``doctor`` wrote beside these very databases, rather than probed: a
+    check measures nothing about the installation, and a record from another build is not an
+    answer about this one.
+    """
+    report = load_features(paths)
+    return report is not None and report.build == build and report.offers(feature)
+
+
+def _request(attempt: Attempt, commit: str, state: SyncState, build: str) -> CommitBuild:
+    """One run's request, with the two optional reports decided from what the build offers.
+
+    The languages come from configuration when it names any and from the record otherwise --
+    the same rule the shadow route follows, and it is safe here because the after side is
+    always ensured first and writes the set it detected before this runs.
+    """
+    return CommitBuild(
+        paths=attempt.paths,
+        repo=attempt.repo,
+        key=BeforeKey.of(
+            commit=commit,
+            languages=attempt.settings.project.languages or state.languages,
+            settings=analysis_fingerprint(attempt.settings),
+            build=build,
+        ),
+        accuracy=offers(attempt.paths, build, Feature.ACCURACY),
+        sarif=attempt.paths.before_db.with_suffix(".sarif")
+        if attempt.settings.understand.sarif
+        else None,
+    )
+
+
+def _reused(state: SyncState) -> AnalyzeResult:
+    """What a run that analysed nothing answers with: the record of the database that is there.
+
+    The figures are read rather than measured for the reason both were recorded in the first
+    place: measured on Build 1262, ``-accuracy`` and ``-sarif`` describe **the pass**, and a
+    pass that did not happen describes nothing. ``0 of 0 parsed files had no errors or
+    warnings (100%)`` is what a ``-changed`` run with nothing to do prints for a database
+    holding three parse errors.
+    """
+    return AnalyzeResult(
+        seconds=0.0,
+        parse_errors=list(state.parse_errors.get(BEFORE, [])),
+        accuracy=state.accuracy.get(BEFORE),
+    )
