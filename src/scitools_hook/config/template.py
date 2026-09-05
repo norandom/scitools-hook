@@ -28,6 +28,7 @@ from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.detect import PARSE_REASONS, Detection, Evidence, Region
 from scitools_hook.config.metric_names import SCOPES
 from scitools_hook.config.models import (
+    AnalysisSettings,
     BaselineSettings,
     CodeCheckSettings,
     CouplingRule,
@@ -126,8 +127,19 @@ def _understand(cfg: UnderstandSettings) -> str:
             "Understand install directory (else --scitools-home, SCITOOLS_HOME, `und` on PATH).",
             'db_location: "cache" (per-user cache dir) or "gitdir" (.git/scitools-hook/).',
             'api_mode: "auto" runs the Python API under Understand\'s upython when present.',
+            "sarif = true also writes Understand's own SARIF beside the one --sarif asks for.",
+            'before_side: "shadow" exports the base commit; "commit" builds the database from',
+            '  it directly (Understand 8.0 only); "auto" takes whichever the build offers.',
+            "snapshot_cache reuses an unchanged before side between runs; it changes no finding.",
         ],
-        [home, _line("db_location", cfg.db_location), _line("api_mode", cfg.api_mode)],
+        [
+            home,
+            _line("db_location", cfg.db_location),
+            _line("api_mode", cfg.api_mode),
+            _line("sarif", cfg.sarif),
+            _line("before_side", cfg.before_side),
+            _line("snapshot_cache", cfg.snapshot_cache),
+        ],
     )
 
 
@@ -248,8 +260,25 @@ def _structure_body(cfg: StructureRules) -> str:
             dupes,
             _line("duplicate_definitions_severity", cfg.duplicate_definitions_severity),
             _line("duplicate_definitions_ignore", cfg.duplicate_definitions_ignore),
+            _unused(cfg),
+            _line("unused_ignore", cfg.unused_ignore),
+            _architecture_options(cfg),
         ],
     )
+
+
+def _unused(cfg: StructureRules) -> str:
+    """``unused_routines`` off by default; enabling it is choosing a severity."""
+    if cfg.unused_routines is None:
+        return '# unused_routines = "warning"  # unset: off. Reports routines nothing references'
+    return _line("unused_routines", cfg.unused_routines)
+
+
+def _architecture_options(cfg: StructureRules) -> str:
+    """Options for a generated architecture, by the names Understand shows in its dialog."""
+    if not cfg.architecture_options:
+        return '# architecture_options = { "Date Relative to" = "Most Recent Commit" }'
+    return f"architecture_options = {_inline_table(dict(cfg.architecture_options))}"
 
 
 def _fan(cfg: StructureRules) -> str:
@@ -643,6 +672,7 @@ def render_template(settings: Settings | None = None, *, proposal: Proposal | No
         _baseline(cfg.baseline),
         _hints(cfg.hints),
         _output(cfg.output),
+        _analysis(cfg.analysis),
         _scopes(cfg.scope, notes),
         _parse(cfg.parse, suggested=_has_parse_suggestion(proposal)),
         *(proposal.suggestions if proposal is not None else ()),
@@ -654,6 +684,24 @@ def _has_parse_suggestion(proposal: Proposal | None) -> bool:
     """Whether a proposal already carries a commented ``[parse]`` block for this repository."""
     return proposal is not None and any(
         "[[parse.acknowledged]]" in block for block in proposal.suggestions
+    )
+
+
+def _analysis(cfg: AnalysisSettings) -> str:
+    """The accuracy floor: unset by default, and never a blocking finding when it is set."""
+    floor = (
+        _line("accuracy_floor", cfg.accuracy_floor)
+        if cfg.accuracy_floor is not None
+        else "# accuracy_floor = 0.8  # unset: off"
+    )
+    return _section(
+        "[analysis]",
+        [
+            "accuracy_floor is the share of files Understand parsed with no error or warning,",
+            "  as `und analyze -accuracy` reports it. Below the floor the run says so and",
+            "  carries on: a poorly resolved analysis is news, not a reason to refuse a commit.",
+        ],
+        [floor],
     )
 
 

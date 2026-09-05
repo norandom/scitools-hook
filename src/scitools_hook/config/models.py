@@ -46,6 +46,28 @@ SeverityMap = dict[str, Severity]
 DbLocation = Literal["cache", "gitdir"]
 ApiMode = Literal["auto", "inprocess", "upython"]
 FanKey = Literal["file_fan_in", "file_fan_out", "class_fan_in", "class_fan_out"]
+
+BeforeSide = Literal["auto", "commit", "shadow"]
+"""
+Where the before side comes from: an exported shadow tree, the base commit, or whichever of
+the two the installed build can do. ``shadow`` is the shipped value, so a repository that
+names nothing keeps the route 0.1.0a8 used (req 1.3, 3.3).
+"""
+
+DEFAULT_UNUSED_IGNORE: Final[tuple[str, ...]] = (
+    r"\.__\w+__$",
+    r"(^|\.)test_",
+    r"(^|\.)(setup|teardown)(_\w+)?$",
+    r"(^|\.)main$",
+)
+"""
+Routines nothing calls **on purpose**, which the unused rule would otherwise report.
+
+Dunder methods are called by the interpreter and never by name; pytest collects ``test_``
+functions and its fixtures' ``setup``/``teardown`` hooks; ``main`` is an entry point. Each is
+a reference Understand cannot see because there is none to see, which is the documented limit
+of reference-based dead-code detection and not a defect in the rule (req 6.3).
+"""
 FAN_KEYS: Final[tuple[FanKey, ...]] = get_args(FanKey)
 
 
@@ -261,6 +283,14 @@ class StructureRules(StrictModel):
     reachable_complexity: Limit | None = None
     reachable_complexity_severity: Severity = "warning"
     call_cycles: Severity | None = None
+    unused_routines: Severity | None = None
+    unused_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_UNUSED_IGNORE))
+    architecture_options: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("unused_ignore")
+    @classmethod
+    def _unused_patterns_compile(cls, patterns: list[str]) -> list[str]:
+        return compile_patterns(patterns)
 
 
 class CodeCheckSettings(StrictModel):
@@ -335,6 +365,22 @@ class UnderstandSettings(StrictModel):
     home: Path | None = None
     db_location: DbLocation = "cache"
     api_mode: ApiMode = "auto"
+    sarif: bool = False
+    before_side: BeforeSide = "shadow"
+    snapshot_cache: bool = True
+
+
+class AnalysisSettings(StrictModel):
+    """How much of an analysis Understand resolved, and the floor below which that is news.
+
+    ``accuracy_floor`` is a fraction of the files an analysis parsed without an error or a
+    warning, which is what ``und analyze -accuracy`` reports. Unset by default, and the
+    finding it raises never blocks (req 7.3): a poorly resolved analysis makes the rest of a
+    run less trustworthy, and saying so is useful, but refusing a commit over the state of
+    somebody else's third-party imports is not.
+    """
+
+    accuracy_floor: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class OutputSettings(StrictModel):
@@ -693,6 +739,7 @@ class Settings(StrictModel):
     baseline: BaselineSettings = Field(default_factory=BaselineSettings)
     hints: dict[str, str] = Field(default_factory=dict)
     output: OutputSettings = Field(default_factory=OutputSettings)
+    analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     scope: dict[str, PathScope] = Field(default_factory=dict)
     parse: ParseSettings = Field(default_factory=ParseSettings)
 

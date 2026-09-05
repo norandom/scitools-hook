@@ -115,7 +115,16 @@ CountDeclMethodNonStub = { max = 45 }
 # the definitions `structure.duplicate_definition` exists to collect. `CountClassDerived` on
 # the shared pydantic base counts schemas rather than coupling.
 # Measured 2026-09-04: models/snapshot.py 11 classes, DataModel 43 derived.
-paths = ["src/scitools_hook/models/**"]
+#
+# `config/models.py` joins them on 2026-09-05, for the same reason and with the same evidence:
+# it is 20 pydantic settings shapes over one `StrictModel` base, one per TOML section or rule,
+# and the two metrics that refuse it are the two named above. Measured when the
+# understand-8-features spec added its `[analysis]` section: the file went 19 -> 20 classes
+# against a limit of 6 and `StrictModel` 18 -> 19 derived against 8, so the ratchet refused a
+# one-field settings model. Splitting the file does not answer `CountClassDerived` at all --
+# the count is of everything sharing the base, wherever it lives -- which is the definition of
+# a metric measuring the wrong thing here.
+paths = ["src/scitools_hook/models/**", "src/scitools_hook/config/models.py"]
 
 [scope.schemas.thresholds.file]
 CountDeclClass = false

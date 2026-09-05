@@ -130,6 +130,72 @@ SYNTHETIC_METRICS: Final[dict[str, SyntheticMetric]] = {
 }
 """Synthetic metric id -> declaration (req 3.5)."""
 
+
+@dataclass(frozen=True, slots=True)
+class PluginMetric:
+    """A metric Understand 8.0 computes from a plugin rather than from its built-in list.
+
+    These are invisible to ``Metric.list(kind)`` -- measured on Build 1262, the routine kind
+    string answers 18 metrics and none of these is among them -- and are found instead by
+    ``Metric.lookup(id)``, whose ``tags()`` name the targets and languages recorded here. That
+    is why they need a declaration at all: without one, a threshold on ``CountGlobalsUsed``
+    would be refused as an unknown metric by ``config.validate`` before Understand was asked.
+
+    ``scopes`` are the Gate's scopes for Understand's ``Target:`` tags (``Functions`` ->
+    ``routine``, ``Classes`` -> ``class``, ``Files`` -> ``file``, ``Architectures`` -> ``arch``,
+    ``Project`` -> ``project``). ``languages`` are Understand's own ``Language:`` tags, kept
+    verbatim rather than mapped onto the Gate's twelve: Understand tags C and C++ separately
+    while the Gate names the pair ``C++``, and the mapping belongs where availability is
+    decided, not here.
+
+    ``Any`` is Understand's word for a metric with no language restriction.
+    """
+
+    id: str
+    scopes: tuple[Scope, ...]
+    languages: tuple[str, ...]
+
+
+PLUGIN_METRICS: Final[dict[str, PluginMetric]] = {
+    "CountGlobalsModified": PluginMetric(
+        id="CountGlobalsModified",
+        scopes=("routine",),
+        languages=("C", "C++", "Python", "Pascal", "Web"),
+    ),
+    "CountGlobalsSet": PluginMetric(
+        id="CountGlobalsSet",
+        scopes=("routine",),
+        languages=("C", "C++", "Python", "Pascal", "Web"),
+    ),
+    "CountGlobalsUsed": PluginMetric(
+        id="CountGlobalsUsed",
+        scopes=("routine",),
+        languages=("C", "C++", "Python", "Pascal", "Web"),
+    ),
+    "CountClassCoupledModified": PluginMetric(
+        id="CountClassCoupledModified",
+        scopes=("class",),
+        languages=("Basic", "C#", "Java", "Pascal", "Python"),
+    ),
+    "CorePercentage": PluginMetric(
+        id="CorePercentage", scopes=("arch", "project"), languages=("Any",)
+    ),
+    "BidirectionalDepsPercent": PluginMetric(
+        id="BidirectionalDepsPercent", scopes=("file", "class"), languages=("Any",)
+    ),
+    "CognitiveComplexity": PluginMetric(
+        id="CognitiveComplexity", scopes=("routine",), languages=("C", "C++")
+    ),
+}
+"""Metric id -> declaration, from ``Metric.lookup(id).tags()`` on Build 1262, 2026-09-05.
+
+None of these is a shipped threshold (requirement 5.4): a metric measured on nobody's code
+may not refuse anybody's commit, so they enter the catalogue and the configuration grammar
+and wait there until a repository records a limit for one. ``CognitiveComplexity`` is listed
+because the build carries it, and is C/C++ only -- on a Python repository it is reported
+unavailable rather than silently skipped.
+"""
+
 SCOPE_KINDS: Final[dict[Scope, str]] = {
     "routine": (
         "function ~unknown ~unresolved, method ~unknown ~unresolved, "
