@@ -223,6 +223,24 @@ def _cache_rows(paths: CachePaths | None, state: SyncState | None) -> list[tuple
     return rows + _state_rows(state)
 
 
+def _before_route(state: SyncState) -> str:
+    """How the before database was built, and for a commit-built one, from what (req 3.6).
+
+    The commit is repeated here rather than left to the row above it, because the two rows
+    answer different questions: ``before commit`` is what the *last run compared against*,
+    which a shadow-built database has too, while this one says the database **is** that
+    commit, built from it by Understand rather than exported to a tree and analysed.
+
+    ``none`` means no before side has been built yet, which is every repository until its
+    first ranged or staged check.
+    """
+    if state.before_route is None:
+        return "none"
+    if state.before_route == "commit" and state.before_commit:
+        return f"commit ({state.before_commit})"
+    return state.before_route
+
+
 def _state_rows(state: SyncState | None) -> list[tuple[str, str]]:
     """What the recorded sync state says, and the one consequence it can carry."""
     if state is None:
@@ -230,6 +248,7 @@ def _state_rows(state: SyncState | None) -> list[tuple[str, str]]:
     rows = [
         ("after target", f"{state.after_target or 'none'} ({state.after_tree_id or 'no id'})"),
         ("before commit", state.before_commit or "none"),
+        ("before route", _before_route(state)),
         ("languages", ", ".join(state.languages) or "none recorded"),
         ("built with", state.created_with or "unknown"),
     ]

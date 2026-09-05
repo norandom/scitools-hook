@@ -104,7 +104,7 @@
   - _Depends: 4.1, 2.3_
   - _Requirements: 3.3, 3.4, 3.5_
 
-- [ ] 4.3 Print the before route in doctor
+- [x] 4.3 Print the before route in doctor
   - A row with the route and, for a commit-built database, the commit it was built from, read from the sync state
   - Done when `doctor` shows `before route: commit (<hash>)` on 8.0 and `before route: shadow` on the fixture seam
   - _Depends: 4.2_
@@ -282,3 +282,5 @@
 - 4.2: `serve` re-raises `LicenseError` rather than falling back. Requirement 1.4 wants that exit code out unaltered, and falling back would not help anyway -- the shadow route needs the same licence the commit route was refused. Every other `AnalysisFailedError` becomes a note carrying **und's own stderr first**, for the reason task 2.1 recorded: the wrapper's message leads with the whole command line and pushes the useful sentence off the end.
 - 4.2 (**timing, and the answer is "nothing"**): the harness run after this task is 27.8 s warm against 27.7 s before it, on the shipped configuration, which takes the shadow route. Measured directly: on a warm run the before side costs **0.0 s of export and 0.0 s of analysis**, so the route has nothing to remove; on the first check after an edit its ceiling is 2.5 s of 33.5 s. The commit route is a reproducibility feature, not a speed one, and the 15 s target belongs to 9.1 and 9.4. Figures in `research.md`.
 - 4.2: the test split follows the dependency rule again -- `test_before_route.py` holds the decision (`wanted`, `offers`, seven dependencies) and the `serve` tests went into `test_commit_before.py`, which already drives the stubbed `und`. The progress recorder there is a **local class** rather than `conftest.FakeProgress`, because importing it would have cost the module its eighth dependency.
+- 4.3: the row is `before route`, beside `before commit`, and the two answer different questions -- `before commit` is what the last run *compared against*, which a shadow-built database has too, while the route says the database **is** that commit. A commit-built one reads `commit (<hash>)`, a shadow-built one `shadow`, and a repository before its first staged or ranged check `none`. The 8.0 half of the task's done-when is left to task 4.4's contract test, which is the one that actually builds a database through the route.
+- 4.3: the three tests went into `tests/cli/test_doctor_rows.py`; `test_cli_commands.py` is twelve functions past `CountDeclFunction` and the gate refused three more. It imports the helpers from `test_cli_commands` by name, which works because the test directories carry no `__init__.py` and pytest prepends each one.
