@@ -21,6 +21,7 @@ the manager; the databases are the *given*, and the adapters are what is under t
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -133,6 +134,22 @@ int scale(int value, int factor) { return value * factor; }
 }
 """The sample repository, one entry per file, written verbatim under both roots."""
 
+BASE_SOURCES: dict[str, str] = {
+    **SOURCES,
+    "main.py": "from app.entry import entry_point\n\n\ndef main():\n    return entry_point()\n",
+}
+"""The same files one commit earlier: ``main`` without its docstring line.
+
+The contract project needs a history, not just a tree, because three things in the
+understand-8-features specification are about a repository rather than a directory: a before
+database built from a commit (requirement 3.2), a git-derived architecture generated from
+commit dates and authors (requirement 4.3), and the comparison pair the two register with
+each other (requirement 5.5). One commit would give a history with nothing before it, so
+there are two, and the difference is deliberately the smallest thing that still moves a
+metric -- ``main.py`` loses a line -- so that a before/after comparison over this project has
+something to compare while every existing expectation about the *working tree* is untouched.
+"""
+
 FILES: tuple[str, ...] = tuple(sorted(SOURCES))
 """Every source file, root-relative with forward slashes -- the request's ``files``."""
 
@@ -183,6 +200,56 @@ def write_tree(root: Path, sources: dict[str, str] | None = None) -> Path:
     return root
 
 
+@dataclass(frozen=True)
+class History:
+    """The two commits written over the sample sources, newest last."""
+
+    base: str
+    head: str
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git in ``root`` with the developer's configuration and hooks kept out of it."""
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "Gate Contract",
+        "GIT_AUTHOR_EMAIL": "gate@example.invalid",
+        "GIT_COMMITTER_NAME": "Gate Contract",
+        "GIT_COMMITTER_EMAIL": "gate@example.invalid",
+    }
+    done = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_S,
+        check=False,
+        env=environment,
+    )
+    if done.returncode != 0:
+        pytest.fail(f"git {' '.join(args)} exited {done.returncode}: {done.stderr.strip()}")
+    return done
+
+
+def init_history(root: Path) -> History:
+    """Write the sample sources as two commits, leaving the tree at the second.
+
+    The working tree ends holding exactly :data:`SOURCES`, which is what every contract test
+    written before this fixture had a history expects to find there. What the history adds is
+    a *base commit* that holds something else.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "--quiet", "--initial-branch=main")
+    commits = []
+    for sources, message in ((BASE_SOURCES, "the base commit"), (SOURCES, "the head commit")):
+        write_tree(root, sources)
+        _git(root, "add", "--all")
+        _git(root, "commit", "--quiet", "--no-verify", "--message", message)
+        commits.append(_git(root, "rev-parse", "HEAD").stdout.strip())
+    return History(base=commits[0], head=commits[1])
+
+
 def build_database(db: Path, root: Path, languages: tuple[str, ...] = LANGUAGES) -> None:
     """Create a database over ``root`` and analyse it whole, failing loudly if it cannot.
 
@@ -204,6 +271,17 @@ class SampleProject:
     """The same sources analysed from two different directories (requirement 4.4)."""
 
     workdir: Path
+    history: History
+
+    @property
+    def repo(self) -> Path:
+        """The analysis root that is also a git repository, for the tests that need one."""
+        return self.root(ROOTS[0])
+
+    @property
+    def base_commit(self) -> str:
+        """The commit a before side of this project represents (requirements 3.2, 4.3)."""
+        return self.history.base
 
     def root(self, name: str) -> Path:
         """The analysis root of one side, exactly as ``und add`` received it."""
@@ -227,9 +305,10 @@ class SampleProject:
 def sample_project(tmp_path_factory: pytest.TempPathFactory) -> SampleProject:
     """Two databases over token-identical sources, built from two differently named roots."""
     workdir = tmp_path_factory.mktemp("contract-project")
-    project = SampleProject(workdir)
-    for name in ROOTS:
+    project = SampleProject(workdir, init_history(workdir / ROOTS[0]))
+    for name in ROOTS[1:]:
         write_tree(project.root(name))
+    for name in ROOTS:
         build_database(project.db(name), project.root(name))
     return project
 
