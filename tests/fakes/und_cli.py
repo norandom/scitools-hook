@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,6 @@ class FakeUndCli(UndCli):
 
     version_text: str = "(Build 1204)"
     license: LicenseStatus = field(default_factory=lambda: LicenseStatus(ok=True))
-    metrics: list[str] = field(default_factory=list)
     analyze_results: list[AnalyzeResult] = field(default_factory=list)
     violations_csv: Path | None = None
     calls: list[FakeCall] = field(default_factory=list)
@@ -81,11 +82,6 @@ class FakeUndCli(UndCli):
         if not self.analyze_results:
             return AnalyzeResult(seconds=0.0)
         return self.analyze_results.pop(0)
-
-    def list_metrics(self, db: Path) -> list[str]:
-        """Record the query and answer with the configured metric names."""
-        self.calls.append(FakeCall("list_metrics", {"db": db}))
-        return list(self.metrics)
 
     def codecheck(self, db: Path, config: str, files: list[Path], out_dir: Path) -> Path:
         """Record the run and answer with the configured violations CSV."""

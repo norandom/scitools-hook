@@ -58,11 +58,16 @@ from scitools_hook.models.snapshot import ProjectSnapshot
 from scitools_hook.understand.api_runner import ApiRunner
 from scitools_hook.understand.database import ARCH_FILE, DatabaseManager
 from scitools_hook.understand.snapshot import SnapshotExtractor, SnapshotTarget
-from scitools_hook.understand.und_cli import (
+from scitools_hook.understand.und_arch import (
     ArchNode,
-    UndCli,
     read_architecture,
     write_architecture,
+)
+from scitools_hook.understand.und_cli import (
+    UndCli,
+    _import_arch,
+    _list_arches,
+    _remove_arch,
 )
 
 pytestmark = pytest.mark.contract
@@ -238,7 +243,7 @@ def test_the_exported_directory_structure_is_the_schema(declared: Declared) -> N
 def test_a_declared_architecture_is_listed_beside_the_directory_structure(
     declared: Declared,
 ) -> None:
-    assert set(declared.cli.list_arches(declared.db)) >= {DIRECTORY_STRUCTURE, LAYERS}
+    assert set(_list_arches(declared.cli, declared.db)) >= {DIRECTORY_STRUCTURE, LAYERS}
 
 
 # --- the finding only a declared architecture can produce ------------------------
@@ -373,7 +378,7 @@ def test_an_imported_architecture_survives_a_whole_project_analysis(
     """``analyze -all`` is what every cold run and every fallback does."""
     declared.analyze("-all")
 
-    assert LAYERS in declared.cli.list_arches(declared.db)
+    assert LAYERS in _list_arches(declared.cli, declared.db)
     assert node_of(declared.snapshot(LAYERS))[STORE] == f"{LAYERS}/domain"
 
 
@@ -434,7 +439,7 @@ def test_an_architecture_imported_before_the_analysis_is_empty_and_stays_empty(
     assert cli.declare_architecture(db, early) == frozenset()
 
     assert run_und("-db", str(db), "analyze", "-all", "-errors", "-warnings").returncode == 0
-    assert LAYERS in cli.list_arches(db)
+    assert LAYERS in _list_arches(cli, db)
     assert set(cli.export_arch(db, LAYERS, tmp_path / "after.xml").paths()) == set()
 
 
@@ -613,7 +618,7 @@ def test_an_architecture_of_nothing_but_ghosts_still_imports(
     )
 
     assert declared.cli.declare_architecture(declared.db, ghost) == frozenset()
-    assert "AllGhosts" in declared.cli.list_arches(declared.db)
+    assert "AllGhosts" in _list_arches(declared.cli, declared.db)
 
 
 def test_a_malformed_document_is_refused_and_changes_nothing(
@@ -622,12 +627,12 @@ def test_a_malformed_document_is_refused_and_changes_nothing(
     """``und import -arch`` exits 1 on malformed XML; the wrapper turns that into an error."""
     broken = tmp_path / "broken.xml"
     broken.write_text('<arch name="Broken"><arch name="x">\n', encoding="utf-8")
-    before = set(declared.cli.list_arches(declared.db))
+    before = set(_list_arches(declared.cli, declared.db))
 
     with pytest.raises(AnalysisFailedError):
-        declared.cli.import_arch(declared.db, broken)
+        _import_arch(declared.cli, declared.db, broken)
 
-    assert set(declared.cli.list_arches(declared.db)) == before
+    assert set(_list_arches(declared.cli, declared.db)) == before
 
 
 def test_importing_under_the_built_in_name_merges_instead_of_replacing(
@@ -655,12 +660,12 @@ def test_importing_under_the_built_in_name_merges_instead_of_replacing(
     document = tmp_path / "intruder.xml"
     document.write_text(write_architecture(intruder), encoding="utf-8")
 
-    declared.cli.import_arch(declared.db, document)
+    _import_arch(declared.cli, declared.db, document)
 
     merged = declared.cli.export_arch(declared.db, DIRECTORY_STRUCTURE, tmp_path / "b.xml")
     assert "intruder" in {child.name for child in merged.children}
     assert set(merged.paths()) == before
-    declared.cli.remove_arch(declared.db, DIRECTORY_STRUCTURE)
+    _remove_arch(declared.cli, declared.db, DIRECTORY_STRUCTURE)
     reset = declared.cli.export_arch(declared.db, DIRECTORY_STRUCTURE, tmp_path / "c.xml")
     assert "intruder" not in {child.name for child in reset.children}
     assert {child.name for child in reset.children} == {child.name for child in folders.children}

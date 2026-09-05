@@ -71,7 +71,9 @@ from scitools_hook.understand.fake import (
     fixture_problem,
 )
 from scitools_hook.understand.locator import WORKER_PATH, discover, verify
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 PROBE_TIMEOUT_S: Final = 60
 """Ceiling for one probe: a ping that takes a minute is a broken installation, not a slow one."""

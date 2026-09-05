@@ -31,7 +31,9 @@ from scitools_hook.understand.fake import (
     fixture_env,
     fixture_problem,
 )
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 
 def write(directory: Path, name: str, document: object) -> Path:

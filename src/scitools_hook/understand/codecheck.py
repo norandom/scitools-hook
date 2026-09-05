@@ -220,7 +220,9 @@ from typing import Final
 
 from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.models.understand import RawViolation
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 NO_LINE: Final = 0
 """The line of a violation the CSV gives no usable line for.

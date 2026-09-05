@@ -89,32 +89,6 @@ Analyze Completed (Errors:2 Warnings:0)
 """
 """The C parser adds a column to the location line; ``ParseError`` has nowhere to put it."""
 
-METRICS_OUTPUT = """\
-
---------------------------Metric Settings--------------------------
-Option                          Current Setting  Available Settings
-  WriteColumnTitles              On              On/Off
-  Cyclomatic                     Normal          All/Normal/Strict/Modified/StrictModified
-
-Metrics (+ if selected):
-     AvgCountLine                            AvgCountLineBlank
-     CountDeclMethodAll                   +  CountLine
-  +  Cyclomatic                              MaxCyclomatic
-"""
-"""``und -db X list -metrics settings``: a settings table, then the two-column metric list."""
-
-METRICS_THEN_REPORTS = (
-    METRICS_OUTPUT
-    + """
-
---------------------------Report Settings--------------------------
-Option                          Current Setting  Available Settings
-  DisplayCreationDate            Off             On/Off
-"""
-)
-"""``list -all settings`` really does put another section under the metric list."""
-
-
 # --- the two recorded statuses, and the timing they are recorded with -------------
 
 
@@ -431,56 +405,6 @@ def test_analyze_keeps_reporting_parse_errors_rather_than_failing(
 # --- licence mapping across commands ---------------------------------------------
 
 
-# --- list -metrics settings -------------------------------------------------------
-
-
-def test_list_metrics_argv(stub: UndStub, log: RecordingLog, tmp_path: Path) -> None:
-    database = db_path(tmp_path)
-    stub.plan({"list": {"stdout": METRICS_OUTPUT}})
-    cli(stub, log).list_metrics(database)
-    assert stub.argv == ["-db", str(database), "list", "-metrics", "settings"]
-
-
-def test_list_metrics_reads_both_columns_and_drops_the_selected_marker(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    stub.plan({"list": {"stdout": METRICS_OUTPUT}})
-    assert cli(stub, log).list_metrics(db_path(tmp_path)) == [
-        "AvgCountLine",
-        "AvgCountLineBlank",
-        "CountDeclMethodAll",
-        "CountLine",
-        "Cyclomatic",
-        "MaxCyclomatic",
-    ]
-
-
-def test_list_metrics_ignores_the_settings_table_above_the_metric_list(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    """``WriteColumnTitles`` is a setting, not a metric, and reads like one if unguarded."""
-    stub.plan({"list": {"stdout": METRICS_OUTPUT}})
-    assert "WriteColumnTitles" not in cli(stub, log).list_metrics(db_path(tmp_path))
-
-
-def test_list_metrics_stops_where_the_metric_list_stops(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    """A section printed under the list must not be harvested as more metric names."""
-    stub.plan({"list": {"stdout": METRICS_THEN_REPORTS}})
-    found = cli(stub, log).list_metrics(db_path(tmp_path))
-    assert found[-1] == "MaxCyclomatic"
-    assert "DisplayCreationDate" not in found
-
-
-def test_list_metrics_rejects_an_error_reported_with_a_zero_status(
-    stub: UndStub, log: RecordingLog, tmp_path: Path
-) -> None:
-    stub.plan({"list": {"stdout": NO_COMMAND_OUTPUT, "rc": 0}})
-    with pytest.raises(AnalysisFailedError):
-        cli(stub, log).list_metrics(db_path(tmp_path))
-
-
 # --- the python every und call is given -------------------------------------------
 
 # `und` decides the Python dialect by EXECUTING a bare `python` off `PATH`, and analyses a
@@ -690,18 +614,19 @@ def test_every_command_is_recorded_with_its_argv_timing_and_status(
 ) -> None:
     """Requirement 12.8: ``--verbose`` prints each external command with its timing."""
     database = db_path(tmp_path)
-    stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}, "list": {"stdout": METRICS_OUTPUT}})
+    stub.plan({"analyze": {"stdout": ANALYZE_OUTPUT}, "version": {"stdout": VERSION_OUTPUT}})
     wrapper = cli(stub, log)
     wrapper.create(database, ["python"])
     wrapper.add(database, tmp_path / "work", [])
     wrapper.analyze(database, None, all=True)
-    wrapper.list_metrics(database)
+    wrapper.version()
     assert [argv[0] for argv, _, _ in log.entries] == [str(stub.path)] * 4
-    assert [argv[argv.index(str(database)) + 1] for argv, _, _ in log.entries] == [
+    switches = {"-db", "-quiet", str(database)}
+    assert [next(a for a in argv[1:] if a not in switches) for argv, _, _ in log.entries] == [
         "create",
         "add",
         "analyze",
-        "list",
+        "version",
     ]
     assert log.codes == [0, 0, 0, 0]
     # `> 0.0`, not `>= 0`: a `time.monotonic()` delta is non-negative by construction, so the
@@ -723,9 +648,9 @@ def test_the_recorded_duration_is_the_length_of_the_call_it_timed(
     fails any constant below 0.25 (``0.0`` included) and a span measured around the wrong
     call; the ceiling fails a clock *reading* recorded in place of a delta.
     """
-    stub.plan({"list": {"stdout": METRICS_OUTPUT, "sleep": SLOW_UND_SLEEP_S}})
+    stub.plan({"version": {"stdout": VERSION_OUTPUT, "sleep": SLOW_UND_SLEEP_S}})
 
-    cli(stub, log).list_metrics(db_path(tmp_path))
+    cli(stub, log).version()
 
     assert len(log.entries) == 1, "one command in, one line out"
     (_, seconds, rc) = log.entries[-1]
@@ -794,12 +719,10 @@ def test_fake_und_cli_falls_back_to_an_empty_result_when_none_are_left() -> None
 def test_fake_und_cli_answers_the_remaining_commands() -> None:
     fake = FakeUndCli(
         version_text="(Build 1204)",
-        metrics=["CountLine"],
         violations_csv=Path("violations.csv"),
     )
     assert fake.version() == "(Build 1204)"
     assert fake.license_status() == LicenseStatus(ok=True)
-    assert fake.list_metrics(Path("db.und")) == ["CountLine"]
     assert fake.codecheck(Path("db.und"), "Quick", [], Path("out")) == Path("violations.csv")
 
 
@@ -837,15 +760,6 @@ def test_contract_license_status_is_ok_on_a_licensed_machine(sample_databases: S
     status = UndCli(understand_env(sample_databases.und), _null_log()).license_status()
     assert status.ok is True
     assert status.text == ""
-
-
-@pytest.mark.contract
-def test_contract_list_metrics_offers_the_metrics_the_gate_relies_on(
-    sample_databases: SampleSet,
-) -> None:
-    wrapper = UndCli(understand_env(sample_databases.und), _null_log())
-    available = wrapper.list_metrics(sample_databases.after_db)
-    assert {"CountLineCode", "Cyclomatic", "MaxNesting"} <= set(available)
 
 
 def _null_log() -> CommandLog:

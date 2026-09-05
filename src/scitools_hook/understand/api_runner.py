@@ -64,7 +64,9 @@ from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand import worker
 from scitools_hook.understand.locator import WORKER_PATH
-from scitools_hook.understand.und_cli import LICENSE_HINT
+from scitools_hook.understand.und_cli import (
+    LICENSE_HINT,
+)
 
 Operation = Literal["ping", "catalogue", "archs", "snapshot", "impact", "graphs"]
 """The operations the worker answers; the same names, in the same order, as ``worker.OPS``."""

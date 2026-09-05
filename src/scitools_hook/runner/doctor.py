@@ -79,7 +79,12 @@ from scitools_hook.understand.locator import (
     pinned_python,
     verify,
 )
-from scitools_hook.understand.und_cli import DIRECTORY_STRUCTURE, UndCli
+from scitools_hook.understand.und_arch import (
+    DIRECTORY_STRUCTURE,
+)
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5
 # cannot parse a type-parameter list, and one such declaration costs the rest of the file

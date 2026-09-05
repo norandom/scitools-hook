@@ -55,7 +55,9 @@ from scitools_hook.runner.context import (
 )
 from scitools_hook.understand.catalogue import kind_string
 from scitools_hook.understand.fake import FAKE_VAR, FixtureApiRunner, FixtureUndCli
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 PYTHON = "Python"
 """The one configured language of the availability tests; matching is case-insensitive."""

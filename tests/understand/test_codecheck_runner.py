@@ -47,7 +47,10 @@ from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import RawViolation, UnderstandEnv
 from scitools_hook.understand import codecheck
 from scitools_hook.understand.codecheck import NO_LINE, CodeCheckRunner, read_violations
-from scitools_hook.understand.und_cli import VIOLATIONS_EXPORT, UndCli
+from scitools_hook.understand.und_cli import (
+    VIOLATIONS_EXPORT,
+    UndCli,
+)
 
 # --- reading one row -------------------------------------------------------------
 

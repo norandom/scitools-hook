@@ -26,7 +26,9 @@ import pytest
 
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import UnderstandEnv
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 # --- transcripts of the real und -----------------------------------------------
 

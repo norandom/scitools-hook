@@ -36,7 +36,9 @@ from contract_project import (
 from scitools_hook.errors import LicenseError
 from scitools_hook.models.progress import NullCommandLog
 from scitools_hook.understand.codecheck import CodeCheckRunner
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 pytestmark = pytest.mark.contract
 

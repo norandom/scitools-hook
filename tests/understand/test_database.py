@@ -54,7 +54,10 @@ from scitools_hook.understand.database import (
     NO_LANGUAGE_HINT,
     DatabaseManager,
 )
-from scitools_hook.understand.und_cli import ArchNode, write_architecture
+from scitools_hook.understand.und_arch import (
+    ArchNode,
+    write_architecture,
+)
 
 LEAKED_GIT_VARS = (
     "GIT_DIR",

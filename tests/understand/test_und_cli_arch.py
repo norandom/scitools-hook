@@ -22,11 +22,12 @@ from und_stub import (
 )
 
 from scitools_hook.errors import AnalysisFailedError
-from scitools_hook.understand.und_cli import (
+from scitools_hook.understand.und_arch import (
     ArchNode,
     read_architecture,
     write_architecture,
 )
+from scitools_hook.understand.und_cli import _import_arch, _list_arches, _remove_arch
 
 
 @pytest.fixture
@@ -193,13 +194,13 @@ def test_write_architecture_starts_with_the_doctype_understand_writes() -> None:
 def test_list_arches_reads_names_that_contain_spaces(stub: UndStub, log: RecordingLog) -> None:
     """``Directory Structure`` is one name; splitting the line on whitespace makes it two."""
     stub.plan({"list": {"stdout": ARCHES_OUTPUT}})
-    assert cli(stub, log).list_arches(db_path(stub.root)) == ["Directory Structure", "Layers"]
+    assert _list_arches(cli(stub, log), db_path(stub.root)) == ["Directory Structure", "Layers"]
 
 
 def test_list_arches_never_passes_quiet(stub: UndStub, log: RecordingLog) -> None:
     """``und -quiet list arches`` prints nothing at all and still exits 0 (measured)."""
     stub.plan({"list": {"stdout": ARCHES_OUTPUT}})
-    cli(stub, log).list_arches(db_path(stub.root))
+    _list_arches(cli(stub, log), db_path(stub.root))
     assert "-quiet" not in stub.argv
     assert stub.argv[-2:] == ["list", "arches"]
 
@@ -208,7 +209,7 @@ def test_list_arches_refuses_an_empty_answer(stub: UndStub, log: RecordingLog) -
     """Every database holds ``Directory Structure``, so silence is a broken install."""
     stub.plan({"list": {"stdout": "", "rc": 0}})
     with pytest.raises(AnalysisFailedError) as caught:
-        cli(stub, log).list_arches(db_path(stub.root))
+        _list_arches(cli(stub, log), db_path(stub.root))
     assert "Directory Structure" in str(caught.value)
 
 
@@ -216,7 +217,7 @@ def test_import_arch_names_the_document(stub: UndStub, log: RecordingLog) -> Non
     stub.plan({"import": {"stdout": IMPORT_OK}})
     document = stub.root / "arch.xml"
     document.write_text(write_architecture(a_tree("a.py")), encoding="utf-8")
-    cli(stub, log).import_arch(db_path(stub.root), document)
+    _import_arch(cli(stub, log), db_path(stub.root), document)
     assert stub.argv[-3:] == ["import", "-arch", str(document)]
 
 
@@ -225,7 +226,7 @@ def test_import_arch_maps_a_malformed_document_to_a_typed_failure(
 ) -> None:
     stub.plan({"import": {"stdout": IMPORT_MALFORMED, "rc": 1}})
     with pytest.raises(AnalysisFailedError) as caught:
-        cli(stub, log).import_arch(db_path(stub.root), stub.root / "arch.xml")
+        _import_arch(cli(stub, log), db_path(stub.root), stub.root / "arch.xml")
     assert "exit status 1" in str(caught.value)
 
 
@@ -235,13 +236,13 @@ def test_import_arch_refuses_an_error_reported_with_a_zero_status(
     """The status is the signal, but an ``Error:`` line at status 0 is still not a success."""
     stub.plan({"import": {"stdout": IMPORT_DUPLICATE, "rc": 0}})
     with pytest.raises(AnalysisFailedError) as caught:
-        cli(stub, log).import_arch(db_path(stub.root), stub.root / "arch.xml")
+        _import_arch(cli(stub, log), db_path(stub.root), stub.root / "arch.xml")
     assert "duplicate name" in str(caught.value)
 
 
 def test_remove_arch_is_quiet_and_names_the_architecture(stub: UndStub, log: RecordingLog) -> None:
     stub.plan({"remove": {}})
-    cli(stub, log).remove_arch(db_path(stub.root), "Layers")
+    _remove_arch(cli(stub, log), db_path(stub.root), "Layers")
     assert stub.argv[0] == "-quiet"
     assert stub.argv[-3:] == ["remove", "-arch", "Layers"]
 
@@ -252,7 +253,7 @@ def test_remove_arch_fails_on_an_architecture_the_database_does_not_hold(
     """Measured: status 1. This is why ``declare_architecture`` asks ``list arches`` first."""
     stub.plan({"remove": {"stdout": REMOVE_UNKNOWN, "rc": 1}})
     with pytest.raises(AnalysisFailedError):
-        cli(stub, log).remove_arch(db_path(stub.root), "Layers")
+        _remove_arch(cli(stub, log), db_path(stub.root), "Layers")
 
 
 def test_export_arch_resolves_members_against_the_directory_holding_the_database(

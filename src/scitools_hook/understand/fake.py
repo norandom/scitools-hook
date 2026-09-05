@@ -50,7 +50,9 @@ from scitools_hook.models.snapshot import Side
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
 from scitools_hook.paths import classify_directory, classify_file
 from scitools_hook.understand.api_runner import ApiRunner, Operation
-from scitools_hook.understand.und_cli import UndCli
+from scitools_hook.understand.und_cli import (
+    UndCli,
+)
 
 FAKE_VAR: Final = "SCITOOLS_HOOK_FAKE_UNDERSTAND"
 """The environment variable that turns the seam on; its value is the fixture directory."""
@@ -263,10 +265,6 @@ class FixtureUndCli(UndCli):
             return AnalyzeResult.model_validate(_read_document([path], "analyze"))
         except ValidationError as invalid:
             raise _unusable(f"{path} is not an analysis result", str(invalid)) from invalid
-
-    def list_metrics(self, db: Path) -> list[str]:
-        """The seam ships no metric list; the catalogue operation is the one that answers."""
-        return []
 
     def codecheck(self, db: Path, config: str, files: list[Path], out_dir: Path) -> Path:
         """The fixture violations CSV; its absence is a failure, never "no violations".

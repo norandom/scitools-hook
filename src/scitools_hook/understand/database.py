@@ -109,13 +109,15 @@ from scitools_hook.paths import classify_directory, classify_file
 # for one format: a second copy here would be a second thing to keep in step with the
 # binary.
 from scitools_hook.understand.codecheck import unusable_list_file_name
-from scitools_hook.understand.und_cli import (
+from scitools_hook.understand.und_arch import (
     ARCH_HINT,
     DIRECTORY_STRUCTURE,
     ArchNode,
-    UndCli,
     read_architecture,
     write_architecture,
+)
+from scitools_hook.understand.und_cli import (
+    UndCli,
 )
 
 # Written as an explicit ``TypeVar`` rather than PEP 695 ``[T]`` syntax: Understand 6.5

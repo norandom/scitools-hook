@@ -27,7 +27,9 @@ from und_stub import (
 
 from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.models.understand import LicenseStatus
-from scitools_hook.understand.und_cli import LICENSE_TEXT
+from scitools_hook.understand.und_cli import (
+    LICENSE_TEXT,
+)
 
 
 @pytest.fixture
