@@ -70,7 +70,7 @@
   - _Requirements: 1.2, 1.3, 4.2_
 
 - [ ] 3. Understand's SARIF beside the Gate's
-- [ ] 3.1 (P) Copy and re-root Understand's SARIF beside the Gate's
+- [x] 3.1 (P) Copy and re-root Understand's SARIF beside the Gate's
   - Takes the analysis document and, when present, the CodeCheck results document; rewrites the project base URI to the repository root; writes each beside the Gate's file under a distinguishable name; a missing or unparsable source becomes a reported problem, never an exception
   - Done when a synthetic document in the measured shape is re-rooted and written, its results still parse as SARIF 2.1.0 with the repository path, and a missing source yields a problem entry
   - _Requirements: 2.1, 2.4_
@@ -255,3 +255,5 @@
 - 2.3: `structure.architecture` is refused only when the name is neither `Directory Structure` nor supplied by a declaration file in the repository -- then it must be one the build can generate. That also catches a plain misspelling at configuration time instead of as und's "architecture not found" after two analyses have run.
 - 2.3: `seed_features(repo_path, env, build, **states)` in `doctor_stubs.py` writes a record as `doctor` would, every feature available unless named otherwise. Any later test that enables one of these keys needs it, or it fails closed on a missing record -- correct behaviour, useless to re-prove per test.
 - 2.3: the module was split in two because `structure.new_dependencies` counted 11 against a limit of 7 -- the pure decision tests and the two `build_context` wiring tests import almost disjoint sets. The rule over-counts by about two for any file importing across this package (recorded in `scitools-hook.toml`), so a test module has room for roughly five real imports.
+- 3.1 (**measured, and the design did not know it**): Understand's SARIF names files relative to *the directory containing the .und*, not to the analysis root. The Gate's database sits beside its shadow tree, so the base is a cache directory and **every artifact path begins with the shadow's own segment** (`after/src/a.py`). Re-rooting the base alone would leave every result pointing at a file no repository has. The companion therefore does two things: base -> repository root, and `<segment>/` off the front of each path -- the same normalisation `SyncState.record_parse_errors` already does for parse errors. `companions()` needs the shadow path for that, which the design's four-argument signature had no room for.
+- 3.1: the path rewrite walks the document rather than the `artifacts` table alone, because a path can appear in the table, in a result's physical location and in a fix's; a document that grows a fourth place should not silently keep the shadow in it.
