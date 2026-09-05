@@ -117,7 +117,7 @@
   - _Requirements: 3.2, 5.5_
 
 - [ ] 5. Generated architectures
-- [ ] 5.1 Measure whether a shadow-tree database can generate a git architecture, and decide the after-side route
+- [x] 5.1 Measure whether a shadow-tree database can generate a git architecture, and decide the after-side route
   - Record the repository directory on the contract project's shadow-built after database and generate `Git Stability`; record in the research log whether the export holds the project's files, and the decision: the shadow database is the route if it does, otherwise 5.2 provides the fallback and the modes that cannot generate are named
   - Done when the research log carries the measurement, the exported member count, and the decision
   - _Depends: 1.7, 1.6, 1.4_
@@ -289,3 +289,4 @@
 - 4.4 (**measured, requirement 3.2 satisfied**): two runs of the installed console script over one repository, each with its own cache, one per route: **8 findings each, identical** in rule, path, value, before, limit, severity, blocking, pre-existing and entity. `tests/contract/test_before_routes_contract.py` is that comparison, plus the two `und`-level facts it rests on.
 - 4.4: giving up `-refdb` costs the comparison pair, and that is free. Measured: the pair is registered on the **reference** (`reference.comparison_db()` answers the derived database, the derived one answers `None`), and no metric on 1262 reads it -- 108 ids across file, function, class and project kinds, none of them a comparison metric. It also costs file-set parity: the before side is now the repository under `und -exclude` rather than the shadow under `project.include`/`exclude`. **That is operator-visible and task 10.2 now names it.**
 - 4.4: `_und_exclusions` moved from `database.py` to `und_cli.und_exclusions` -- it is a fact about what `und -exclude` honours, and both the manager and the commit route need it without a cycle between them.
+- 5.1 (**measured, and the answer is no**): the Gate's own shadow-built after database exports **0** members for `Git Stability` while exporting **260** for `Directory Structure`, with `GitRepositoryDirectory` set to the repository. A repo-rooted commit-built database of the same HEAD exports **99**, and exports the same 99 with the setting *unset* -- so `-gitrepo` at create time is what the git plugin reads. The failure is the same shape as task 4.4's: the plugin runs `git log` and matches its output to file paths, and a shadow tree's paths are not paths git knows. **Decision: task 5.2's fallback is required**, and `--staged` and `--worktree` have no commit to build one from.

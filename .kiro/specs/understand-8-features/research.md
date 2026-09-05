@@ -118,6 +118,36 @@ identical in rule, path, value, before, limit, severity, blocking, pre-existing 
   - The git plugins run `git log` in the repository the database knows; a shadow tree is not a checkout.
 - **Implications**: A generated architecture is declared through the same `structure.architecture` key; the Gate generates it on the after database after analysis, with `GitRepositoryDirectory` pointing at the repository (set through `und settings`, verified by a task, or through the commit-built route for the before side), and refuses an export with zero members as "generated empty", naming the likely cause. Regeneration is skipped while the repository head and the after tree id are unchanged (recorded in the sync state). Nodes flow into the existing architecture plumbing unchanged: a generated architecture is exported and read back like a declared one.
 
+### A shadow-built database cannot generate a git architecture (task 5.1, requirement 4.3)
+
+**Measured on Build 1262 against this repository**, with the Gate's own cache built by
+`check --all` and then asked directly:
+
+| database | rooted at | `GitRepositoryDirectory` | `Git Stability` members | `Directory Structure` members |
+| --- | --- | --- | --- | --- |
+| the Gate's after database | the shadow tree | set to the repository | **0** (`<arch name="Git Stability"></arch>`, 51 bytes) | 260 |
+| `create -gitrepo <repo> -gitcommit HEAD` + `add src` | the repository | set | **99** (7 670 bytes) | -- |
+| the same, without the setting | the repository | **not set** | **99** (identical export) | -- |
+
+Three things follow, and the third is the decision.
+
+1. **It is the git plugin, not the architecture machinery.** `Directory Structure` exports 260
+   members from the very database that exports zero for `Git Stability`, and `arch -generate`
+   prints `Git Stability: generated` either way. The plugin runs `git log` in the repository
+   and matches its output to the database's file paths; a shadow tree's paths are not paths
+   git has ever heard of. This is the same shape as the `-gitcommit` finding above, one
+   command over.
+2. **`-gitrepo` at create time is what the plugin reads, not the setting.** The commit-built
+   database generates the same 99 members with `GitRepositoryDirectory` unset. The setting is
+   still recorded by the route, because it is what `und` itself documents and because a
+   database created without `-gitrepo` has no other way to be told.
+3. **Decision: the shadow database is not the route.** Task 5.2's fallback is required -- a
+   git-derived architecture is generated on a **commit-built database of the after side's
+   commit**, which exists for a range check and for any commit target and does not exist for
+   `--staged` or `--worktree`. Those two must say so rather than evaluate against an empty
+   architecture, which would place every file in no bucket and quietly answer that nothing
+   crosses a layer.
+
 ### The 8.0 metrics (requirement 5)
 - **Context**: Why does the catalogue not list them, and what do they cost?
 - **Sources Consulted**: the worker's `catalogue` op under `upython`; `plugins/Metric/{objects,bidirectional_deps,cbri_metrics,cognitive_complexity}.upy`; `docs/html/python/metric.html`; an API probe on `repo.und` (1254 project routines).
