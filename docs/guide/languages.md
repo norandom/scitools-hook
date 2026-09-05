@@ -12,7 +12,9 @@ TypeScript. A CodeQL query pack has to be written per language and per vulnerabi
 
 ## What Understand build 1204 accepts
 
-Twelve languages, 58 file extensions.
+Twelve languages, 58 file extensions. Build 1262 (8.0) accepts the same twelve plus Rust,
+which needs a Cargo project and is not in the tool's table yet; see
+[Understand 8.0](../reference/understand-8.md#languages).
 
 | Language | Extensions |
 | --- | --- |

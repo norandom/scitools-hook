@@ -1,7 +1,8 @@
 # Quickstart
 
 Everything on this page is real output from `scitools-hook 0.1.0a1` against Understand
-6.5.1204 (Build 1204). You can reproduce all of it.
+6.5.1204 (Build 1204). You can reproduce all of it; the same commands run unchanged on 8.0
+(Build 1262), where the tool is measured now.
 
 ## Build a repository to try it on
 

@@ -62,9 +62,10 @@ are right.
 
 The two tools are not merely complementary. One of them can create work the other cannot
 see: `ruff`'s `UP047` rewrites a `TypeVar` into PEP 695 `def f[T](x)` syntax, which
-Understand 6.5 cannot parse. The parse aborts at the declaration and the rest of the file
-silently leaves the database. That is documented, with the measurement, in
-[What this adds beyond ruff and mypy](compare/linters.md).
+Understand before 7.2 could not parse. The parse aborted at the declaration and the rest of
+the file silently left the database. That is documented, with the measurement, in
+[What this adds beyond ruff and mypy](compare/linters.md); 8.0 reads it, and the file that
+no build reads is still one construct away, so the defence stays.
 
 [Compare against CodeQL, Semgrep, LOC tools and import-graph tools &rarr;](compare/tools.md)
 
@@ -88,8 +89,9 @@ against the median for the project. If there is no relationship, stop reading.
 ## It is written in Python. It does not only check Python
 
 The tool is packaged as a Python project and installed with `uv`. That is the implementation
-language, not the coverage. The analysis is Understand's, and Understand build 1204 accepts
-**twelve languages across 58 file extensions**:
+language, not the coverage. The analysis is Understand's, and Understand accepts
+**twelve languages across 58 file extensions** (build 1204; build 1262 adds Rust for Cargo
+projects, see [Understand 8.0](reference/understand-8.md)):
 
 ```text
 Ada       .a .ada .adb .ads .gpr
@@ -164,8 +166,10 @@ for why this distinction was a live defect rather than a documentation nicety.
 
 ## Requirements
 
-An existing SciTools Understand installation, version 6.5 or later, with a licence. The tool
-never installs Understand and never bundles it.
+An existing SciTools Understand installation, version 6.5 or later, with a licence. 8.0
+(Build 1262) is the version the tool is measured on now; see
+[Understand 8.0](reference/understand-8.md) for what changed. The tool never installs
+Understand and never bundles it.
 
 !!! warning "The PyPI package named `understand` is not SciTools Understand"
 

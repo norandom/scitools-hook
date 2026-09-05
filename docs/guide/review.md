@@ -142,8 +142,8 @@ Understand rendered it:
 size of one you would actually review, this is the picture that tells you whether a change
 sits at a leaf or in the middle of everything.
 
-Two kinds are exported, and only two, because they are the two Understand 6.5 will actually
-render for the entities in question:
+Two kinds are exported, and only two, because they are the two Understand will actually
+render for the entities in question (measured on 6.5 and again on 8.0):
 
 | Kind | Drawn for |
 | --- | --- |
