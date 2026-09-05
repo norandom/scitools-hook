@@ -10,7 +10,8 @@ green again.
 So the tests here measure the boundary of enrolment (symlinks), the signal that says a
 selection was refused (the exit status, **not** the ``Errors:0`` banner), and the real cost of
 a parse error. The CodeCheck test is the third silent-empty shape: an output directory with no
-CSV in it must never be read as "no violations".
+report in it -- no CSV on 6.5, no ``results.sarif`` on 8.0 -- must never be read as "no
+violations".
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from contract_project import (
 from scitools_hook.errors import LicenseError
 from scitools_hook.models.progress import NullCommandLog
 from scitools_hook.understand.codecheck import CodeCheckRunner
+from scitools_hook.understand.codecheck_sarif import RESULTS_SARIF
 from scitools_hook.understand.und_cli import (
     ALL,
     UndCli,
@@ -365,12 +367,18 @@ def test_codecheck_reports_violations_or_refuses_but_never_answers_silently_noth
         violations = runner.run(db, CODECHECK_CONFIG, files, out_dir)
     except LicenseError as unlicensed:
         assert "CodeCheck" in unlicensed.und_output, unlicensed.und_output
-        assert list(out_dir.glob("*.csv")) == [], (
-            "an unlicensed run wrote a CSV, so the refusal is not what it looks like"
+        assert sorted(path.name for path in out_dir.iterdir()) == [], (
+            "an unlicensed run wrote a report, so the refusal is not what it looks like"
         )
         return
 
-    assert list(out_dir.glob("*.csv")), "a licensed run must have written the export"
+    # Which report a licensed run leaves depends on the build: 6.5 writes the per-violation
+    # CSV, 8.0 writes results.sarif and drops those exports (requirement 2.3). Either is an
+    # answer; an empty directory is the third outcome this test exists to refuse.
+    assert list(out_dir.glob("*.csv")) or (out_dir / RESULTS_SARIF).is_file(), (
+        f"a licensed run must have written a report; it wrote "
+        f"{sorted(path.name for path in out_dir.iterdir())}"
+    )
     for violation in violations:
         assert violation.check_id
         assert violation.path in files

@@ -24,6 +24,7 @@ from und_stub import (
 )
 
 from scitools_hook.errors import AnalysisFailedError
+from scitools_hook.understand.codecheck_sarif import RESULTS_SARIF
 from scitools_hook.understand.und_cli import (
     CONFIG_HINT,
     EXPORT_PREFIX,
@@ -78,6 +79,51 @@ def test_codecheck_returns_the_csv_it_found(
     stub.plan({"codecheck": {"write": {f"{VIOLATIONS_EXPORT}.csv": "Check ID,File\n"}}})
     found = cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], out_dir)
     assert found == out_dir / f"{VIOLATIONS_EXPORT}.csv"
+
+
+def test_codecheck_returns_the_sarif_when_the_build_wrote_one(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """8.0 writes ``results.sarif`` every run; the CSV the 6.5 reader wants is gone."""
+    out_dir = tmp_path / "cc"
+    stub.plan({"codecheck": {"write": {RESULTS_SARIF: '{"runs": []}'}}})
+    found = cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], out_dir)
+    assert found == out_dir / RESULTS_SARIF
+
+
+def test_codecheck_prefers_the_sarif_over_the_plugin_csv_beside_it(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """8.0's default install writes both, and the plugin's CSV is not the 6.5 export.
+
+    ``CodeCheckResultsByTable.csv`` begins with :data:`EXPORT_PREFIX`, so as the only CSV in
+    the directory it would be taken for one of CodeCheck's own exports and read with columns
+    it does not have. The SARIF is the documented report and wins before that can happen.
+    """
+    out_dir = tmp_path / "cc"
+    stub.plan(
+        {
+            "codecheck": {
+                "write": {
+                    RESULTS_SARIF: '{"runs": []}',
+                    "CodeCheckResultsByTable.csv": "File,Violation\n",
+                }
+            }
+        }
+    )
+    found = cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], out_dir)
+    assert found == out_dir / RESULTS_SARIF
+
+
+def test_codecheck_still_refuses_an_output_directory_holding_neither(
+    stub: UndStub, log: RecordingLog, tmp_path: Path
+) -> None:
+    """A run that wrote no report at all is a failed run, not an inspection that found none."""
+    out_dir = tmp_path / "cc"
+    stub.plan({"codecheck": {"write": {"notes.txt": "nothing was checked\n"}}})
+    with pytest.raises(AnalysisFailedError) as caught:
+        cli(stub, log).codecheck(db_path(tmp_path), "Quick", [tmp_path / "a.py"], out_dir)
+    assert "no csv file" in str(caught.value)
 
 
 def test_codecheck_picks_the_per_violation_export_not_the_alphabetically_first(

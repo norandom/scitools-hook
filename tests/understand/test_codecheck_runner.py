@@ -20,6 +20,7 @@ which maps these records onto findings) already owns that name.
 from __future__ import annotations
 
 import csv
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,11 +47,63 @@ from scitools_hook.errors import AnalysisFailedError, LicenseError
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import RawViolation, UnderstandEnv
 from scitools_hook.understand import codecheck
-from scitools_hook.understand.codecheck import NO_LINE, CodeCheckRunner, read_violations
+from scitools_hook.understand.codecheck import (
+    NO_LINE,
+    CodeCheckRunner,
+    read_report,
+    read_violations,
+)
+from scitools_hook.understand.codecheck_sarif import RESULTS_SARIF
 from scitools_hook.understand.und_cli import (
     VIOLATIONS_EXPORT,
     UndCli,
 )
+
+INSPECTION: dict[str, object] = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {
+                "driver": {
+                    "name": "CodeCheck",
+                    "rules": [{"id": "CPP_F022", "name": "Cyclomatic Complexity"}],
+                }
+            },
+            "artifacts": [{"location": {"uri": "src/app.py"}}],
+            "results": [
+                {
+                    "ruleId": "CPP_F022",
+                    "message": {"text": "Function main is too complex"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"index": 0},
+                                "region": {"startLine": 42, "startColumn": 7},
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+}
+"""One violation, as ``und codecheck`` on 8.0 is documented to report it."""
+
+
+def write_sarif(base: Path) -> Path:
+    """One synthetic ``results.sarif``, in the shape 8.0 is documented to write it.
+
+    Synthetic and not measured, for the reason ``understand/codecheck_sarif.py`` records: the
+    licence here excludes CodeCheck. The mapping itself is covered by
+    ``tests/understand/test_codecheck_sarif.py``; this one only has to be readable, so that
+    the runner's *choice* of reader is what the assertion is about.
+    """
+    out_dir = base / "sarif"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = out_dir / RESULTS_SARIF
+    written.write_text(json.dumps(INSPECTION), encoding="utf-8")
+    return written
+
 
 # --- reading one row -------------------------------------------------------------
 
@@ -377,6 +430,30 @@ def test_run_returns_the_violations_from_the_csv_und_wrote(tmp_path: Path) -> No
     fake = FakeUndCli(violations_csv=write_csv(tmp_path, f"{SMALL_HEADER}\n{row}\n"))
     found = CodeCheckRunner(fake).run(tmp_path / "a.und", "Recommended", ["/src/app.py"], tmp_path)
     assert only(found).check_id == "R_01"
+
+
+def test_run_returns_the_violations_from_the_sarif_when_that_is_what_und_wrote(
+    tmp_path: Path,
+) -> None:
+    """Requirement 2.3: 8.0 writes ``results.sarif`` and no per-violation CSV.
+
+    The wrapper hands back whichever report the build wrote and the runner reads it. Nothing
+    downstream is told which one it was, which is the point -- ``map_violations`` sees the
+    same records either way.
+    """
+    fake = FakeUndCli(violations_csv=write_sarif(tmp_path))
+    found = CodeCheckRunner(fake).run(tmp_path / "a.und", "Recommended", ["/src/app.py"], tmp_path)
+    assert only(found).check_id == "CPP_F022"
+    assert only(found).path == "src/app.py"
+
+
+def test_the_report_is_chosen_by_the_name_und_writes_and_not_by_a_suffix(
+    tmp_path: Path,
+) -> None:
+    """``results.sarif`` is measured; a ``.sarif`` suffix on anything else is a convention."""
+    row = "R_01,Rule,/src/app.py,42,7,main,too complex"
+    assert only(read_report(write_csv(tmp_path, f"{SMALL_HEADER}\n{row}\n"))).check_id == "R_01"
+    assert only(read_report(write_sarif(tmp_path))).check_id == "CPP_F022"
 
 
 def test_run_refuses_an_empty_name_in_the_file_list(tmp_path: Path) -> None:

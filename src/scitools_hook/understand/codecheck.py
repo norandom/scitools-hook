@@ -219,19 +219,11 @@ from pathlib import Path
 from typing import Final
 
 from scitools_hook.errors import AnalysisFailedError
-from scitools_hook.models.understand import RawViolation
+from scitools_hook.models.understand import NO_LINE, RawViolation
+from scitools_hook.understand.codecheck_sarif import RESULTS_SARIF, read_sarif_violations
 from scitools_hook.understand.und_cli import (
     UndCli,
 )
-
-NO_LINE: Final = 0
-"""The line of a violation the CSV gives no usable line for.
-
-Zero, not ``None`` and not one: it is Understand's own value for a check that reports
-against a file rather than a position (``check.violation(ent, ent, 0, 0, …)``), and
-``analysis.codecheck`` reads ``line > 0`` to decide whether a finding has a line at all.
-A different value here would silently place every file-level violation on a real line.
-"""
 
 COLUMN_NAMES: Final[Mapping[str, tuple[str, ...]]] = {
     "check_id": ("checkid",),
@@ -361,7 +353,31 @@ class CodeCheckRunner:
                     hint=_INBOUND_HINT,
                 )
         written = self._cli.codecheck(db_path, config, [Path(name) for name in files], out_dir)
-        return read_violations(written)
+        return read_report(written)
+
+
+def read_report(written: Path) -> list[RawViolation]:
+    """The violations of a finished inspection, from whichever report the build wrote (2.3).
+
+    Understand 8.0 writes ``results.sarif`` into the output directory every time and no
+    longer carries the three CSV exports :func:`read_violations` reads by name -- measured,
+    their compiled strings are gone from ``und`` -- so the wrapper hands back the SARIF where
+    there is one and the per-violation CSV where there is not. Both readers produce the same
+    :class:`~scitools_hook.models.understand.RawViolation`, so nothing downstream learns that
+    a build changed.
+
+    Decided by the file's own name rather than by its suffix, because a suffix is a
+    convention and :data:`~scitools_hook.understand.codecheck_sarif.RESULTS_SARIF` is a
+    measured fact about what ``und codecheck`` writes.
+
+    Where the SARIF itself has to be *copied* rather than read -- requirement 2.1's companion
+    upload -- the caller asks
+    :func:`~scitools_hook.understand.codecheck_sarif.find_results` for the same file, while
+    the output directory still exists.
+    """
+    if written.name.casefold() == RESULTS_SARIF.casefold():
+        return read_sarif_violations(written)
+    return read_violations(written)
 
 
 def unusable_list_file_name(name: str) -> str | None:

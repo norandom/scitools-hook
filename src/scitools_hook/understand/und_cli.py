@@ -78,6 +78,7 @@ from scitools_hook.exit_codes import MISSING_RC, TIMEOUT_RC
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.snapshot import ParseError
 from scitools_hook.models.understand import AnalyzeResult, LicenseStatus, UnderstandEnv
+from scitools_hook.understand.codecheck_sarif import find_results
 from scitools_hook.understand.locator import pinned_python
 from scitools_hook.understand.und_arch import (
     ARCH_HINT,
@@ -379,10 +380,15 @@ class UndCli:
             return frozenset(imported.paths())
 
     def codecheck(self, db: Path, config: str, files: list[Path], out_dir: Path) -> Path:
-        """Run CodeCheck over ``files`` and return the violations CSV it wrote (req 6.9).
+        """Run CodeCheck over ``files`` and return the report it wrote (req 6.9, 2.3).
 
         ``config`` is a configuration name held in the project or the path of an exported
-        one, and the two positional arguments follow every switch. Which CSV comes back is
+        one, and the two positional arguments follow every switch.
+
+        **Which report comes back depends on the build.** 8.0 writes ``results.sarif`` and
+        drops the per-violation CSV, so that file wins where it is there; 6.5 writes CSVs
+        only. Both are read by :func:`~scitools_hook.understand.codecheck.read_report`, which
+        answers the same records either way. Which CSV comes back is
         decided by name — :data:`VIOLATIONS_EXPORT` — because ``codecheck`` writes several
         and they are not interchangeable; ``-violations``, ``-coverage`` and ``-ignores``
         each add more. An output directory holding no CSV at all is a failure rather than
@@ -396,6 +402,9 @@ class UndCli:
         with _list_file(files) as listing:
             result = self.run(["codecheck", "-files", str(listing), config, str(out_dir)], db=db)
         _reject_failure(result)
+        results = find_results(out_dir)
+        if results is not None:
+            return results
         found = _csv_files(out_dir)
         if not found:
             raise AnalysisFailedError(

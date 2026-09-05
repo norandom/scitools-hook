@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field, field_serializer, field_validator
 
@@ -144,6 +144,20 @@ class RawViolation(DataModel):
     column: int | None = None
     message: str
     entity: str | None = None
+
+
+NO_LINE: Final = 0
+"""The line a violation carries when its report gives no usable one.
+
+Zero, not ``None`` and not one: it is Understand's own value for a check that reports
+against a file rather than a position (``check.violation(ent, ent, 0, 0, ...)``), and
+``analysis.codecheck`` reads ``line > 0`` to decide whether a finding has a line at all.
+A different value here would silently place every file-level violation on a real line.
+
+It lives beside :class:`RawViolation` rather than in the CSV reader because two readers
+now produce that record -- the CSV one for 6.5 and the SARIF one for 8.0 -- and a sentinel
+owned by one of them would have to be imported by the other.
+"""
 
 
 class ExtractRequest(DataModel):
