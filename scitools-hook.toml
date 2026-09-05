@@ -124,3 +124,21 @@ CountDeclClass = false
 CountClassDerived = false
 
 
+
+[scope.api_fakes]
+# tests/understand/api_fakes.py is a stand-in for the `understand` module: one class per API
+# type the worker reads (Ent, Ref, Kind, Arch, Db, the module itself, its exception, and
+# `Metric` in its 7.x and 8.0 shapes), each with the methods the worker calls and no others.
+# Its counts are the API's counts. `FakeEnt` has 16 methods because `understand.Ent` has
+# those 16 the worker uses; a split would put half an entity in each file. The classes lived
+# in test_worker.py until 0.1.0a7, where the ratchet carried them; moving them made every
+# one "new" to the gate, since an entity's key includes its file.
+# Measured 2026-09-05: 11 classes, 477 lines; FakeEnt 16 methods, FakeArch 7, FakeDb 7.
+paths = ["tests/understand/api_fakes.py"]
+
+[scope.api_fakes.thresholds.file]
+CountDeclClass = false
+
+[scope.api_fakes.thresholds.class]
+CountDeclMethod = { max = 25 }
+CountDeclMethodNonStub = { max = 25 }

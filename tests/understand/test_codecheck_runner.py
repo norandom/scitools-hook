@@ -1502,17 +1502,13 @@ NO_CSV_EXPORTS = (
     "excludes CodeCheck, so the 8.0 output is unmeasured and the integration is not adapted "
     "to it yet."
 )
-"""Why the CodeCheck contract cannot be checked on 8.0 yet -- an expected failure, not a skip."""
+"""Why the CodeCheck contract cannot be checked on 8.0 yet.
 
-
-def require_csv_exports(und: Path) -> None:
-    """Expected-fail on a build whose ``und`` no longer carries the CSV export this reads.
-
-    An xfail rather than a skip so the suite keeps saying, run after run, that the contract is
-    open on this build; a skip would read as "nothing to check here".
-    """
-    if VIOLATIONS_EXPORT.encode() not in und.read_bytes():
-        pytest.xfail(NO_CSV_EXPORTS)
+An expected failure rather than a skip, so the suite keeps saying, run after run, that the
+contract is open on this build; a skip would read as "nothing to check here". The condition
+is the one fact both sites can read without a CodeCheck licence: whether ``und`` still
+carries the name of the export this package looks for.
+"""
 
 
 class SampleSet(Protocol):
@@ -1548,7 +1544,8 @@ def codecheck_run(
     saying the license is missing skips. On a machine that carries the CodeCheck license the
     same call runs for real and the tests below assert on its output.
     """
-    require_csv_exports(sample_databases.und)
+    if VIOLATIONS_EXPORT.encode() not in sample_databases.und.read_bytes():
+        pytest.xfail(NO_CSV_EXPORTS)
     runner = CodeCheckRunner(UndCli(understand_env(sample_databases.und), _null_log()))
     out_dir = tmp_path_factory.mktemp("codecheck")
     config = os.environ.get(CONFIGURATION_VARIABLE, DEFAULT_CONFIGURATION)
@@ -1615,8 +1612,9 @@ def test_contract_the_fixture_headers_and_export_names_are_compiled_into_und(
     hard-codes, and both are readable straight out of the executable without a CodeCheck
     license — so neither has any excuse to be asserted against itself.
     """
-    require_csv_exports(sample_databases.und)
     executable = sample_databases.und.read_bytes()
+    if VIOLATIONS_EXPORT.encode() not in executable:
+        pytest.xfail(NO_CSV_EXPORTS)
     borrowed = (
         VIOLATION_HEADER,
         FILES_TREE_HEADER,
