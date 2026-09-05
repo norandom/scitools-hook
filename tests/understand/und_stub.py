@@ -22,6 +22,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from scitools_hook.models.progress import CommandLog
 from scitools_hook.models.understand import UnderstandEnv
 from scitools_hook.understand.und_cli import UndCli
@@ -243,3 +245,15 @@ def cli(stub: UndStub, log: CommandLog, timeout_s: int = 900) -> UndCli:
 def db_path(tmp_path: Path) -> Path:
     """A database path; a ``.und`` database is a directory, so nothing is created here."""
     return tmp_path / "cache" / "after.und"
+
+
+def assume_unsorted_readdir(directory: Path) -> None:
+    """Assert there is something for sorting to do before pinning a sorted message.
+
+    The filesystem decides what order ``iterdir`` hands entries back in. Where that order is
+    already alphabetical there is nothing an unsorted implementation could get wrong, and a
+    test claiming otherwise would be claiming more than it checked.
+    """
+    listed = [path.name for path in directory.iterdir()]
+    if listed == sorted(listed):
+        pytest.skip(f"this filesystem lists {directory} already sorted; nothing to pin")
