@@ -68,7 +68,7 @@ did not install.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/norandom/scitools-hook
-    rev: v0.1.0a6
+    rev: v0.1.0a7
     hooks:
       - id: scitools-hook
 ```
