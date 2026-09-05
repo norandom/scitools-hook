@@ -53,7 +53,12 @@ from scitools_hook.errors import (
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.cache import CachePaths, SyncState
 from scitools_hook.models.snapshot import DataModel
-from scitools_hook.models.understand import AnalysisProbe, LicenseStatus, UnderstandEnv
+from scitools_hook.models.understand import (
+    AnalysisProbe,
+    FeatureReport,
+    LicenseStatus,
+    UnderstandEnv,
+)
 from scitools_hook.paths import classify_directory, classify_file
 from scitools_hook.runner.context import (
     PROBE_TIMEOUT_S,
@@ -72,6 +77,7 @@ from scitools_hook.understand.fake import (
     fixture_env,
     fixture_problem,
 )
+from scitools_hook.understand.features import probe_features, store_features
 from scitools_hook.understand.locator import (
     WORKER_PATH,
     chosen_interpreter,
@@ -171,6 +177,13 @@ class UnderstandDiagnosis(DataModel):
     und_version: str | None = None
     license: LicenseStatus | None = None
     analysis: AnalysisProbe | None = None
+    features: FeatureReport | None = None
+    """What the installed build offers of the understand-8-features specification (req 1.1).
+
+    ``None`` when the analysis probe never got far enough to ask -- there is nothing to say
+    about a build that cannot analyse a one-file project.
+    """
+
     probes: list[ApiProbe] = []
     api_mode: ApiModeName | None = None
     python: PythonPin | None = None
@@ -239,6 +252,9 @@ def run_doctor(options: ContextOptions) -> DoctorReport:
         "the analysis cache",
         problems,
     ) or (None, None)
+    offered = understand.features
+    if cache is not None and offered is not None:
+        _guarded(lambda: store_features(cache, offered), "the feature report", problems)
     return DoctorReport(
         understand=understand,
         python=platform.python_version(),
@@ -478,7 +494,7 @@ def _diagnose(
     answers = [_ask_probe(found, probes, mode, problems) for mode in PROBE_ORDER]
     env = _verified(found, preferred, version, answers, problems)
     api = None if env is None else ApiRunner(env, options.log)
-    analysis = _analysis_probe(cli, api, problems)
+    analysis, features = _analysis_probe(cli, api, version or "", problems)
     return (
         UnderstandDiagnosis(
             env=env or found,
@@ -486,6 +502,7 @@ def _diagnose(
             und_version=version,
             license=license_status,
             analysis=analysis,
+            features=features,
             probes=answers,
             api_mode=None if env is None else env.api_mode,
             python=pin,
@@ -498,7 +515,9 @@ ANALYSIS_PROBE_SOURCE: Final = "def probe():\n    return 1\n"
 """The whole of the scratch project the analysis probe builds: one routine, no imports."""
 
 
-def _analysis_probe(cli: UndCli, api: ApiRunner | None, problems: list[str]) -> AnalysisProbe:
+def _analysis_probe(
+    cli: UndCli, api: ApiRunner | None, build: str, problems: list[str]
+) -> tuple[AnalysisProbe, FeatureReport | None]:
     """Create, add, analyse and open a one-file project, the way a check would (req 1.5).
 
     Run whether or not the licence probe complained, because its answer is the one that
@@ -520,16 +539,17 @@ def _analysis_probe(cli: UndCli, api: ApiRunner | None, problems: list[str]) -> 
             cli.analyze(db, ALL)
             if api is not None:
                 api.run("archs", {"db": str(db), "architecture": DIRECTORY_STRUCTURE, "depth": 1})
+            offered = probe_features(cli, api, root, build)
     except GateError as failed:
         text = _quoted(failed)
         problems.append(f"analysis: und cannot analyse a one-file project: {text}")
-        return AnalysisProbe(ok=False, text=text)
+        return AnalysisProbe(ok=False, text=text), None
     except OSError as broken:
         # No scratch directory is this machine's fault, not Understand's; still a problem
         # entry, because the report's job is to say why a run would not happen.
         problems.append(f"analysis: could not build a scratch project to probe with: {broken}")
-        return AnalysisProbe(ok=False, text=str(broken))
-    return AnalysisProbe(ok=True)
+        return AnalysisProbe(ok=False, text=str(broken)), None
+    return AnalysisProbe(ok=True), offered
 
 
 def _quoted(failed: GateError) -> str:

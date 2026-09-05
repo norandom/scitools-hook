@@ -29,8 +29,28 @@ from scitools_hook.understand.locator import platform_bin
 UND_SCRIPT = """#!/bin/sh
 for arg in "$@"; do
   case "$arg" in
+    -gitcommit)
+      if [ -n "{commit_create}" ]; then exit 0; fi
+      echo "Error: Unrecognized arguments." >&2; exit 1 ;;
+  esac
+done
+for arg in "$@"; do
+  case "$arg" in
     create|add) exit 0 ;;
-    analyze) [ -n "{analysis_text}" ] && echo "{analysis_text}" >&2; exit {analysis_rc} ;;
+    arch)
+      if [ -n "{arch_listing}" ]; then printf '%s\n' "{arch_listing}"; exit 0; fi
+      echo "Error: No valid command found." >&2; exit 1 ;;
+    analyze)
+      prev=""
+      for a in "$@"; do
+        if [ "$prev" = "-sarif" ] && [ -n "{writes_sarif}" ]; then
+          printf '{{"version": "2.1.0", "runs": []}}' > "$a"
+        fi
+        prev="$a"
+      done
+      [ -n "{analysis_text}" ] && echo "{analysis_text}" >&2
+      [ -n "{accuracy_line}" ] && echo "{accuracy_line}"
+      exit {analysis_rc} ;;
   esac
 done
 case "$1" in
@@ -139,12 +159,27 @@ so the first operation on a database answers the ``NoApiLicense`` envelope. The 
 as ``upython worker.py <op>``, hence ``$2``.
 """
 
+UNDERSTAND_8_UPYTHON = """#!/bin/sh
+case "$2" in
+  catalogue)
+    found='{{"targets": ["Functions"], "languages": ["Python"]}}'
+    echo '{{"metrics": {{}}, "lookup": {{"CountGlobalsModified": '"$found"'}}}}' ;;
+  *) echo '{{"version": "{version}", "python": "3.12.0"}}' ;;
+esac
+"""
+"""A bundled interpreter whose catalogue knows a plugin metric, as Build 1262's does.
+
+Answers the ping document for every other operation, so the analysis probe's ``archs`` call
+still succeeds and only the feature probe sees a difference.
+"""
+
 UPYTHON_SCRIPTS = {
     "ok": UPYTHON_SCRIPT,
     "broken": BROKEN_UPYTHON,
     "refusing": REFUSING_UPYTHON,
     "deep": DEEP_UPYTHON,
     "api_unlicensed": API_UNLICENSED_UPYTHON,
+    "understand8": UNDERSTAND_8_UPYTHON,
 }
 """The three answers a bundled interpreter can give, selected by ``install(mode=...)``."""
 
@@ -186,6 +221,18 @@ class UndAnswers:
     licensed: bool = True
     analysis_rc: int = 0
     analysis_text: str = ""
+    arch_listing: str = ""
+    """``und arch -list``'s answer; empty makes the stub refuse the command, as 6.5 does."""
+
+    accuracy_line: str = ""
+    """The line ``-accuracy`` adds after the summary; empty is a build that knows no such switch."""
+
+    writes_sarif: bool = False
+    """Whether ``-sarif <file>`` actually writes one. A build that ignored the switch would
+    otherwise read as offering the feature while writing nothing."""
+
+    commit_create: bool = False
+    """Whether ``create -gitcommit`` is accepted; off makes it an unrecognised argument."""
 
 
 def install(
@@ -212,6 +259,10 @@ def install(
             licensed="1" if answers.licensed else "0",
             analysis_rc=answers.analysis_rc,
             analysis_text=answers.analysis_text,
+            arch_listing=answers.arch_listing,
+            accuracy_line=answers.accuracy_line,
+            writes_sarif="yes" if answers.writes_sarif else "",
+            commit_create="yes" if answers.commit_create else "",
         ),
     )
     if upython:
