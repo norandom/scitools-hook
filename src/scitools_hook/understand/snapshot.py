@@ -42,6 +42,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from scitools_hook.config.metric_names import (
+    PLUGIN_METRICS,
     SCOPE_KINDS,
     SYNTHETIC_METRICS,
     Scope,
@@ -86,6 +87,7 @@ class SnapshotExtractor:
             metrics_by_scope=_element_metrics(self.settings.thresholds),
             synthetic=_synthetic_ids(self.settings.thresholds),
             population_metrics=_population_metrics(self.settings.thresholds),
+            plugin_metrics=_plugin_metrics(self.settings.thresholds),
             ignore=_ignore_patterns(self.settings),
             architecture=self.settings.structure.architecture,
             depth=self.settings.structure.depth,
@@ -126,6 +128,27 @@ def _element_metrics(specs: Iterable[ThresholdSpec]) -> dict[Scope, list[str]]:
     for spec in specs:
         if spec.scope in SCOPE_KINDS and not spec.ref.is_population:
             found.setdefault(spec.scope, set()).add(spec.ref.metric)
+    return {scope: sorted(names) for scope, names in found.items()}
+
+
+def _plugin_metrics(specs: Iterable[ThresholdSpec]) -> dict[Scope, list[str]]:
+    """The configured metrics a plugin computes, per element scope (requirement 5.1).
+
+    A subset of :func:`_element_metrics`, sent separately so the worker can ask for them where
+    a record is produced instead of once per entity of the scope. Nothing is sent when a
+    repository configures none, which is the shipped case: no plugin metric is a shipped
+    threshold (requirement 5.4), so an untouched configuration adds no key and the worker's
+    walk is byte-for-byte the one a 6.5 install has always done.
+
+    A population threshold is never one of these. A plugin metric reduced over the whole
+    project would have to be read for every entity, which is the cost this key exists to
+    avoid; :func:`~scitools_hook.config.validate` refuses such a configuration.
+    """
+    found: dict[Scope, set[str]] = {}
+    for spec in specs:
+        if spec.scope in SCOPE_KINDS and not spec.ref.is_population:
+            if spec.ref.metric in PLUGIN_METRICS:
+                found.setdefault(spec.scope, set()).add(spec.ref.metric)
     return {scope: sorted(names) for scope, names in found.items()}
 
 

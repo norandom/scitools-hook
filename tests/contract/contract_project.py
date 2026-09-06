@@ -348,9 +348,21 @@ def extract(
     db: Path, root: Path, files: tuple[str, ...], side: Side = "after", depth: int = 2
 ) -> ProjectSnapshot:
     """Read one real database into a snapshot through the production extractor."""
+    return extract_with(db, root, files, contract_settings(depth))
+
+
+def extract_with(
+    db: Path, root: Path, files: tuple[str, ...], settings: Settings
+) -> ProjectSnapshot:
+    """The same extraction under settings of the caller's own.
+
+    Separate because a test about *which* metrics reach the worker has to be able to name
+    them, and :func:`contract_settings` is deliberately one fixed list that every other
+    contract test reads.
+    """
     runner = ApiRunner(real_env("upython"), NullCommandLog())
-    extractor = SnapshotExtractor(runner, contract_settings(depth))
-    target = SnapshotTarget(db=db, root=root, side=side, files=frozenset(files))
+    extractor = SnapshotExtractor(runner, settings)
+    target = SnapshotTarget(db=db, root=root, side="after", files=frozenset(files))
     return extractor.extract(target)
 
 

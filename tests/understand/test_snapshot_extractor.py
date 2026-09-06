@@ -48,6 +48,7 @@ WIRE_KEYS: Final[frozenset[str]] = frozenset(
         "metrics_by_scope",
         "synthetic",
         "population_metrics",
+        "plugin_metrics",
         "ignore",
         "architecture",
         "depth",

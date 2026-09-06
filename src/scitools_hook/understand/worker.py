@@ -645,6 +645,7 @@ class _Plan:
     metrics: dict[str, list[str]]
     synthetic: frozenset[str]
     populations: dict[str, tuple[tuple[str | None, str], ...]]
+    plugins: dict[str, list[str]]
     ignore: dict[str, tuple[re.Pattern[str], ...]]
     architecture: str
     depth: int
@@ -761,6 +762,7 @@ def _plan(request: Mapping[str, object]) -> _Plan:
         metrics=_require_str_list_map(request, "metrics_by_scope"),
         synthetic=frozenset(_optional_str_list(request, "synthetic")),
         populations=_population_entries(_require_str_list_map(request, "population_metrics")),
+        plugins=_require_str_list_map(request, "plugin_metrics"),
         ignore=_compile_ignore(_require_str_list_map(request, "ignore")),
         architecture=_require_str(request, "architecture"),
         depth=_require_depth(request),
@@ -1172,7 +1174,8 @@ class _Extractor:
         if kind is None:
             return
         wanted = self._wanted(scope)
-        names = sorted(set(self.plan.metrics.get(scope, ())) | wanted)
+        plugins = frozenset(self.plan.plugins.get(scope, ()))
+        names = sorted((set(self.plan.metrics.get(scope, ())) | wanted) - plugins)
         values: dict[str, list[float]] = {}
         patterns = self.plan.ignore.get(scope, ())
         for ent in self.db.ents(kind):
@@ -1182,14 +1185,41 @@ class _Extractor:
             key = _key_of(ent, scope, located[0])
             if _is_ignored(patterns, key):
                 continue
-            metrics = self._entity_metrics(ent, scope, names)
+            metrics = self._entity_metrics(ent, scope, names, plugins)
             self._remember(key, ent)
             _extend(values, metrics, wanted)
             if key.path in self.plan.files:
-                self.records.append(self._record(ent, key, located[1], metrics))
+                whole = self._with_plugins(ent, metrics, plugins)
+                self.records.append(self._record(ent, key, located[1], whole))
         self.collected[scope] = {metric: sorted(vector) for metric, vector in values.items()}
 
-    def _entity_metrics(self, ent: Any, scope: str, names: Sequence[str]) -> dict[str, float]:
+    def _with_plugins(
+        self, ent: Any, metrics: dict[str, float], plugins: frozenset[str]
+    ) -> dict[str, float]:
+        """One recorded entity's plugin metrics, added to what the walk already read (5.1).
+
+        **This is the only place a plugin metric is asked for**, and that is the whole point of
+        the separate key. A plugin metric is computed on demand by a ``.upy`` plugin rather
+        than read out of the database, so asking for it once per entity of the scope -- which
+        is what the population walk does -- pays for answers no rule will read. A record is
+        produced only for the files this run selected, so the cost is proportional to the
+        change, which is what requirement 8 asks of everything else too.
+
+        A plugin metric the build has no value for is reported unavailable exactly like a
+        built-in one (requirement 5.5). It is reported *here* rather than in
+        :meth:`_entity_metrics` because only a recorded entity was ever asked.
+        """
+        if not plugins:
+            return metrics
+        found = _metric_values(ent, sorted(plugins))
+        missing = plugins - set(found)
+        if missing:
+            self.unavailable.setdefault(str(ent.language()), set()).update(missing)
+        return {**metrics, **found}
+
+    def _entity_metrics(
+        self, ent: Any, scope: str, names: Sequence[str], plugins: frozenset[str] = frozenset()
+    ) -> dict[str, float]:
         """Every requested metric of one entity, synthetics included, plus what is unavailable.
 
         A metric Understand has no value for is omitted from the record and reported once per
@@ -1200,6 +1230,11 @@ class _Extractor:
         ones an entity is judged by. A metric collected purely to build a population vector is
         a project-level threshold, and an empty vector is reported once by the evaluator's
         reducer failures instead of once per entity of the wrong language.
+
+        ``plugins`` are subtracted from that accounting because they were never asked for here:
+        :meth:`_with_plugins` asks for them, for recorded entities only, and reports what is
+        missing there. Counting them here would report every plugin metric unavailable once
+        per entity of the project.
         """
         wanted = self.plan.synthetic & set(names) & set(SYNTHETICS.get(scope, {}))
         values = _metric_values(ent, [name for name in names if name not in wanted])
@@ -1207,7 +1242,7 @@ class _Extractor:
             number = SYNTHETICS[scope][name](ent)
             if number is not None:
                 values[name] = number
-        missing = set(self.plan.metrics.get(scope, ())) - set(values)
+        missing = set(self.plan.metrics.get(scope, ())) - set(values) - plugins
         if missing:
             self.unavailable.setdefault(str(ent.language()), set()).update(missing)
         return values

@@ -126,6 +126,13 @@ class FakeEnt:
     drawable: tuple[str, ...] = ("Butterfly", "Calls", "Called By")
     drawn: list[tuple[str, str]] = field(default_factory=list)
     ident: int = field(default_factory=lambda: next(_ENTITY_IDS))
+    asked: list[tuple[str, ...]] = field(default_factory=list)
+    """Every ``metric()`` call this entity received, in order, as the names it was given.
+
+    Recorded because *which* metrics are asked for, and of which entities, is itself a
+    contract: a plugin metric is computed on demand rather than read out of the database, so
+    asking for one during the whole-project population walk costs a plugin run per entity of
+    the scope (requirement 5.1). A test can only see that by watching the calls."""
 
     def relname(self) -> str | None:
         """The project-relative path of a file entity, or ``None`` for other kinds."""
@@ -157,6 +164,7 @@ class FakeEnt:
 
     def metric(self, names: Sequence[str]) -> dict[str, object]:
         """The requested metrics; an absent one answers ``None``, as the API does."""
+        self.asked.append(tuple(names))
         return {name: self.values.get(name) for name in names}
 
     def contents(self) -> str:

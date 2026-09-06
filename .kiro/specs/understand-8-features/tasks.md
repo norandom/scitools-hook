@@ -137,7 +137,7 @@
   - _Requirements: 4.1, 4.3, 4.4, 4.5_
 
 - [ ] 6. The 8.0 metrics
-- [ ] 6.1 Read plugin metrics for recorded entities only
+- [x] 6.1 Read plugin metrics for recorded entities only
   - A `plugin_metrics` request key lists the ids to read through the entity metric call for recorded entities; population vectors never ask a plugin metric; locale-formatted answers are coerced as today
   - Done when a unit test asserts no plugin metric is requested during a population pass, a snapshot on the contract project carries a `CountClassCoupledModified` value for a recorded class, and the measured cost per recorded routine is within the 2 ms budget in the research log
   - _Depends: 1.8_
@@ -299,3 +299,7 @@
 - 5.3 (**the skip has to hand something over**): a run whose commit has not moved reads the kept export from `<cache>/generated/<name>.xml` instead of building a database and generating in it. Declining to regenerate is not enough -- the rules read the node, and a skip that produced nothing would produce no rules. The key is the commit the after side is at, which for a commit target is both halves of "the repository head and after tree id": they are the same string, and nothing else can change what `git log` says about it.
 - 5.3: an empty generated export is reported and stepped over when the repository declares an architecture of its own, and **raised** when it does not. A run with no architecture evaluates every node-level rule against an empty node set and reports nothing, which is worse than stopping.
 - 5.3: the test split was forced by `structure.new_dependencies` for the third time in this spec -- `test_architecture_choice.py` (the decision and the skip), `test_generated_arch.py` (the route and its two refusals), `test_generated_names.py` (the record). Budget about five real imports per test module and plan the split before writing, not after.
+- 6.1 (**re-measured on Build 1262, and it is why the key exists**): three `CountGlobals*` cost **2.056 ms per routine** against **0.027 ms** for three built-ins, a factor of 76; `CountClassCoupledModified` costs 0.058 ms per class. The extraction walks every entity of a scope because the population vectors need every value, so asking a plugin during that walk would pay a plugin run per routine of the project -- about 2.6 s per side on this repository -- and throw nearly all of it away.
+- 6.1: the `plugin_metrics` request key is read in `_with_plugins`, in a call of its own, **for recorded entities only**. It is subtracted from the walk's `names` so a 6.5 install and an 8.0 one with no plugin threshold send the same `ent.metric()` call, and subtracted from `_entity_metrics`'s unavailable accounting so a plugin id is not reported missing once per entity of the project.
+- 6.1: `FakeEnt.asked` records every `metric()` call the fake received. Which metrics are asked for, of which entities, is itself the contract here, and no assertion on the answer document could see it.
+- 6.1 (**contract**): `tests/contract/test_plugin_metrics_contract.py` proves the values reach a recorded routine and a recorded class on the contract project, and asserts the per-entity cost against a ceiling of twice the measurement. `contract_project.extract_with` was added so a test can name its own thresholds; `contract_settings` stays the one fixed list every other contract test reads.

@@ -182,6 +182,15 @@ class ExtractRequest(DataModel):
     metrics_by_scope: dict[Scope, list[str]] = Field(default_factory=dict)
     synthetic: list[str] = Field(default_factory=list)
     population_metrics: dict[Scope, list[str]] = Field(default_factory=dict)
+    plugin_metrics: dict[Scope, list[str]] = Field(default_factory=dict)
+    """Metric ids a plugin computes, read for **recorded** entities only (req 5.1).
+
+    Separate from ``metrics_by_scope`` because of what they cost. A built-in metric is a
+    field of the database and the walk reads it for every entity of the scope, which is what
+    the project-wide population vectors need. A plugin metric is computed on demand by a
+    ``.upy`` plugin, and asking for it once per entity of a large project pays for answers no
+    rule will ever read. So these are asked only where a record is produced, and no
+    population vector ever asks for one."""
     ignore: dict[Scope, list[str]] = Field(default_factory=dict)
     architecture: str
     depth: int = Field(ge=1)
