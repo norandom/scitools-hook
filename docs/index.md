@@ -150,6 +150,11 @@ nothing.
 - **Rules an agent reads.** `scitools-hook agent-rules --write AGENTS.md` writes the
   effective limits into your agent instructions file, so the agent knows the numbers before
   it writes the code rather than after the commit is refused.
+- **A warm check in 13 seconds** on this repository, down from 27.7 in `0.1.0a8`: one
+  snapshot extraction per side instead of four, with the before side served from a cache.
+
+The full list, with what ships on and what ships off, is
+[Every feature](reference/features.md).
 
 ## Getting it
 

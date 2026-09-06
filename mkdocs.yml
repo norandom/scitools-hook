@@ -91,6 +91,7 @@ nav:
       - guide/review.md
       - guide/agents.md
   - Reference:
+      - reference/features.md
       - reference/cli.md
       - reference/rules.md
       - reference/operations.md

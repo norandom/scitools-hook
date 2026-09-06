@@ -106,6 +106,9 @@ superclass raises it. No hint in the catalogue asks for another inheritance laye
 | `structure.fan_in` | warning | A file or class depended on by more than the limit |
 | `structure.fan_out` | warning | A file or class depending on more than the limit, **and** any affected entity whose fan-out grew |
 | `structure.duplicate_definition` | warning | A module-level name bound to the **same value** in more files than `duplicate_definitions` (off by default) |
+| `structure.call_cycle` | off by default | A cycle in the call graph among the routines the change reaches; set `call_cycles` to turn it on |
+| `structure.reachable_complexity` | warning, off by default | A routine whose transitively reached `CyclomaticStrict` exceeds `reachable_complexity` |
+| `structure.unused_routine` | warning, off by default | An affected routine nothing in the project calls or uses; set `unused_routines` to turn it on |
 | `codecheck.<id>` | warning | A finding from an Understand CodeCheck configuration, if one is named |
 
 Fan defaults: `file_fan_in` 50, `file_fan_out` 20, `class_fan_in` 30, `class_fan_out` 12.
@@ -294,6 +297,22 @@ and that is deliberate: a lever that silences it everywhere is a lever that turn
 into one that certifies files it never read. The only escape is per file and requires a
 written reason, which the report then quotes on every run. See
 [Configuration](../guide/configuration.md#acknowledging-a-file-that-does-not-parse).
+
+## `analysis.accuracy`
+
+The other rule about the analysis rather than about the code. `und analyze -accuracy` reports
+the share of files that parsed with neither an error nor a warning, and
+`analysis.accuracy_floor` turns a figure below the floor into a finding.
+
+**It is a warning and it never blocks**, whatever the severity map says, and that is a
+decision rather than a default. A poor figure is usually a third-party package Understand has
+no source for, an interpreter version it does not model, or a language feature it has not
+caught up with. None of those is fixable by the commit in front of you, and a gate that
+refused the commit over them is a gate that gets switched off.
+
+Off by default: without a floor there is no finding, only the figure in the report and in the
+JSON. A build that reports no accuracy at all — 6.5, or 8.0 never asked — reports nothing
+rather than zero, because the absence of a measurement is not a measurement.
 
 ## Two limits that were demoted to warnings
 
