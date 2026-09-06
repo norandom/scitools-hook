@@ -157,7 +157,7 @@
   - _Depends: 6.1_
   - _Requirements: 6.2_
 
-- [ ] 7.2 Report unused affected routines as warnings with an ignore list
+- [x] 7.2 Report unused affected routines as warnings with an ignore list
   - One warning per affected routine whose flag is false and whose long name matches no ignore pattern; a snapshot without the flag reports the rule unavailable once and evaluates nothing; deleted routines cannot appear because they are absent from the after side
   - The snapshot request builder sends the `record_referenced` key only when the rule is enabled
   - Done when unit tests cover the finding, the ignore list, the unavailable case and a deleted routine, and an e2e run with the rule enabled that adds an uncalled routine prints the warning while the exit code stays 0
@@ -313,3 +313,7 @@
 - 7.1: the flag is asked of the routine, not derived from the call graph. The call graph is bounded to the forward closure of the change (requirement 4.11), so a caller in an unchanged file is not in it, and deciding "unused" from it would report every routine the change did not happen to reach -- the opposite of requirement 6.2.
 - 7.1: `record_referenced` is off unless `structure.unused_routines` is set, and the query runs for **recorded** entities only, in `_record`. It is folded into `_record` rather than passed to it because a sixth parameter tripped `CountParams`, which is the same wall tasks 4.2 and 5.3 hit.
 - 7.1 (**contract**): the fixture is read in both directions -- `Engine.run` is called through `entry_point` and comes back referenced, `Engine.label` is a staticmethod nothing names and comes back unreferenced. A build that answered the same for both, in either direction, would pass a one-sided test and leave the rule silent or unusable.
+- 7.2: the rule is `analysis/structure/unused.py::find_unused_routines`, answering an `Unused(findings, unavailable)` pair so the pipeline can note requirement 6.4's "reported once per run" on the diagnostics channel rather than turning it into a finding. `structure.unused_routine` joins `STRUCTURE_RULES`, and the hint names the way out -- `structure.unused_ignore` -- because an agent reading "unused" and unable to see the caller will otherwise delete a working entry point.
+- 7.2: **a deleted routine needs no rule.** It is absent from the after snapshot, so requirement 6.5 costs no code and is asserted rather than implemented. Only affected routines are judged: this is a gate on a commit, not an audit.
+- 7.2: `referenced is None` for **every** affected routine is the unavailable case; one `None` among measured ones is that routine's absence, not the rule's. The reachable cause is a warm cache holding a snapshot extracted before the rule was turned on, and the message says `db rebuild`.
+- 7.2 (**e2e**): `tests/e2e/test_unused_routine.py` runs against the **clean** fixture, not the violating one, because the property is "prints the warning and exits 0" and the violating snapshot carries blocking findings by construction. The fixture snapshots now carry `referenced`: both routines `true` in `violating`, `pkg.other.scan` `false` in `fixed`.

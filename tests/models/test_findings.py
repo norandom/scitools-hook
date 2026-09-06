@@ -79,6 +79,7 @@ def test_structure_rule_covers_every_documented_structural_rule() -> None:
         "new_dependencies",
         "coupling",
         "duplicate_definition",
+        "unused_routine",
     }
     assert structure_rule("file_cycle") == "structure.file_cycle"
 

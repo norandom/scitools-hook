@@ -22,7 +22,8 @@
         "CyclomaticStrict": 4
       },
       "archs": [],
-      "is_new": false
+      "is_new": false,
+      "referenced": true
     },
     {
       "ref": {
@@ -42,7 +43,8 @@
         "CyclomaticStrict": 3
       },
       "archs": [],
-      "is_new": false
+      "is_new": false,
+      "referenced": true
     }
   ],
   "file_edges": [

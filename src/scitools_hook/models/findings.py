@@ -53,6 +53,7 @@ StructureRuleName = Literal[
     "new_dependencies",
     "coupling",
     "duplicate_definition",
+    "unused_routine",
 ]
 STRUCTURE_RULES: Final[tuple[StructureRuleName, ...]] = get_args(StructureRuleName)
 """Every structural rule name, in the order they are documented in the design."""

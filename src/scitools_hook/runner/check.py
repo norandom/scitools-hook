@@ -83,6 +83,7 @@ from scitools_hook.analysis.structure.cycles import find_new_cycles
 from scitools_hook.analysis.structure.definitions import find_duplicate_definitions
 from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
+from scitools_hook.analysis.structure.unused import find_unused_routines
 from scitools_hook.analysis.thresholds import ThresholdOutcome, evaluate_thresholds
 from scitools_hook.config.models import SeverityMap, ThresholdSpec
 from scitools_hook.models.baseline import Baseline
@@ -398,7 +399,29 @@ class CheckPipeline:
         )
         if rules.call_cycles is not None:
             findings += find_call_cycles(after, routines, rules.call_cycles)
+        findings += self._unused(after, affected)
         return findings + evaluate_coupling(after.arch_edges, rules.coupling)
+
+    def _unused(self, after: ProjectSnapshot, affected: AffectedSet) -> list[Finding]:
+        """Affected routines nothing in the project references (requirements 6.1, 6.4).
+
+        Off unless configured, because the rule's false positives are a property of the
+        language rather than of the analysis: a dunder, a collected test, an entry point
+        named in packaging metadata and a decorated handler all have no reference to find.
+
+        A snapshot with no reference measurement reports the rule once and evaluates
+        nothing (requirement 6.4). That is a warm cache holding an extraction from before
+        the rule was turned on, and calling every affected routine dead there would be the
+        worst answer available.
+        """
+        rules = self.ctx.settings.structure
+        if rules.unused_routines is None:
+            return []
+        found = find_unused_routines(
+            after, affected.keys, rules.unused_routines, rules.unused_ignore
+        )
+        self._report([found.unavailable] if found.unavailable else [])
+        return found.findings
 
     def _violations(self, checked: Collection[str]) -> list[Finding]:
         """The configured CodeCheck configuration, run over the selected files (req 6.9).
