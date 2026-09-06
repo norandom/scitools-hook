@@ -358,7 +358,7 @@ def test_a_staged_change_is_summarised_per_file_with_metrics_before_and_after(
     """Requirement 9.1: per affected file, what moved, with both sides and the delta."""
     summary = staged.run(Selection(mode="staged"))
 
-    assert staged.extractor.sides == ["after", "before", "after", "before"]
+    assert staged.extractor.sides == ["after", "before"]
     assert set(summary.files) == {"src/app.py"}
     moved = {delta.ref.key.longname: delta for delta in summary.files["src/app.py"]}
     assert moved["app.run"].status == "modified"
@@ -367,12 +367,19 @@ def test_a_staged_change_is_summarised_per_file_with_metrics_before_and_after(
     assert moved["app.run"].delta["CyclomaticStrict"] == 4
 
 
-def test_the_second_extraction_is_bounded_by_the_affected_neighbourhood(staged: Harness) -> None:
-    """Requirement 4.11: the first pass asks about the change, the second one step past it."""
+def test_one_extraction_per_side_records_the_neighbourhood_through_its_rings(
+    staged: Harness,
+) -> None:
+    """Requirement 4.11's bound is unchanged; requirement 8.3 pays for it once instead of twice.
+
+    The request still names the change. What used to be a second whole-project walk for the
+    change plus its ring is now the ring count on the first one, and the document is narrowed
+    in process to exactly the set that walk would have recorded.
+    """
     staged.run(Selection(mode="staged"))
 
     assert staged.extractor.requested("after", 0) == {"src/app.py"}
-    assert staged.extractor.requested("after", 1) == {"src/app.py", "src/util.py"}
+    assert staged.extractor.rings("after", 0) == 2
 
 
 def test_a_dependency_across_an_architecture_boundary_is_reported_as_crossing(

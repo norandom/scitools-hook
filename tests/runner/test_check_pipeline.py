@@ -138,6 +138,11 @@ class StubExtractor(SnapshotExtractor):
         matching = [target for target in self.targets if target.side == side]
         return set(matching[pass_].files)
 
+    def rings(self, side: Side, pass_: int) -> int:
+        """How many dependency steps one side's ``pass_``-th extraction recorded past its files."""
+        matching = [target for target in self.targets if target.side == side]
+        return matching[pass_].rings
+
 
 @dataclass
 class StubCodeCheck(CodeCheckRunner):
@@ -508,28 +513,6 @@ def test_no_finding_blocks_a_change_that_left_its_entity_inside_its_limit(
         for finding in result.findings
         if within_limit(finding)
     ]
-
-
-def test_a_staged_run_analyses_the_after_side_first_and_then_the_before_side(
-    staged_harness: Harness,
-) -> None:
-    """Both databases are brought up to date, and each side is extracted twice (design step 3)."""
-    staged_harness.run()
-    assert staged_harness.analyzed_sides == ["after", "before"]
-    assert staged_harness.extractor.sides() == ["after", "before", "after", "before"]
-
-
-def test_a_staged_run_bounds_the_second_extraction_to_the_affected_neighbourhood(
-    staged_harness: Harness,
-) -> None:
-    """The first pass asks about the change, the second about the change plus its ring."""
-    staged_harness.run()
-    assert staged_harness.extractor.requested("after", 0) == {
-        "src/cli/app.py",
-        "src/analysis/rules.py",
-    }
-    assert staged_harness.extractor.requested("after", 1) == set(SAMPLE_FILES)
-    assert staged_harness.extractor.requested("before", 1) == set(SAMPLE_FILES)
 
 
 def test_the_before_side_is_synced_from_the_resolved_head_hash_never_from_the_word_head(
@@ -976,11 +959,11 @@ def test_a_deletions_only_change_reports_nothing_about_the_file_that_is_gone(
 def test_a_deletions_only_change_still_evaluates_the_files_that_remain(
     deletion_harness: Harness,
 ) -> None:
-    """The former dependents are the neighbourhood, which is what the second pass asks for."""
+    """The former dependents are the neighbourhood, which the one extraction's rings record."""
     deletion_harness.run()
     assert deletion_harness.extractor.requested("before", 0) == {GONE}
-    assert deletion_harness.extractor.requested("after", 1) == set(SURVIVORS)
-    assert deletion_harness.extractor.requested("before", 1) == set(SURVIVORS)
+    assert deletion_harness.extractor.rings("before", 0) == 2
+    assert deletion_harness.extractor.sides() == ["after", "before"]
 
 
 # --- evaluator order, classification and severities -----------------------------

@@ -69,6 +69,12 @@ class SnapshotTarget:
     side: Side
     files: frozenset[str] = frozenset()
     parse_errors: tuple[ParseError, ...] = ()
+    rings: int = 0
+    """How many dependency steps beyond ``files`` to record entities for (req 8.3).
+
+    Zero is a bounded extraction, which is what whole-project mode and every command but
+    ``check`` asks for. Two records the set the check pipeline used to obtain with a second
+    whole-project walk."""
 
 
 class SnapshotExtractor:
@@ -79,7 +85,7 @@ class SnapshotExtractor:
         self.settings = settings
         self.include_edges = include_edges
 
-    def request(self, files: Iterable[str] = ()) -> ExtractRequest:
+    def request(self, files: Iterable[str] = (), rings: int = 0) -> ExtractRequest:
         """The self-describing request, everything but what only the target knows."""
         return ExtractRequest(
             files=set(files),
@@ -94,11 +100,14 @@ class SnapshotExtractor:
             include_edges=self.include_edges,
             include_definitions=self.settings.structure.duplicate_definitions is not None,
             record_referenced=self.settings.structure.unused_routines is not None,
+            neighbourhood_rings=rings,
         )
 
     def wire_request(self, target: SnapshotTarget) -> dict[str, object]:
         """The request as the worker reads it: the model, plus the four keys it cannot hold."""
-        request: dict[str, object] = self.request(target.files).model_dump(mode="json")
+        request: dict[str, object] = self.request(target.files, target.rings).model_dump(
+            mode="json"
+        )
         request["db"] = str(target.db)
         request["root"] = str(target.root)
         request["side"] = target.side

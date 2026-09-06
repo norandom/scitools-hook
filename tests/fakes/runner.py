@@ -73,12 +73,20 @@ class ScriptedExtractor(SnapshotExtractor):
         answered with the whole scripted document would hide exactly that mistake. Edges,
         architecture nodes and populations are left whole: the worker derives them from the
         entities it walked rather than from the ones it recorded.
+
+        **A request for rings is answered whole**, because that is what the worker does with
+        one: ``neighbourhood_rings`` widens the recorded set past the requested files, and the
+        caller narrows the document in process afterwards. A stub that kept filtering would
+        hand back a document the pipeline then narrows twice, which is a set the real worker
+        never produces.
         """
         self.targets.append(target)
         queue = self.answers.get(target.side, [])
         if not queue:
             raise AssertionError(f"the pipeline extracted the {target.side} side once too often")
         whole = queue.pop(0)
+        if target.rings:
+            return whole
         kept = {key: record for key, record in whole.entities.items() if key.path in target.files}
         return whole.model_copy(update={"entities": kept})
 
@@ -91,6 +99,11 @@ class ScriptedExtractor(SnapshotExtractor):
         """The file set of one side's ``pass_``-th extraction (0-based)."""
         matching = [target for target in self.targets if target.side == side]
         return set(matching[pass_].files)
+
+    def rings(self, side: Side, pass_: int) -> int:
+        """How many dependency steps one side's ``pass_``-th extraction recorded past its files."""
+        matching = [target for target in self.targets if target.side == side]
+        return matching[pass_].rings
 
 
 def scripted(answers: Mapping[Side, Sequence[ProjectSnapshot]]) -> ScriptedExtractor:

@@ -46,6 +46,7 @@ from typing import Final, Literal, TypeVar
 from pydantic import Field
 
 from scitools_hook.analysis.affected import resolve
+from scitools_hook.analysis.narrow import narrow
 from scitools_hook.errors import ConfigError
 from scitools_hook.git.repo import GitRepo
 from scitools_hook.models.change import AffectedSet
@@ -282,10 +283,62 @@ def plan_selection(
     )
 
 
+RINGS: Final = 2
+"""How many dependency steps a check's single extraction records (requirement 8.3).
+
+Two, because that is what the two passes together used to reach: the affected set is one step
+from the change and the rules that look past it read one more. Whole-project mode asks for
+zero -- it records everything already, and widening a request that names every file would
+widen nothing.
+"""
+
+SERVED_FROM_CACHE: Final = (
+    "the before snapshot was served from the cache, so this run extracted it once fewer"
+)
+"""Requirement 8.6: an optimisation that cannot be seen is one nobody can check."""
+
+BEFORE_UNCOVERED: Final = (
+    "the before side does not reach {files} within two dependency steps of the change, so it "
+    "was extracted again for them; this run is as fast as it was before the cache existed"
+)
+"""The uncovered case of :meth:`Engine._before_for`, said out loud rather than absorbed."""
+
+
+BeforeSource = tuple[ProjectSnapshot | None, Callable[[ProjectSnapshot], None] | None]
+"""A before-side document the caller already has, and where to put one that is extracted.
+
+One argument rather than two because ``observe`` is at its own ``CountParams`` limit, and one
+pair rather than an object because naming a class of its own would cost the engine a coupling
+it has no room for. Both halves are ``None`` for a run with no before side, and the second is
+``None`` when the first is a hit.
+"""
+
+
+def _wanted(affected: AffectedSet, include_deleted: bool) -> frozenset[str]:
+    """The files the rules read: the affected set, its neighbourhood, and deletions on request.
+
+    A module function so the engine names no container type of its own -- the class is three
+    past its ``CountClassCoupled`` limit, and the gate counts a ``frozenset(...)`` in a method
+    exactly as it counts a field (recorded in task 9.2's notes).
+    """
+    gone = affected.deleted_files if include_deleted else set()
+    return frozenset(affected.files | affected.neighbourhood | gone)
+
+
+def _uncovered(wide: ProjectSnapshot, wanted: frozenset[str]) -> frozenset[str]:
+    """The wanted files the wide document holds no entity for, for the same reason."""
+    return wanted - {key.path for key in wide.entities}
+
+
 class Engine:
     """Understand, driven for one run: analyse the sides, then read them back as snapshots."""
 
-    def __init__(self, dbm: DatabaseManager, extractor: SnapshotExtractor, progress: Progress):
+    def __init__(
+        self,
+        dbm: DatabaseManager,
+        extractor: SnapshotExtractor,
+        progress: Progress,
+    ):
         self._dbm = dbm
         self._extractor = extractor
         self._progress = progress
@@ -303,6 +356,7 @@ class Engine:
         analyses: Mapping[Side, AnalyzeResult],
         *,
         include_deleted: bool = False,
+        before: BeforeSource = (None, None),
     ) -> tuple[ProjectSnapshot, ProjectSnapshot | None, AffectedSet]:
         """The two snapshots this run reads, and what the change affected (req 4.2, 4.8).
 
@@ -324,24 +378,88 @@ class Engine:
             whole = self.extract("after", plan.files, analyses)
             keys = set(whole.entities)
             return whole, None, AffectedSet(files={key.path for key in keys}, keys=keys)
-        first_after = self.extract("after", plan.files, analyses)
-        first_before = None if plan.before is None else self.extract("before", plan.files, analyses)
-        affected = resolve(plan.changes, first_after, first_before)
-        gone = affected.deleted_files if include_deleted else set()
-        wanted = frozenset(affected.files | affected.neighbourhood | gone)
-        after = self.extract("after", wanted, analyses)
-        before = None if plan.before is None else self.extract("before", wanted, analyses)
-        return after, before, affected
+        wide_after = self.extract("after", plan.files, analyses, wide=True)
+        wide_before = self._wide_before(plan, analyses, before)
+        affected = resolve(
+            plan.changes,
+            narrow(wide_after, plan.files),
+            None if wide_before is None else narrow(wide_before, plan.files),
+        )
+        wanted = _wanted(affected, include_deleted)
+        read = None if wide_before is None else self._before_for(wide_before, wanted, analyses)
+        return narrow(wide_after, wanted), read, affected
+
+    def _wide_before(
+        self,
+        plan: AnalysisPlan,
+        analyses: Mapping[Side, AnalyzeResult],
+        source: BeforeSource,
+    ) -> ProjectSnapshot | None:
+        """The before side's wide document: the caller's, or one extracted and handed back.
+
+        ``source`` is how the check pipeline reads and writes the snapshot cache without
+        this class ever naming it: a document it already had, and where to put one this
+        extracts. The cache needs the analysis settings and the
+        Understand build, neither of which the engine knows, and naming it here would cost a
+        coupling this class has no room for.
+
+        The extraction stays **after** the after side's, which is the order the phases have
+        always been announced in and the order a reader of the progress stream expects.
+        """
+        given, keep = source
+        if plan.before is None:
+            return None
+        if given is not None:
+            return given
+        document = self.extract("before", plan.files, analyses, wide=True)
+        if keep is not None:
+            keep(document)
+        return document
+
+    def _before_for(
+        self,
+        wide: ProjectSnapshot,
+        wanted: frozenset[str],
+        analyses: Mapping[Side, AnalyzeResult],
+    ) -> ProjectSnapshot:
+        """The before document the rules read, narrowed, or extracted again if it cannot be.
+
+        The affected set is computed from **both** graphs, so a file can be two dependency
+        steps from the change on the after side and further than that on the before side --
+        the change may be the very edit that created the dependency. Such a file is in
+        ``wanted`` and absent from the wide before document, and narrowing would silently give
+        it no before-side entities, which reads as "new" and takes it out of the ratchet.
+
+        So coverage is checked rather than assumed, and the uncovered case falls back to
+        exactly what this pipeline did before: one bounded extraction for ``wanted``. It costs
+        a second pass in a case that does not arise on an ordinary edit, and it keeps
+        requirement 8.7's promise that none of this changes a finding.
+        """
+        missing = _uncovered(wide, wanted)
+        if not missing:
+            return narrow(wide, wanted)
+        self._progress.note(BEFORE_UNCOVERED.format(files=", ".join(sorted(missing))))
+        return self.extract("before", wanted, analyses)
 
     def extract(
-        self, side: Side, files: frozenset[str], analyses: Mapping[Side, AnalyzeResult]
+        self,
+        side: Side,
+        files: frozenset[str],
+        analyses: Mapping[Side, AnalyzeResult],
+        wide: bool = False,
     ) -> ProjectSnapshot:
         """One side's snapshot, rooted at the directory its database names its files under.
 
+        ``wide`` asks the worker for :data:`RINGS` dependency steps of neighbourhood
+        beyond ``files``, which is what lets one extraction answer both of the questions a
+        check used to ask. A boolean rather than a count because the engine has exactly two
+        callers and exactly two answers, and because an ``int`` here would be one more
+        coupled type on a class already three past its limit.
+
         Not always that side's own tree. A commit-built before database is named under the
-        **after** tree, because ``-refdb`` copies the reference's file set with its paths, so
-        the analysis says where it is rooted and this reads it rather than deducing it from the
-        side. The fallback covers a result assembled by hand, which every fake does.
+        **after** tree, because ``-refdb`` copies the reference's file set with its paths,
+        so the analysis says where it is rooted and this reads it rather than deducing it
+        from the side. The fallback covers a result assembled by hand, which every fake does.
         """
         paths = self._dbm.paths()
         own = paths.before_tree if side == "before" else paths.after_tree
@@ -351,6 +469,7 @@ class Engine:
             side=side,
             files=files,
             parse_errors=tuple(analyses[side].parse_errors),
+            rings=RINGS if wide else 0,
         )
         return self.phase(f"reading the {side} snapshot", lambda: self._extractor.extract(target))
 

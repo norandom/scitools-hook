@@ -86,6 +86,7 @@ from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
 from scitools_hook.analysis.structure.unused import find_unused_routines
 from scitools_hook.analysis.thresholds import ThresholdOutcome, evaluate_thresholds
+from scitools_hook.config.fingerprint import analysis_fingerprint
 from scitools_hook.config.models import SeverityMap, ThresholdSpec
 from scitools_hook.models.baseline import Baseline
 from scitools_hook.models.change import AffectedSet
@@ -106,7 +107,10 @@ from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.companions import for_run, keep_inspection
 from scitools_hook.runner.context import RunContext
 from scitools_hook.runner.pipeline import (
+    RINGS,
+    SERVED_FROM_CACHE,
     AnalysisPlan,
+    BeforeSource,
     Engine,
     PlanMode,
     Selection,
@@ -117,6 +121,7 @@ from scitools_hook.runner.pipeline import (
 from scitools_hook.understand.codecheck import CodeCheckRunner, unusable_list_file_name
 from scitools_hook.understand.database import DatabaseManager
 from scitools_hook.understand.snapshot import SnapshotExtractor
+from scitools_hook.understand.snapshot_cache import BeforeCache, SnapshotCache
 
 __all__ = ["CheckPipeline", "Selection", "SelectionMode"]
 """``Selection`` is re-exported: it is the runner's entry vocabulary, and task 8.4 moved it
@@ -206,7 +211,8 @@ class CheckPipeline:
         if not plan.files:
             return self._nothing_analyzed(selection, repo.root, started)
         analyses = self._engine.analyse(plan)
-        after, before, affected = self._engine.observe(plan, analyses)
+        source = _before_hooks(self.ctx, self._dbm, plan)
+        after, before, affected = self._engine.observe(plan, analyses, before=source)
         seen = Observed(after=after, before=before, affected=affected, analyses=analyses)
         specs = list(self.ctx.availability.thresholds)
         stored, unreadable = self._store.load(specs)
@@ -560,6 +566,43 @@ class CheckPipeline:
         """Say something on the diagnostics channel; findings never travel this way (req 7.7)."""
         for message in messages:
             self.ctx.progress.note(message)
+
+
+def _before_hooks(ctx: RunContext, dbm: DatabaseManager, plan: AnalysisPlan) -> BeforeSource:
+    """The before side's cached document, and where to put the one a miss extracts (req 8.2).
+
+    Two halves of the snapshot cache, handed to the engine so that neither the engine nor this
+    pipeline names the cache itself -- both classes are past their coupling limits, and a
+    module function costs neither of them anything.
+
+    The cache is consulted for **this** side and not the other because this is the one whose
+    answer a second run of the same change can reuse: the before database is the base commit,
+    and nothing about it moves while the change is being iterated on. The after side changes
+    with every edit, which is what the run is about.
+    """
+    if plan.before is None:
+        return None, None
+    cache = _before_cache(ctx, dbm)
+    commit, files = plan.before, plan.files
+    found = cache.get(commit, files, RINGS)
+    if found is not None:
+        ctx.progress.note(SERVED_FROM_CACHE)
+        return found, None
+    return None, lambda document: cache.put(commit, files, RINGS, document)
+
+
+def _before_cache(ctx: RunContext, dbm: DatabaseManager) -> BeforeCache:
+    """The before side's snapshot cache, with the half of the key this run fixes (req 8.2).
+
+    The analysis fingerprint and the Understand build are properties of the run; the commit,
+    the selection and the ring count are properties of each extraction. Binding the first pair
+    here keeps them out of the engine, which knows nothing about settings.
+    """
+    return BeforeCache(
+        store=SnapshotCache(dbm.paths().root),
+        settings=analysis_fingerprint(ctx.settings),
+        build=ctx.understand.version,
+    )
 
 
 def _figures(analyses: Mapping[Side, AnalyzeResult]) -> dict[str, float]:

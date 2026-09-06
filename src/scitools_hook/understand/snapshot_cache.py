@@ -211,3 +211,35 @@ def _discard(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         return
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeCache:
+    """The snapshot cache with the half of the key that does not change during a run.
+
+    The pipeline knows the analysis fingerprint and the Understand build; the engine knows the
+    commit, the selection and the ring count. Rather than hand four constants down through two
+    call sites, the pipeline binds them here and the engine asks two questions.
+
+    The ring count travels inside the settings component because it is exactly that: a part of
+    the request that is not the file set, and a document recorded at two rings is not the one
+    recorded at zero.
+    """
+
+    store: SnapshotCache
+    settings: str
+    build: str
+
+    def key(self, commit: str, files: frozenset[str], rings: int) -> SnapshotKey:
+        """The key of one before-side extraction."""
+        return key_for("before", commit, files, f"{self.settings}:rings={rings}", self.build)
+
+    def get(self, commit: str, files: frozenset[str], rings: int) -> ProjectSnapshot | None:
+        """The stored document for this extraction, or ``None``."""
+        return self.store.get(self.key(commit, files, rings))
+
+    def put(
+        self, commit: str, files: frozenset[str], rings: int, snapshot: ProjectSnapshot
+    ) -> None:
+        """Store one extraction for the next run of the same change."""
+        self.store.put(self.key(commit, files, rings), snapshot)
