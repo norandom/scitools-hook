@@ -34,7 +34,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from scitools_hook.config.metric_names import SCOPE_KINDS, SYNTHETIC_METRICS, Scope
+from scitools_hook.config.metric_names import (
+    PLUGIN_METRICS,
+    SCOPE_KINDS,
+    SYNTHETIC_METRICS,
+    Scope,
+)
 from scitools_hook.config.validate import MetricAvailability
 from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.understand.api_runner import ApiRunner
@@ -44,6 +49,18 @@ ARCH_KIND: Final = "architecture"
 
 LANGUAGE_KINDS: Final[dict[str, str]] = {"c++": "c"}
 """Configured language (lower case) -> the language token Understand's kind strings use."""
+
+PLUGIN_TARGETS: Final[dict[Scope, str]] = {
+    "routine": "Functions",
+    "class": "Classes",
+    "file": "Files",
+    "arch": "Architectures",
+    "project": "Project",
+}
+"""The Gate's scope -> the word a plugin metric's ``Target:`` tag uses (measured on 1262)."""
+
+ANY_LANGUAGE: Final = "any"
+"""Understand's word, in a ``Language:`` tag, for a metric with no language restriction."""
 
 
 class MetricCatalogue:
@@ -57,15 +74,70 @@ class MetricCatalogue:
         self.runner = runner
         self._metrics: dict[str, set[str]] = {}
         self._descriptions: dict[str, str] = {}
+        self._tags: dict[str, dict[str, list[str]] | None] = {}
 
     def available(self, language: str, scope: Scope) -> set[str]:
-        """The metric identifiers Understand computes for ``language`` at ``scope``."""
+        """The metric identifiers Understand computes for ``language`` at ``scope`` (5.1, 5.2).
+
+        Two sources, unioned, because 8.0 has two. ``Metric.list`` answers the built-ins of a
+        kind string; the metrics a ``.upy`` plugin computes are in **no** kind list at all
+        (measured on Build 1262: the Python routine kind answers 18 metrics and none of them is
+        ``CountGlobalsModified``), and are found by ``Metric.lookup`` with the tags that say
+        which targets and languages they apply to.
+
+        Without the second source a threshold on a plugin metric is refused by
+        ``config.validate`` as a metric Understand does not have, which is the wrong answer:
+        ``Ent.metric()`` computes it perfectly well.
+        """
         kind = kind_string(language, scope)
         found = self._metrics.get(kind)
         if found is None:
-            found = self._ask(kind)
+            found = self._ask(kind) | self._plugins(language, scope)
             self._metrics[kind] = found
         return found
+
+    def _plugins(self, language: str, scope: Scope) -> set[str]:
+        """The declared plugin metrics whose own tags name this language and this scope.
+
+        The declaration in ``config.metric_names`` supplies the *candidates* -- it is what
+        lets a threshold be spelled at all -- and the build's own tags decide. A build that
+        ships none of them answers nothing here and every plugin threshold is refused, which
+        is what a 6.5 install should do.
+
+        ``Any`` is Understand's word for no language restriction. ``C++`` matches a ``C`` tag
+        as well as a ``C++`` one, for the reason :data:`LANGUAGE_KINDS` records: Understand
+        tags the two separately and the Gate names the pair ``C++``.
+        """
+        candidates = sorted(
+            metric for metric, declared in PLUGIN_METRICS.items() if scope in declared.scopes
+        )
+        if not candidates:
+            return set()
+        target = PLUGIN_TARGETS[scope]
+        names = {language.casefold(), language_token(language), ANY_LANGUAGE}
+        return {
+            metric
+            for metric, tags in self._lookup(candidates).items()
+            if target in tags.get("targets", ())
+            and names & {word.casefold() for word in tags.get("languages", ())}
+        }
+
+    def _lookup(self, metrics: list[str]) -> dict[str, dict[str, list[str]]]:
+        """``Metric.lookup`` tags for each id, cached; an id this build lacks is absent.
+
+        ``None`` from the worker covers both a 7.x API with no ``lookup`` at all and an id
+        this build does not know, and neither is a metric that can be offered, so both are
+        dropped here rather than distinguished.
+        """
+        unknown = [metric for metric in metrics if metric not in self._tags]
+        if unknown:
+            answer = self.runner.run("catalogue", {"kinds": [], "lookup": unknown})
+            found = answer.get("lookup")
+            tagged = found if isinstance(found, dict) else {}
+            for metric in unknown:
+                entry = tagged.get(metric)
+                self._tags[metric] = entry if isinstance(entry, dict) else None
+        return {metric: tags for metric in metrics if (tags := self._tags.get(metric)) is not None}
 
     def describe(self, metric: str) -> str:
         """Understand's description of ``metric``, or the Gate's own for a synthetic one."""

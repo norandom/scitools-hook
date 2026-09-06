@@ -137,13 +137,17 @@ def test_a_language_understand_does_not_know_has_no_metrics_rather_than_an_error
 
 def test_each_language_and_scope_is_asked_about_once() -> None:
     # `config.validate` asks per threshold; a default configuration would otherwise start a
-    # subprocess for every one of them.
+    # subprocess for every one of them. Two questions per kind, not one: 8.0 has two sources,
+    # the kind's own metric list and the `Metric.lookup` tags of the plugin metrics, and both
+    # answers are cached.
     catalogue = a_catalogue({PYTHON_ROUTINE_KIND: PYTHON_ROUTINE_METRICS})
 
     catalogue.available("Python", "routine")
+    asked = list(runner_of(catalogue).ops)
     catalogue.available("python", "routine")
 
-    assert runner_of(catalogue).ops == ["catalogue"]
+    assert runner_of(catalogue).ops == asked
+    assert asked == ["catalogue", "catalogue"]
 
 
 def test_an_answer_without_the_kind_that_was_asked_about_is_a_broken_contract() -> None:

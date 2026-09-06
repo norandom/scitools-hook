@@ -28,6 +28,7 @@ from contract_project import (
     sample_project,  # noqa: F401 -- imported so the session fixture is registered here
 )
 
+from scitools_hook.analysis.recommend import recommend
 from scitools_hook.config.models import Limit, ThresholdSpec
 from scitools_hook.models.snapshot import EntityRecord, ProjectSnapshot
 
@@ -117,3 +118,26 @@ def _timed(project: SampleProject, settings: object):
 def test_contract_the_installation_these_tests_read_is_the_measured_one() -> None:
     """The figures above are Build 1262's; a different build is a different measurement."""
     assert real_env("upython").und.is_file()
+
+
+def test_contract_recommend_prices_a_plugin_metric(
+    sample_project: SampleProject,  # noqa: F811
+) -> None:
+    """Requirement 5.3: a metric an operator may configure is a metric this command advises on.
+
+    ``recommend`` is a pure function over a whole-project snapshot, so the only thing that
+    could stop it pricing a plugin metric is the value never arriving -- which is what the
+    test above proves it does, and what this one proves reaches the advice.
+    """
+    settings = asking(("routine", ROUTINE_PLUGIN))
+    snapshot = extract_with(
+        sample_project.db("alpha"), sample_project.root("alpha"), FILES, settings
+    )
+
+    advice = recommend(snapshot, settings.thresholds)
+
+    priced = [one for one in advice.advice if one.rule == f"routine.{ROUTINE_PLUGIN}"]
+    assert priced, [one.rule for one in advice.advice]
+    assert priced[0].distribution.count > 0, (
+        "a rule with no population measured is advice about nothing"
+    )
