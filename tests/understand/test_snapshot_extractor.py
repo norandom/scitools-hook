@@ -54,6 +54,7 @@ WIRE_KEYS: Final[frozenset[str]] = frozenset(
         "depth",
         "include_edges",
         "include_definitions",
+        "record_referenced",
         "parse_errors",
     }
 )

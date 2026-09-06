@@ -196,6 +196,12 @@ class ExtractRequest(DataModel):
     depth: int = Field(ge=1)
     include_edges: bool = True
     include_definitions: bool = False
+    record_referenced: bool = False
+    """Ask the worker whether anything in the project references each recorded routine.
+
+    Off unless the unused-routine rule is on (requirement 6.4). It costs one reference
+    query per **recorded** routine, and a run that would not read the answer should not pay
+    for it -- the same rule the plugin metrics follow one field up."""
 
     @field_validator("kinds_by_scope")
     @classmethod

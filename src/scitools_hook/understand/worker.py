@@ -370,6 +370,15 @@ TYPE_CHECKING_NAME: Final = "TYPE_CHECKING"
 """The guard whose body ``typing`` promises is never executed."""
 
 CALL_REFS: Final = "call"
+
+REFERENCE_REFS: Final = "callby, useby"
+"""What "something references this routine" is, asked of the routine (requirement 6.2).
+
+Measured on Build 1262 over 12 468 routines of this repository: the only kinds these two
+selectors answer with are ``Call`` (11 977) and ``Use`` (544). ``useby`` is not redundant --
+a routine passed as a value, registered as a handler or named in a decorator is *used* and
+never *called*, and reporting one of those as dead code is the way this rule loses its
+reader."""
 """Reference kinds leading from a routine to what it calls.
 
 Measured on build 1204: this one filter also matches ``Deref Call``, which is what a C++ call
@@ -651,6 +660,7 @@ class _Plan:
     depth: int
     include_edges: bool
     include_definitions: bool
+    referenced: bool
     parse_errors: list[dict[str, object]]
 
 
@@ -768,6 +778,7 @@ def _plan(request: Mapping[str, object]) -> _Plan:
         depth=_require_depth(request),
         include_edges=_require_bool(request, "include_edges", True),
         include_definitions=_require_bool(request, "include_definitions", False),
+        referenced=_require_bool(request, "record_referenced", False),
         parse_errors=_require_objects(request, "parse_errors"),
     )
 
@@ -1271,6 +1282,32 @@ class _Extractor:
         elif key.scope == "routine":
             self.routine_ents[key.token] = (ent, key.path)
 
+    def _referenced(self, ent: Any, scope: str) -> bool | None:
+        """Whether anything in the project calls or uses this routine (requirement 6.2).
+
+        ``None`` for every scope but ``routine``, and for a run that did not ask, which the
+        rule reports as unavailable rather than as a project full of dead code. The difference
+        between a measurement and its absence is what requirement 6.4 asks to stay visible.
+
+        **A reference from outside the analysis root counts for nothing.** Understand injects
+        the interpreter's own standard library into a Python project, and measured on Build
+        1262 over this repository, 332 routines are referenced *only* from those files. They
+        are not called by this project, and a rule that took a stub's reference as use would
+        stay silent about exactly the dead code it exists to find.
+
+        Asked of the routine rather than derived from the call graph, and asked for the
+        recorded entities only. The call graph is bounded to the forward closure of the
+        change (requirement 4.11), so a caller in an unchanged file is not in it -- deciding
+        "unused" from that would report every routine the change did not happen to reach.
+        """
+        if scope != "routine" or not self.plan.referenced:
+            return None
+        return any(
+            _project_path(container, self.plan.root) is not None
+            for ref in ent.refs(REFERENCE_REFS)
+            if (container := ref.file()) is not None
+        )
+
     def _record(
         self, ent: Any, key: _Key, line: int | None, metrics: Mapping[str, float]
     ) -> dict[str, object]:
@@ -1290,6 +1327,7 @@ class _Extractor:
             "language": str(ent.language()),
             "metrics": dict(metrics),
             "archs": self._nodes_of(key.path),
+            "referenced": self._referenced(ent, key.scope),
         }
 
     def _populations(self) -> dict[str, dict[str, list[float]]]:

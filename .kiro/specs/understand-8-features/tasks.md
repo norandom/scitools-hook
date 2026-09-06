@@ -151,7 +151,7 @@
   - _Requirements: 5.1, 5.2, 5.3_
 
 - [ ] 7. Unused routines as a structural rule
-- [ ] 7.1 Record whether anything references each project routine
+- [x] 7.1 Record whether anything references each project routine
   - The worker's whole-project call pass marks each routine record with whether any call or use reference originates in a project file; library files count for nothing
   - Done when the fake project shows the flag true for a called routine and false for one nothing reaches, and the contract project shows the fixture's known uncalled routine as unreferenced
   - _Depends: 6.1_
@@ -308,3 +308,8 @@
 - 6.2 (**the unavailable path is a refusal, not a drop**): no plugin metric is a shipped default (requirement 5.4), so a plugin threshold is always one somebody wrote, and a written threshold whose language cannot compute it is a `ConfigError` naming the metric, the language and the scope -- exactly what any other unknown metric gets. Only shipped defaults are dropped and reported.
 - 6.2: `recommend` needed no change. It prices `availability.thresholds`, the values come from the same snapshot the extractor built, and `--all` records every file -- verified end to end against the real build: `routine.CountGlobalsUsed  keep 3` with real per-routine values.
 - 6.2 (**contract**): `tests/contract/test_catalogue_plugins_contract.py` asserts the three measured claims against the installed build -- `CountGlobals*` offered to Python routines, `CognitiveComplexity` **not** (and offered to C++), `CountClassCoupledModified` to classes and not routines. Each names a metric and a language on both sides, so a catalogue that stopped filtering would fail.
+- 7.1 (**measured on Build 1262 over 12 468 routines of this repository**): `Ent.refs("callby, useby")` answers exactly two kinds, `Call` (11 977) and `Use` (544). `useby` is not redundant -- a routine passed as a value, registered as a handler or named in a decorator is *used* and never *called*, and reporting one of those as dead code is how this rule loses its reader.
+- 7.1 (**and this is the trap**): **332 routines are referenced only from library files** -- Understand injects the interpreter's own standard library into a Python project. A reference from outside the analysis root counts for nothing, or the rule stays silent about exactly the dead code it exists to find. The test is `_project_path(ref.file(), root) is not None`, which is the worker's own definition of project code rather than a second one.
+- 7.1: the flag is asked of the routine, not derived from the call graph. The call graph is bounded to the forward closure of the change (requirement 4.11), so a caller in an unchanged file is not in it, and deciding "unused" from it would report every routine the change did not happen to reach -- the opposite of requirement 6.2.
+- 7.1: `record_referenced` is off unless `structure.unused_routines` is set, and the query runs for **recorded** entities only, in `_record`. It is folded into `_record` rather than passed to it because a sixth parameter tripped `CountParams`, which is the same wall tasks 4.2 and 5.3 hit.
+- 7.1 (**contract**): the fixture is read in both directions -- `Engine.run` is called through `entry_point` and comes back referenced, `Engine.label` is a staticmethod nothing names and comes back unreferenced. A build that answered the same for both, in either direction, would pass a one-sided test and leave the rule silent or unusable.
