@@ -184,7 +184,7 @@
   - _Requirements: 7.4_
 
 - [ ] 9. The cost of a warm run
-- [ ] 9.1 (P) A snapshot cache keyed on everything that could change the document
+- [x] 9.1 (P) A snapshot cache keyed on everything that could change the document
   - Key over side, base commit, selection, the settings hash from 1.3, worker source hash, build and schema; get, put, prune to the newest eight, and a listing with commit, age and size
   - Done when unit tests show a hit on an identical key, a miss when each component changes, pruning at nine, and a corrupt entry treated as a miss and removed
   - _Depends: 1.3_
@@ -321,3 +321,6 @@
 - 8.1 (verified end to end on the real build): a range check over a project with an unresolvable import reports `analysis.accuracy 0.667 < 0.99 | warning blocking False`, prints `analysis accuracy: after 67% / before 100%` in the human report, and **exits 0**.
 - 8.2: the row is `after accuracy`, read from `SyncState` rather than measured -- `doctor` analyses nothing, and the figure belongs to the database that is there. `not measured` covers a 6.5 install, a build never asked and a repository nothing analysed; printing `0%` for any of those would be a measurement the Gate never made. Verified on 8.0: `after accuracy: 17%`.
 - 8.3 (**measured, and the answer is "keep both"**): on this repository, accuracy is **17%** (files parsed with neither error nor warning, of 274) while the call-resolution rate is **41% resolved / 27% external / 32% unresolved** over **22 980 call sites**. They count different things -- files against call sites -- and neither implies the other: a file can parse cleanly and still hold calls nothing can bind, and one warning sinks a file whose every call binds. Accuracy bounds the trust in every metric; the resolution rate bounds the trust in the reach and cycle rules. Requirement 7.4's "keep its own rate in the output" therefore stands, argued rather than deferred, and nothing was removed.
+- 9.1: the cache is `understand/snapshot_cache.py`, keyed on seven things -- side, commit, selection digest, analysis fingerprint, Understand build, **the worker's own source digest** and **the snapshot schema digest**. The last two are read rather than declared: a version constant is a thing to forget to bump, and the failure it produces (yesterday's document served for today's extraction code) is invisible. Requirement 8.7 says the cache must change no finding, and being certain the two runs asked the same question is the only way to keep that.
+- 9.1: the selection is a digest of the file **set**, so two runs naming the same files in a different order hit rather than miss. A corrupt or non-validating entry is a miss **and is removed**, or every later run pays the same failed read; a failure to write is silence, because a run that produced the right answer must not fail over an optimisation.
+- 9.1: `key_for(...)` is a module function rather than a classmethod -- `cls` counts towards `CountParams` and the key genuinely has six inputs. Same wall as tasks 4.2, 5.3 and 7.1.
