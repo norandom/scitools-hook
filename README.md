@@ -34,8 +34,8 @@ code for "blocking violations found".
 Or take the wheel from a tagged release, which the release workflow attaches to it:
 
 ```bash
-gh release download v0.1.0a8 --repo norandom/scitools-hook --pattern '*.whl'
-uv tool install ./scitools_hook-0.1.0a8-py3-none-any.whl
+gh release download v0.1.0a9 --repo norandom/scitools-hook --pattern '*.whl'
+uv tool install ./scitools_hook-0.1.0a9-py3-none-any.whl
 ```
 
 `scitools-hook` needs an existing SciTools Understand installation (`und` and the

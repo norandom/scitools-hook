@@ -20,8 +20,8 @@ wheel to the GitHub release for every `v*` tag, and flags the release as a pre-r
 automatically when the tag contains `a`, `b` or `rc`:
 
 ```bash
-gh release download v0.1.0a8 --repo norandom/scitools-hook --pattern '*.whl'
-uv tool install ./scitools_hook-0.1.0a8-py3-none-any.whl
+gh release download v0.1.0a9 --repo norandom/scitools-hook --pattern '*.whl'
+uv tool install ./scitools_hook-0.1.0a9-py3-none-any.whl
 ```
 
 There is no trusted publisher, no API token, and nothing to configure outside the
@@ -127,7 +127,7 @@ a CI job running `doctor` must not be told a commit had violations that were nev
 ```console
 $ scitools-hook doctor
 scitools-hook
-  version:           0.1.0a8
+  version:           0.1.0a9
   python:            3.14.4
 
 Understand

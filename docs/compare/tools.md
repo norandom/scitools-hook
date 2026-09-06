@@ -186,7 +186,7 @@ repos:
     hooks: [{id: ruff-check}, {id: ruff-format}]
 
   - repo: https://github.com/norandom/scitools-hook
-    rev: v0.1.0a8   # a tag of this repository
+    rev: v0.1.0a9   # a tag of this repository
     hooks: [{id: scitools-hook}]
 ```
 
