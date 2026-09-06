@@ -62,6 +62,7 @@ from typing import Final
 
 from scitools_hook import __version__
 from scitools_hook.analysis import baseline as baseline_rules
+from scitools_hook.analysis.accuracy import evaluate_accuracy
 from scitools_hook.analysis.classify import classify
 from scitools_hook.analysis.codecheck import map_violations
 from scitools_hook.analysis.ratchet import (
@@ -234,6 +235,7 @@ class CheckPipeline:
             parse_errors=_merge_parse_errors(analyses),
             tightened=self._adapt(plan.mode, after, specs, stored),
             highest=outcome.highest,
+            accuracy=_figures(analyses),
             understand_sarif=for_run(
                 self.ctx.settings,
                 self._dbm.paths(),
@@ -283,6 +285,9 @@ class CheckPipeline:
                 evaluate_ratchet(after, before, affected.keys, effective, self.ctx.settings.scope)
             )
         findings.extend(self._structure(after, before, affected))
+        findings.extend(
+            evaluate_accuracy(_figures(seen.analyses), self.ctx.settings.analysis.accuracy_floor)
+        )
         findings.extend(self._violations(affected.files & plan.files))
         # What the before side could not read decides which violations are newly *measured*
         # rather than newly written; `_finish` hands it to `classify`. Set here because this
@@ -555,6 +560,21 @@ class CheckPipeline:
         """Say something on the diagnostics channel; findings never travel this way (req 7.7)."""
         for message in messages:
             self.ctx.progress.note(message)
+
+
+def _figures(analyses: Mapping[Side, AnalyzeResult]) -> dict[str, float]:
+    """Each side's resolution figure, with the sides that have none left out (req 7.1).
+
+    Absent rather than zero. ``None`` is what a 6.5 install reports, what a build that was not
+    asked reports, and what a pass with nothing to analyse reports -- and a project that
+    resolved nothing must not read like any of them. A warm side answers from what the last
+    whole-project pass recorded, which ``SyncState.accuracy`` carries for exactly this.
+    """
+    return {
+        side: result.accuracy
+        for side, result in sorted(analyses.items())
+        if result.accuracy is not None
+    }
 
 
 # --- helpers ------------------------------------------------------------------------

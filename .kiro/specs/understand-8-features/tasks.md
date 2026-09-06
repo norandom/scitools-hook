@@ -165,19 +165,19 @@
   - _Requirements: 6.1, 6.3, 6.4, 6.5_
 
 - [ ] 8. The accuracy of an analysis
-- [ ] 8.1 Evaluate the accuracy floor and carry the figures into the check outputs
+- [x] 8.1 Evaluate the accuracy floor and carry the figures into the check outputs
   - Per-side accuracy in verbose output and in the JSON document; a configured floor raises a non-blocking finding when a side falls below it, never changes the exit code, and is absent without a floor or a figure; the before figure comes from the analysis or, on a reused before side, from the sync state
   - Done when unit tests cover the finding and its absence, the JSON schema test sees the new fields, and an e2e run on 8.0 prints both sides' figures in verbose output
   - _Depends: 1.5, 1.2, 3.3, 4.2_
   - _Requirements: 7.1, 7.3_
 
-- [ ] 8.2 Print the accuracy of the after database in doctor
+- [x] 8.2 Print the accuracy of the after database in doctor
   - A row with the after database's figure from the sync state, or `not measured` when none was recorded
   - Done when `doctor` on 8.0 prints the figure and the fixture seam prints `not measured`
   - _Depends: 8.1_
   - _Requirements: 7.2_
 
-- [ ] 8.3 Measure how accuracy relates to the snapshot's resolution rate
+- [x] 8.3 Measure how accuracy relates to the snapshot's resolution rate
   - On the contract project, record both figures side by side and what each excludes; keep the resolution rate in the output
   - Done when the research log carries the two figures and the stated relation, and no output field was removed
   - _Depends: 8.1_
@@ -317,3 +317,7 @@
 - 7.2: **a deleted routine needs no rule.** It is absent from the after snapshot, so requirement 6.5 costs no code and is asserted rather than implemented. Only affected routines are judged: this is a gate on a commit, not an audit.
 - 7.2: `referenced is None` for **every** affected routine is the unavailable case; one `None` among measured ones is that routine's absence, not the rule's. The reachable cause is a warm cache holding a snapshot extracted before the rule was turned on, and the message says `db rebuild`.
 - 7.2 (**e2e**): `tests/e2e/test_unused_routine.py` runs against the **clean** fixture, not the violating one, because the property is "prints the warning and exits 0" and the violating snapshot carries blocking findings by construction. The fixture snapshots now carry `referenced`: both routines `true` in `violating`, `pkg.other.scan` `false` in `fixed`.
+- 8.1: `analysis.accuracy` is a rule of the analysis rather than of the code, so it joins `ANALYSIS_RULES` beside `parse_error`. It is a **warning that never blocks** and that is argued rather than defaulted: a poor figure is usually a third-party package, an interpreter version Understand does not model, or a language feature it has not caught up with, none of which the person making the commit can fix. `RunResult.accuracy` carries the figures per side, absent rather than zero for a side that has none.
+- 8.1 (verified end to end on the real build): a range check over a project with an unresolvable import reports `analysis.accuracy 0.667 < 0.99 | warning blocking False`, prints `analysis accuracy: after 67% / before 100%` in the human report, and **exits 0**.
+- 8.2: the row is `after accuracy`, read from `SyncState` rather than measured -- `doctor` analyses nothing, and the figure belongs to the database that is there. `not measured` covers a 6.5 install, a build never asked and a repository nothing analysed; printing `0%` for any of those would be a measurement the Gate never made. Verified on 8.0: `after accuracy: 17%`.
+- 8.3 (**measured, and the answer is "keep both"**): on this repository, accuracy is **17%** (files parsed with neither error nor warning, of 274) while the call-resolution rate is **41% resolved / 27% external / 32% unresolved** over **22 980 call sites**. They count different things -- files against call sites -- and neither implies the other: a file can parse cleanly and still hold calls nothing can bind, and one warning sinks a file whose every call binds. Accuracy bounds the trust in every metric; the resolution rate bounds the trust in the reach and cycle rules. Requirement 7.4's "keep its own rate in the output" therefore stands, argued rather than deferred, and nothing was removed.

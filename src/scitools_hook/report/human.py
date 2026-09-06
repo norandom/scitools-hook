@@ -143,6 +143,7 @@ _UNAVAILABLE_LEAD: Final[tuple[str, ...]] = (
 )
 IGNORED_HEADER: Final = "ignored entities: matched an ignore pattern, so no rule ran on them"
 TIGHTENED_HEADER: Final = "tightened limits: the baseline moved down to what this run measured"
+ACCURACY_HEADER: Final = "analysis accuracy: how much of each side Understand resolved"
 COMPANION_HEADER: Final = "Understand's own SARIF: uploaded beside the Gate's, never merged into it"
 HIGHEST_HEADER: Final = (
     "highest values: the largest value per metric, whether or not it breaks a limit"
@@ -506,9 +507,24 @@ def _note_sections(
         sections.append(_tightened_section(result.tightened, style))
     if show_highest and result.highest:
         sections.append(_highest_section(result.highest, style))
+    if result.accuracy:
+        sections.append(_accuracy_section(result.accuracy, style))
     if result.understand_sarif:
         sections.append(_companion_section(result.understand_sarif, style))
     return sections
+
+
+def _accuracy_section(figures: Mapping[str, float], style: _Style) -> str:
+    """What share of each side's files Understand parsed with no error and no warning (7.1).
+
+    A run fact rather than a finding: it says how much to trust everything above it, and a
+    figure alone breaks no rule. The finding, where a floor is configured, is
+    ``analysis.accuracy`` and appears with the others.
+    """
+    lines = [style.strong(ACCURACY_HEADER)]
+    for side, found in sorted(figures.items()):
+        lines.append(f"  {side}  {found:.0%}")
+    return "\n".join(lines)
 
 
 def _companion_section(companions: Sequence[UnderstandSarif], style: _Style) -> str:

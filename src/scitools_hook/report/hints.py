@@ -45,6 +45,7 @@ import re
 from collections.abc import Iterator, Mapping
 from typing import Final
 
+from scitools_hook.analysis.accuracy import RULE as ACCURACY_RULE
 from scitools_hook.config.metric_names import format_metric_name
 from scitools_hook.errors import ConfigError
 from scitools_hook.models.findings import (
@@ -284,6 +285,12 @@ _SHARED_METRIC_HINTS: Final[dict[str, str]] = {
 """Metrics that appear in several scopes and read the same way in all of them."""
 
 _PARSE_HINTS: Final[dict[str, str]] = {
+    ACCURACY_RULE: (
+        "Nothing in this commit caused it and nothing in this commit fixes it. Look at what "
+        "Understand could not resolve -- a third-party package it has no source for, an "
+        "interpreter version it does not model -- or lower analysis.accuracy_floor to the "
+        "figure this project actually reaches"
+    ),
     PARSE_ERROR_RULE: (
         "Understand stopped reading this file at the line named and never saw the rest of it, "
         "so nothing below that line was checked: rewrite the construct there in a spelling "

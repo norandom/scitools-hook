@@ -107,10 +107,11 @@ def codecheck_finding() -> Finding:
     )
 
 
-def full_run() -> RunResult:
+def full_run(**extra: object) -> RunResult:
     """A run that fills every field of :class:`RunResult`, so the round trip proves coverage."""
     findings = [threshold_finding(), arch_finding(), codecheck_finding()]
     return RunResult(
+        **extra,  # type: ignore[arg-type]
         tool_version="0.1.0",
         understand_version="Understand 7.0",
         repo_root="/repo",
@@ -305,6 +306,18 @@ def test_findings_keep_the_order_the_run_produced() -> None:
         "structure.coupling",
         "codecheck.CPP_F016",
     ]
+
+
+def test_the_document_carries_each_sides_analysis_accuracy() -> None:
+    """Requirement 7.1: the figure that says how much to trust everything else in here."""
+    document = payload(full_run(accuracy={"after": 0.17, "before": 0.9}))
+
+    assert document["accuracy"] == {"after": 0.17, "before": 0.9}
+
+
+def test_a_run_with_no_figure_carries_an_empty_mapping_and_not_a_zero() -> None:
+    """A 6.5 install reports none; a project that resolved nothing is a different claim."""
+    assert payload(full_run())["accuracy"] == {}
 
 
 def test_schema_version_is_the_first_key() -> None:

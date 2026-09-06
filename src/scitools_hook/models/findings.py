@@ -58,7 +58,7 @@ StructureRuleName = Literal[
 STRUCTURE_RULES: Final[tuple[StructureRuleName, ...]] = get_args(StructureRuleName)
 """Every structural rule name, in the order they are documented in the design."""
 
-AnalysisRuleName = Literal["parse_error"]
+AnalysisRuleName = Literal["parse_error", "accuracy"]
 ANALYSIS_RULES: Final[tuple[AnalysisRuleName, ...]] = get_args(AnalysisRuleName)
 """Rules about the analysis itself rather than about the code it measured (req 2.6).
 
@@ -275,6 +275,13 @@ class RunResult(DataModel):
     parse_errors: list[ParseError] = Field(default_factory=list)
     tightened: list[TightenedLimit] = Field(default_factory=list)
     highest: list[HighestValue] = Field(default_factory=list)
+    accuracy: dict[str, float] = Field(default_factory=dict)
+    """What share of each side's analysis Understand resolved (requirement 7.1).
+
+    Keyed by side. A side with no figure is absent rather than zero: a 6.5 install reports
+    none, and so does a warm run that analysed nothing, and neither of those is a project
+    that resolved nothing."""
+
     understand_sarif: list[UnderstandSarif] = Field(default_factory=list)
     """Understand's own SARIF documents, beside the Gate's rather than merged into it (2.1).
 

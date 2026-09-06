@@ -223,6 +223,20 @@ def _cache_rows(paths: CachePaths | None, state: SyncState | None) -> list[tuple
     return rows + _state_rows(state)
 
 
+def _accuracy(state: SyncState) -> str:
+    """What share of the after database Understand resolved, or that nothing recorded it (7.2).
+
+    Read from the sync state rather than measured, because ``doctor`` analyses nothing: the
+    figure belongs to the database that is there, and the run that built it is the one that
+    could ask for it.
+
+    ``not measured`` covers a 6.5 install, a build that was never asked, and a repository
+    nothing has analysed. None of those is a resolution of zero.
+    """
+    found = state.accuracy.get("after")
+    return "not measured" if found is None else f"{found:.0%}"
+
+
 def _before_route(state: SyncState) -> str:
     """How the before database was built, and for a commit-built one, from what (req 3.6).
 
@@ -249,6 +263,7 @@ def _state_rows(state: SyncState | None) -> list[tuple[str, str]]:
         ("after target", f"{state.after_target or 'none'} ({state.after_tree_id or 'no id'})"),
         ("before commit", state.before_commit or "none"),
         ("before route", _before_route(state)),
+        ("after accuracy", _accuracy(state)),
         ("languages", ", ".join(state.languages) or "none recorded"),
         ("built with", state.created_with or "unknown"),
     ]

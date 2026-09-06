@@ -71,3 +71,33 @@ def test_doctor_says_none_before_any_before_side_has_been_built(
     paths.state.write_text(json.dumps({"languages": ["Python"]}), encoding="utf-8")
     result = invoke(["doctor"], cwd=builder.path, env=env_for(tmp_path))
     assert one_row(result.stdout, "before route") == "none"
+
+
+def test_doctor_reports_the_after_databases_accuracy(tmp_path: Path, git_repo: MakeGitRepo) -> None:
+    """Requirement 7.2: the figure belongs to the database, so it is read and not measured."""
+    builder = seeded(git_repo)
+    paths = cache_paths(tmp_path, builder)
+    paths.root.mkdir(parents=True, exist_ok=True)
+    paths.state.write_text(
+        json.dumps({"languages": ["Python"], "accuracy": {"after": 0.42, "before": 0.9}}),
+        encoding="utf-8",
+    )
+    result = invoke(["doctor"], cwd=builder.path, env=env_for(tmp_path))
+    assert result.exit_code == int(ExitCode.OK), result.stderr
+    assert one_row(result.stdout, "after accuracy") == "42%"
+
+
+def test_doctor_says_not_measured_when_nothing_recorded_one(
+    tmp_path: Path, git_repo: MakeGitRepo
+) -> None:
+    """A 6.5 install, a build never asked, and a repository nothing analysed read alike here.
+
+    None of them is a resolution of zero, and printing ``0%`` for any of them would be a
+    measurement the Gate never made.
+    """
+    builder = seeded(git_repo)
+    paths = cache_paths(tmp_path, builder)
+    paths.root.mkdir(parents=True, exist_ok=True)
+    paths.state.write_text(json.dumps({"languages": ["Python"]}), encoding="utf-8")
+    result = invoke(["doctor"], cwd=builder.path, env=env_for(tmp_path))
+    assert one_row(result.stdout, "after accuracy") == "not measured"

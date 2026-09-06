@@ -166,6 +166,33 @@ Three things follow, and the third is the decision.
 - **Findings**: `und analyze -accuracy` appends `25 of 92 parsed files had no errors or warnings (27%)` after the summary line. The numerator excludes files with warnings, and this repository's 72 warnings are unresolved imports of third-party packages under the pinned interpreter. The snapshot's call-resolution rate measures how many call sites bound to a routine -- a different quantity.
 - **Implications**: The figure is parsed from the analysis output, carried per side, printed, and compared with the resolution rate on the contract project as a task; it does not replace the rate.
 
+### Accuracy against the snapshot's own resolution rate (task 8.3, requirement 7.4)
+
+Both measured on Build 1262 over this repository's own after database, 2026-09-06.
+
+| | figure | what it counts | what it excludes |
+| --- | --- | --- | --- |
+| `und analyze -accuracy` | **17%** (from `SyncState.accuracy`) | **files** parsed with neither an error nor a warning, out of 274 | says nothing about whether a call binds |
+| the snapshot's call resolution | **41%** bound to a project routine, 27% to something callable outside it, 32% unresolved, over **22 980 call sites** | **call sites**, bucketed by what the target is | says nothing about parse errors or warnings |
+
+**They are not substitutes and neither implies the other.** A file can parse with no warning
+at all and still hold calls Understand cannot bind -- a dynamic dispatch, an attribute on an
+untyped parameter, a method looked up on a value whose type is not inferable -- and it counts
+as fully accurate. A file with one warning drags the accuracy figure down while every call in
+it binds perfectly.
+
+The two answer different questions and the Gate needs both:
+
+* **accuracy** answers *how much of this project did Understand read properly*, which bounds
+  the trust in every metric, because a file it could not finish contributes nothing below the
+  error;
+* **the resolution rate** answers *how much of the call graph is real*, which bounds the trust
+  in the reach and cycle rules specifically, because an unresolved call site is an edge that
+  is missing rather than one that is absent.
+
+So requirement 7.4's instruction stands and is now argued rather than deferred: **the
+resolution rate stays in the output.** Nothing was removed for task 8.3.
+
 ### The cost of a warm run (requirement 8)
 - **Context**: Where do 32.6 s go?
 - **Sources Consulted**: `/usr/bin/time -v` around `check --worktree` with one changed line (twice), around `check --all`, and around a no-change run; `runner/pipeline.py` (`Engine.observe`); `analysis/affected.py` (`resolve`); `understand/worker.py` (`_neighbourhood`, `_collect_edges`).

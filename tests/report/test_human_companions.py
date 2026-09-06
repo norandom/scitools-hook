@@ -12,11 +12,17 @@ can move an exit code.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from scitools_hook.models.findings import RunResult, UnderstandSarif
-from scitools_hook.report.human import COMPANION_HEADER, ColorMode, Verbosity, render_human
+from scitools_hook.report.human import (
+    ACCURACY_HEADER,
+    COMPANION_HEADER,
+    ColorMode,
+    Verbosity,
+    render_human,
+)
 
 COMPANIONS: Final = (
     UnderstandSarif(
@@ -29,7 +35,10 @@ COMPANIONS: Final = (
 """One document written beside the Gate's and one that could not be produced."""
 
 
-def run(understand_sarif: Sequence[UnderstandSarif] = ()) -> RunResult:
+def run(
+    understand_sarif: Sequence[UnderstandSarif] = (),
+    accuracy: Mapping[str, float] | None = None,
+) -> RunResult:
     """A run that found nothing and carries only the companions under test."""
     return RunResult(
         tool_version="0.1.0",
@@ -39,6 +48,7 @@ def run(understand_sarif: Sequence[UnderstandSarif] = ()) -> RunResult:
         started_at="2026-01-01T09:00:00Z",
         seconds=1.5,
         understand_sarif=list(understand_sarif),
+        accuracy=dict(accuracy or {}),
     )
 
 
@@ -77,3 +87,26 @@ def test_quiet_mode_drops_the_companion_section_with_the_other_notes() -> None:
     text = render_human(run(understand_sarif=COMPANIONS), Verbosity.QUIET, ColorMode.OFF)
 
     assert COMPANION_HEADER not in text
+
+
+# --- the analysis accuracy (requirement 7.1) ---------------------------------------------
+
+
+def test_each_sides_resolution_is_printed_as_a_run_fact() -> None:
+    """It says how much to trust everything above it, and a figure alone breaks no rule."""
+    text = render_human(run(accuracy={"after": 0.17, "before": 0.9}), color=ColorMode.OFF)
+
+    assert ACCURACY_HEADER in text
+    assert "  after  17%" in text
+    assert "  before  90%" in text
+
+
+def test_a_run_with_no_figure_prints_no_section() -> None:
+    """A 6.5 install must read exactly as it did before the switch existed."""
+    assert ACCURACY_HEADER not in render_human(run(), color=ColorMode.OFF)
+
+
+def test_quiet_mode_drops_it_with_the_other_notes() -> None:
+    text = render_human(run(accuracy={"after": 0.17}), Verbosity.QUIET, ColorMode.OFF)
+
+    assert ACCURACY_HEADER not in text
