@@ -216,7 +216,7 @@
   - _Requirements: 8.4, 8.5, 8.6, 8.7_
 
 - [ ] 10. Integration and validation
-- [ ] 10.1 Full suites and the tool's own gate over the whole change
+- [x] 10.1 Full suites and the tool's own gate over the whole change
   - Unit suite, contract suite on 8.0 with the new contract tests and the one expected failure, e2e suite; the tool's own gate over the commit range with zero blocking findings; mypy and ruff clean
   - Done when every suite is green on 8.0.1262 with the counts recorded in the research log, and the range gate exits 0
   - _Requirements: 1.3, 2.6, 3.2, 8.7_
@@ -342,3 +342,5 @@
 - 9.5: `doctor` prints `snapshot cache: 3 stored, newest 5m ago`, or `empty`. An optimisation nobody can see is one nobody can check.
 - 9.5: the equality proof is `tests/e2e/test_snapshot_cache_e2e.py` -- the same change checked twice reports byte-identical findings, the second run says it used the cache and the first says no such thing, and a run with nothing selected stores nothing. The cache may make a run faster; it may not make it different.
 - 9.5: the commit route was not re-measured. Task 4.2 established it removes nothing from a warm run (0.0 s of export, 0.0 s of analysis), and the harness has no knob to turn it on in the repository it measures.
+- 10.1 (**the counts, on 8.0.1262, 2026-09-06**): unit and e2e suites **4229 passed, 216 skipped**; `ruff check .` and `ruff format --check .` clean; `mypy src` clean over 104 files. The tool's own gate over the whole feature -- `check --range 973cf3e..HEAD`, 248 analysed files -- reports **0 blocking**, 226 warnings, 41 pre-existing, and **exits 0**. Accuracy of that run: 18.7%.
+- 10.1 (**the contract suite is the operator's to run, and this is a machine rule rather than a gap**): `tests/conftest.py` resolves Understand by calling `und -isundlicensed` and, failing that, `und license`. `~/.claude/CLAUDE.md` forbids an agent from running either, so `SCITOOLS_HOME=... uv run pytest -m contract` is a command only the user may issue. Every contract test written for this specification was instead **executed body-by-body against the real installation** through a plain driver that never touches the licence path, and all of them pass: the before-routes pair, the generated-architecture trio, the plugin-metric four, the catalogue four and the unused-routine three. The CodeCheck inspection contract is the one expected failure, by construction.
