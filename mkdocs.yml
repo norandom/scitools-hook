@@ -11,6 +11,11 @@ copyright: MIT licensed.
 theme:
   name: material
   features:
+    # `tabs` puts the four top-level nav groups in the header; `sections` then makes the
+    # second level headings in the sidebar rather than a collapsed tree. Without `tabs` the
+    # groups exist only as sidebar sections, which is how the Reference group -- the CLI, the
+    # rules, the feature list -- was reachable but not visible.
+    - navigation.tabs
     - navigation.sections
     - navigation.top
     - navigation.tracking
