@@ -197,7 +197,7 @@
   - _Depends: 7.1_
   - _Requirements: 8.3_
 
-- [ ] 9.3 Narrow a snapshot in-process to what the second pass used to extract
+- [x] 9.3 Narrow a snapshot in-process to what the second pass used to extract
   - A narrowing operation keeps entities in the given files and edges within their one ring, mirroring the worker's edge scoping, and leaves populations, call graph, architecture nodes and edges, parse errors and unavailable metrics untouched
   - Done when a unit test on the fake project shows the narrowed two-ring document equal to a document extracted for the narrowed set directly
   - _Depends: 9.2_
@@ -328,3 +328,7 @@
 - 9.2 (**one field, not two**): the recorded set *replaces* `plan.files` via `dataclasses.replace` rather than sitting beside it. Every reader of that field -- the record test, the edge neighbourhood, the call graph's seeds -- wants the widened set, which is exactly what the second pass used to be handed. A second field would be a second answer to one question, and the gate refused it anyway (`CountDeclInstanceVariable` 15 -> 16).
 - 9.2: `_widened` is a module function because `_Extractor` is three past `CountClassCoupled` and the gate counts a `frozenset(...)` **constructor call in a method** exactly as it counts a field. That is worth knowing before the next attempt: to keep a class's coupling flat, keep container construction out of it.
 - 9.2: rings are capped at two, refused above with a `BadRequest`. Two is the widest ring any rule reads -- the affected set is one step and the rules that look past it read one more -- and a larger number would record entities nothing consumes.
+- 9.3: `analysis/narrow.py::narrow(snapshot, files)` cuts entities to the given files and edges to those files **plus one dependency step in either direction**, which is how `worker._neighbourhood` scopes them. Both directions matter: an edge *into* an affected file is as much a fact about the change as one out of it, and the fan-in rule reads exactly the first kind.
+- 9.3 (**what is deliberately not narrowed**): populations, the call graph, the architecture, the parse errors, the unavailable metrics and the definitions. Each is computed over the **database** rather than over the request, so that a project-wide percentile is a statement about the project; cutting them would turn every one into a statement about the change, which is the bug this module exists to avoid rather than introduce.
+- 9.3: the proof is `narrow(wide, S) == extract(files=S)` on the fake project, for both sets a run narrows to -- the selection and the affected neighbourhood. That is requirement 8.7 as a test: one pass plus narrowing changes nothing a rule can see.
+- 9.3: the tests live in `tests/understand/` and not `tests/analysis/` -- `api_fakes` is importable from that directory alone, because the test directories carry no `__init__.py`, and the claim can only be made against a real extraction.
