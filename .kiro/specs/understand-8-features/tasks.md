@@ -191,7 +191,7 @@
   - _Requirements: 8.2, 8.6_
   - _Boundary: SnapshotCache_
 
-- [ ] 9.2 Record two rings of neighbourhood in one worker pass
+- [x] 9.2 Record two rings of neighbourhood in one worker pass
   - A `neighbourhood_rings` request key; zero keeps today's behaviour; two records entities of the selected files and of the files one and two dependency steps away, with edges scoped as the existing single-ring rule scopes them
   - Done when the fake project shows the second ring recorded at two and absent at zero, and the whole-project walks run once per call as before
   - _Depends: 7.1_
@@ -324,3 +324,7 @@
 - 9.1: the cache is `understand/snapshot_cache.py`, keyed on seven things -- side, commit, selection digest, analysis fingerprint, Understand build, **the worker's own source digest** and **the snapshot schema digest**. The last two are read rather than declared: a version constant is a thing to forget to bump, and the failure it produces (yesterday's document served for today's extraction code) is invisible. Requirement 8.7 says the cache must change no finding, and being certain the two runs asked the same question is the only way to keep that.
 - 9.1: the selection is a digest of the file **set**, so two runs naming the same files in a different order hit rather than miss. A corrupt or non-validating entry is a miss **and is removed**, or every later run pays the same failed read; a failure to write is silence, because a run that produced the right answer must not fail over an optimisation.
 - 9.1: `key_for(...)` is a module function rather than a classmethod -- `cls` counts towards `CountParams` and the key genuinely has six inputs. Same wall as tasks 4.2, 5.3 and 7.1.
+- 9.2: `neighbourhood_rings` widens **what is recorded**, never what is walked. The walk over every entity of every scope is the expensive half and it still happens once; the key only moves the `key.path in plan.files` test that decides whether a record is appended. A test asserts that directly by counting the walk's own metric call on an entity outside the selection.
+- 9.2 (**one field, not two**): the recorded set *replaces* `plan.files` via `dataclasses.replace` rather than sitting beside it. Every reader of that field -- the record test, the edge neighbourhood, the call graph's seeds -- wants the widened set, which is exactly what the second pass used to be handed. A second field would be a second answer to one question, and the gate refused it anyway (`CountDeclInstanceVariable` 15 -> 16).
+- 9.2: `_widened` is a module function because `_Extractor` is three past `CountClassCoupled` and the gate counts a `frozenset(...)` **constructor call in a method** exactly as it counts a field. That is worth knowing before the next attempt: to keep a class's coupling flat, keep container construction out of it.
+- 9.2: rings are capped at two, refused above with a `BadRequest`. Two is the widest ring any rule reads -- the affected set is one step and the rules that look past it read one more -- and a larger number would record entities nothing consumes.

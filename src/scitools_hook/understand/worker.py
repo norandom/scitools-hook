@@ -47,7 +47,7 @@ import os
 import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, NoReturn, TextIO
 
 OPS: Final[tuple[str, ...]] = ("ping", "catalogue", "archs", "snapshot", "impact", "graphs")
@@ -661,6 +661,7 @@ class _Plan:
     include_edges: bool
     include_definitions: bool
     referenced: bool
+    rings: int
     parse_errors: list[dict[str, object]]
 
 
@@ -669,6 +670,14 @@ def _require_bool(request: Mapping[str, object], key: str, default: bool) -> boo
     value = request.get(key, default)
     if not isinstance(value, bool):
         raise _RequestError("BadRequest", f"{key!r} must be a boolean, got {value!r}")
+    return value
+
+
+def _require_rings(request: Mapping[str, object]) -> int:
+    """How many dependency steps beyond the selection to record; zero by default (req 8.3)."""
+    value = request.get("neighbourhood_rings", 0)
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 2:
+        raise _RequestError("BadRequest", f"'neighbourhood_rings' must be 0, 1 or 2, got {value!r}")
     return value
 
 
@@ -779,6 +788,7 @@ def _plan(request: Mapping[str, object]) -> _Plan:
         include_edges=_require_bool(request, "include_edges", True),
         include_definitions=_require_bool(request, "include_definitions", False),
         referenced=_require_bool(request, "record_referenced", False),
+        rings=_require_rings(request),
         parse_errors=_require_objects(request, "parse_errors"),
     )
 
@@ -815,6 +825,21 @@ def _is_project(ent: Any, root: str) -> bool:
     one outside the analysis root is refused by exactly the same rule.
     """
     return _project_path(ent, root) is not None or _container_of(ent, root) is not None
+
+
+def _widened(
+    selection: frozenset[str], rings: int, step: Callable[[str], Iterable[str]]
+) -> frozenset[str]:
+    """``selection`` widened by ``rings`` dependency steps, each step taken from the last set.
+
+    A module function so that the extractor never names a container type of its own: the class
+    is three past its ``CountClassCoupled`` limit already, and the gate counts a constructor
+    call in a method exactly as it counts a field.
+    """
+    found = set(selection)
+    for _ in range(rings):
+        found |= {other for name in list(found) for other in step(name)}
+    return frozenset(found)
 
 
 def _locate(ent: Any, scope: str, root: str) -> tuple[str, int | None] | None:
@@ -1005,6 +1030,11 @@ class _Extractor:
         """Extract everything the snapshot holds and answer with its wire form."""
         _check_root(self.db, self.plan.kinds.get("file"), self.plan.db, self.plan.root)
         self._read_architecture()
+        # The recorded set replaces the selection rather than sitting beside it: every
+        # reader of `plan.files` -- the record test, the edge neighbourhood, the call
+        # graph's seeds -- wants the widened set, which is exactly what the second pass
+        # used to be given. A second field would be a second answer to one question.
+        self.plan = replace(self.plan, files=self._recorded_files())
         for scope in SNAPSHOT_SCOPES:
             self._read_scope(scope)
         document: dict[str, object] = {
@@ -1178,6 +1208,37 @@ class _Extractor:
         if scope == "routine":
             wanted |= {metric for _, metric in self.plan.populations.get("project", ())}
         return wanted
+
+    def _recorded_files(self) -> frozenset[str]:
+        """The files whose entities this extraction records (requirement 8.3).
+
+        ``rings`` of zero is the selection itself, which is what every extraction did before
+        this key existed and what whole-project mode still asks for. Two is the selection plus
+        the files one and two dependency steps away -- the set the check pipeline used to
+        obtain by running a **second** whole-project walk, which is the expensive half.
+
+        The file entities have to be indexed before the walk can be widened, since the widening
+        follows their dependencies. That costs one pass over the file kind and no metric read
+        at all; the walk that follows would have built the same index anyway.
+        """
+        if self.plan.rings <= 0:
+            return self.plan.files
+        self._index_files()
+        return _widened(self.plan.files, self.plan.rings, self._ring_step)
+
+    def _ring_step(self, path: str) -> list[str]:
+        """The files one dependency step from ``path``, in either direction."""
+        return self._targets(path, self._file_of) if path in self.file_ents else []
+
+    def _index_files(self) -> None:
+        """Fill ``file_ents`` without recording anything, so the rings can be walked."""
+        kind = self.plan.kinds.get("file")
+        if kind is None:
+            return
+        for ent in self.db.ents(kind):
+            located = _locate(ent, "file", self.plan.root)
+            if located is not None:
+                self.file_ents[located[0]] = ent
 
     def _read_scope(self, scope: str) -> None:
         """Walk one element scope once: population values for all of it, records for the files."""

@@ -197,6 +197,17 @@ class ExtractRequest(DataModel):
     include_edges: bool = True
     include_definitions: bool = False
     record_referenced: bool = False
+    neighbourhood_rings: int = Field(default=0, ge=0, le=2)
+    """How many dependency steps beyond the selection to record entities for (req 8.3).
+
+    ``0`` records the selected files and nothing else, which is what every extraction did
+    before this key existed. ``2`` records the selection and the files one and two steps
+    away, which is exactly the set the check pipeline used to obtain with a **second**
+    whole-project walk -- and the walk is the expensive half, not the recording.
+
+    Capped at two because that is the widest ring any rule reads: the affected set is one
+    step and the rules that look past it read one more. A larger number would record
+    entities nothing consumes and cost the document size for nothing."""
     """Ask the worker whether anything in the project references each recorded routine.
 
     Off unless the unused-routine rule is on (requirement 6.4). It costs one reference
