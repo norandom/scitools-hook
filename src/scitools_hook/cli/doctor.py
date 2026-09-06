@@ -33,7 +33,7 @@ import typer
 from scitools_hook import __version__
 from scitools_hook.cli import common
 from scitools_hook.cli.config_cmd import render_settings
-from scitools_hook.models.cache import CachePaths, SyncState
+from scitools_hook.models.cache import CachePaths, SnapshotEntry, SyncState
 from scitools_hook.models.understand import (
     Feature,
     FeatureReport,
@@ -99,7 +99,10 @@ def render_report(report: DoctorReport) -> str:
         _section("scitools-hook", [("version", __version__), ("python", report.python)]),
         _section("Understand", _understand_rows(report.understand)),
         _section("Repository", _git_rows(report.git)),
-        _section("Analysis cache", _cache_rows(report.cache, report.state)),
+        _section(
+            "Analysis cache",
+            _cache_rows(report.cache, report.state) + [_snapshot_row(report.snapshots)],
+        ),
         _listed("Problems", report.problems or [NONE_FOUND]),
         _listed(
             "Configuration",
@@ -221,6 +224,27 @@ def _cache_rows(paths: CachePaths | None, state: SyncState | None) -> list[tuple
         ("sync state", str(paths.state)),
     ]
     return rows + _state_rows(state)
+
+
+def _snapshot_row(entries: Sequence[SnapshotEntry]) -> tuple[str, str]:
+    """How many snapshot documents are stored and how old the newest is (requirement 8.6).
+
+    An optimisation nobody can see is one nobody can check. An operator who wonders why a
+    check is slow should be able to read whether the cache is doing anything at all, and
+    ``empty`` is a perfectly good answer for a repository whose first run has not finished.
+    """
+    if not entries:
+        return ("snapshot cache", "empty")
+    return ("snapshot cache", f"{len(entries)} stored, newest {_age(entries[0].seconds)}")
+
+
+def _age(seconds: float) -> str:
+    """A duration an operator reads at a glance rather than a float of seconds."""
+    if seconds < 90:
+        return f"{seconds:.0f}s ago"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m ago"
+    return f"{seconds / 3600:.0f}h ago"
 
 
 def _accuracy(state: SyncState) -> str:

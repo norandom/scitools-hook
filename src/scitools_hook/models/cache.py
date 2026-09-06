@@ -102,6 +102,20 @@ BeforeRoute = Literal["shadow", "commit"]
 """How a before database came to exist. ``auto`` is a *setting*; this is what actually happened."""
 
 
+class SnapshotEntry(DataModel):
+    """One stored snapshot document, as ``doctor`` lists it (requirement 8.6).
+
+    A model rather than a dataclass in the adapter because the CLI prints it and may not
+    import ``understand`` -- the layer rule in ``tests/test_import_direction.py``. It carries
+    an age rather than a timestamp because the only question anyone asks of it is whether the
+    cache is doing anything.
+    """
+
+    name: str
+    seconds: float
+    bytes: int
+
+
 class SyncState(DataModel):
     """``state.json``: what the shadows currently hold, so a sync stays incremental (2.3).
 

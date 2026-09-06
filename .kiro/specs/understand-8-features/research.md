@@ -287,6 +287,65 @@ exported tree to keep in step with the repository, and it is reusable across run
 rather than by a synchroniser's bookkeeping. The 15 s target of requirement 8.4 is reachable
 only through tasks 9.1 and 9.4, exactly as the baseline concluded.
 
+### After task 9.4: the target is met (requirement 8.4)
+
+Same harness, same mode, 2026-09-06, tool 0.1.0a8 on Build 1262, default configuration.
+
+| Run | baseline | after 4.2 | **after 9.4** |
+| --- | --- | --- | --- |
+| warm-up whole project | 12.1 s | 10.7 s | 11.1 s |
+| first check, one changed line | 31.5 s | 33.5 s | 27.4 s |
+| **warm check, one changed line** | **27.7 s** | **27.8 s** | **13.0 s** |
+| whole project (`--all`) | 14.6 s | 15.4 s | 16.0 s |
+| no selection (nothing changed) | 1.0 s | 1.0 s | **1.0 s** |
+
+**13.0 s against the 15 s of requirement 8.4**, on the repository requirement 8.4 names, under
+the shipped configuration. The phases of that run say where it went:
+
+| Phase, warm one-line check | baseline | after 9.4 |
+| --- | --- | --- |
+| synchronising the after tree | 0.1 s | 0.1 s |
+| analysing the after database | 3.5 s | 2.2 s |
+| synchronising the before tree | 0.0 s | 0.0 s |
+| analysing the before database | 0.0 s | 0.0 s |
+| reading the after snapshot, pass 1 | 4.9 s | -- |
+| reading the before snapshot, pass 1 | 5.0 s | -- |
+| **reading the after snapshot** | 6.6 s | **9.0 s** |
+| reading the before snapshot, pass 2 | 6.5 s | **served from the cache** |
+| **the extractions together** | **23.0 s of 27.7 s (83%)** | **9.0 s of 13.0 s (69%)** |
+
+Four extractions became one. The survivor costs more than either pass it replaced -- 9.0 s
+against 4.9 s and 6.6 s -- because it records two rings of neighbourhood in one walk, which is
+exactly the trade the design proposed: the walk is the expensive half and it now happens once.
+The before side costs nothing at all, because the base commit does not move while a change is
+being iterated on and its document is served from the cache.
+
+**The no-selection control is unchanged at 1.0 s** (requirement 8.5): a check with no files
+still analyses nothing, extracts nothing and stores nothing, which
+``tests/e2e/test_snapshot_cache_e2e.py`` asserts as well as measures.
+
+**facdrone, the larger case**, measured in clone mode because another session works in it:
+
+| Run | baseline | after 9.4 |
+| --- | --- | --- |
+| warm-up whole project | 26.9 s (cold) | 27.8 s (cold) |
+| first check, one changed line | 52.8 s | 60.1 s |
+| **warm check, one changed line** | **38.7 s** | **31.0 s** |
+| whole project (`--all`) | 26.4 s | 37.0 s |
+| no selection | 1.1 s | 1.1 s |
+
+31.0 s rather than the 14.2 s the baseline projected, and the gap is the same trade read the
+other way: on a project this size a two-ring walk records enough more than a one-ring one that
+the single extraction costs most of what the two used to. The before side *is* cached there --
+the first check is 60.1 s and the warm one 31.0 s -- so the remaining cost is one extraction
+and one analysis. Requirement 8.4 names this repository and is met; facdrone is recorded as
+the case a further lever would have to address, and 9.2's ring count is the obvious knob.
+
+**The commit route was not re-measured here.** Task 4.2 already established what it is worth:
+on a warm run the before side costs 0.0 s of export and 0.0 s of analysis, so the route can
+remove nothing from the figure above, and the harness has no configuration knob to turn it on
+in the repository it measures. Turning it on for this repository is an operator decision.
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |

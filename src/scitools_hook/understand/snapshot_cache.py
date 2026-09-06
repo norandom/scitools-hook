@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from scitools_hook.models.cache import SnapshotEntry
 from scitools_hook.models.snapshot import ProjectSnapshot
 from scitools_hook.understand import worker
 
@@ -96,15 +97,6 @@ def key_for(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class Entry:
-    """One stored document, as ``doctor`` lists it (requirement 8.6)."""
-
-    name: str
-    seconds: float
-    bytes: int
-
-
 class SnapshotCache:
     """Stored snapshot documents, keyed by everything that could change one."""
 
@@ -148,11 +140,11 @@ class SnapshotCache:
         for path, _ in stored[keep:]:
             _discard(path)
 
-    def entries(self) -> list[Entry]:
+    def entries(self) -> list[SnapshotEntry]:
         """What is stored, newest first, for the operator to read (requirement 8.6)."""
         now = time.time()
         return [
-            Entry(name=path.name, seconds=max(0.0, now - written), bytes=_size(path))
+            SnapshotEntry(name=path.name, seconds=max(0.0, now - written), bytes=_size(path))
             for path, written in sorted(self._stored(), key=lambda pair: pair[1], reverse=True)
         ]
 

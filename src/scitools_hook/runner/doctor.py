@@ -51,7 +51,7 @@ from scitools_hook.errors import (
     UnderstandNotFoundError,
 )
 from scitools_hook.git.repo import GitRepo
-from scitools_hook.models.cache import CachePaths, SyncState
+from scitools_hook.models.cache import CachePaths, SnapshotEntry, SyncState
 from scitools_hook.models.snapshot import DataModel
 from scitools_hook.models.understand import (
     AnalysisProbe,
@@ -87,6 +87,7 @@ from scitools_hook.understand.locator import (
     pinned_python,
     verify,
 )
+from scitools_hook.understand.snapshot_cache import SnapshotCache
 from scitools_hook.understand.und_arch import (
     DIRECTORY_STRUCTURE,
 )
@@ -206,6 +207,11 @@ class GitStatus(DataModel):
     detail: str = ""
 
 
+def _snapshots(cache: CachePaths | None) -> list[SnapshotEntry]:
+    """What the snapshot cache holds, or nothing for a repository with no cache yet."""
+    return [] if cache is None else SnapshotCache(cache.root).entries()
+
+
 class DoctorReport(DataModel):
     """Everything requirement 1.5 asks the diagnosis command to report.
 
@@ -220,6 +226,12 @@ class DoctorReport(DataModel):
     git: GitStatus
     cache: CachePaths | None = None
     state: SyncState | None = None
+    snapshots: list[SnapshotEntry] = []
+    """What the snapshot cache holds, newest first (requirement 8.6).
+
+    An optimisation nobody can see is one nobody can check: an operator who wonders why a
+    check is slow should be able to read whether the cache is doing anything, and how old
+    the newest thing in it is."""
     settings: Settings
     settings_provenance: Provenance
     problems: list[str] = []
@@ -262,6 +274,7 @@ def run_doctor(options: ContextOptions) -> DoctorReport:
         python=platform.python_version(),
         git=git,
         cache=cache,
+        snapshots=_snapshots(cache),
         state=state,
         settings=settings,
         settings_provenance=provenance,
