@@ -241,6 +241,71 @@ fixtures and project-root computations are where it earns its keep. The ignore l
 per-module idiom, which is written out in every file on purpose. See
 [Scattered definitions](../reference/rules.md#scattered-definitions-one-value-many-files).
 
+## What Understand 8.0 adds
+
+Every key here is **off by default**. A repository that changes none of them behaves on 8.0
+exactly as it did on 6.5, which is the point: none of these is a feature you get by upgrading
+your analyser.
+
+```toml
+[understand]
+sarif = false           # also write Understand's own SARIF beside --sarif PATH
+before_side = "shadow"  # "shadow", "commit", or "auto" (commit where the build offers it)
+snapshot_cache = true   # reuse the before side's extraction between runs
+
+[analysis]
+accuracy_floor = 0.0    # unset by default; a floor raises a warning, never blocks
+
+[structure]
+unused_routines = "warning"   # unset by default
+unused_ignore = ['\.__\w+__$', '(^|\.)test_', '(^|\.)(setup|teardown)(_\w+)?$', '(^|\.)main$']
+architecture_options = {}     # passed to `und arch -generate -options`
+```
+
+**Every one of them is refused unless `doctor` has measured that your build offers it.** Run
+`scitools-hook doctor` once after an upgrade; it records what the installation can do beside
+the analysis databases, and a check reads that record rather than probing. A key the build
+cannot honour stops the run with the key, the feature and the build named, rather than being
+read, ignored and silently measuring something else.
+
+### `understand.sarif`
+
+Writes Understand's own SARIF documents beside the one `check --sarif PATH` asks for, so one
+upload carries the gate's findings, Understand's parse diagnostics and, where CodeCheck is
+licensed, its inspection results. The three are never merged.
+
+The analysis companion comes from a **whole-project** analysis pass only. A warm run analyses
+little or nothing, and Understand's SARIF describes the pass rather than the database, so a
+warm run writes no companion and says so. See [Understand
+8.0](../reference/understand-8.md#understands-sarif-a-check-concern-and-a-whole-project-one).
+
+### `understand.before_side`
+
+`"shadow"` exports the base commit into a tree and analyses it, which is what every release
+before this one did. `"commit"` builds the before database from the commit directly.
+`"auto"` asks for the commit route where the build offers it and falls back silently
+otherwise, which is what makes it safe to set on a mixed fleet.
+
+It buys reproducibility rather than speed — measured, a warm run's before side already costs
+0.0 s — and it **changes the before side's file set** to the repository under `und -exclude`
+rather than the shadow under `project.include` and `project.exclude`. Where those disagree,
+the two sides see different projects.
+
+### `analysis.accuracy_floor`
+
+`und analyze -accuracy` reports the share of files that parsed with neither an error nor a
+warning. Below the floor, the run says so as a **warning that never blocks**: a poor figure is
+usually a third-party package or a language feature Understand has not caught up with, and
+neither is fixable by the commit in front of you.
+
+### `structure.unused_routines`
+
+Reports each affected routine that nothing in the project calls or uses. It is a warning by
+default because reference-based dead-code detection cannot see an entry point named in
+packaging metadata, a handler a decorator registers, a dunder the interpreter calls or a test
+pytest collects — the four shapes `unused_ignore` excuses out of the box. Add your own
+patterns rather than adding a caller.
+
 ## Severities
 
 Every rule has a severity. `error` can block; `warning` never does, in any mode.

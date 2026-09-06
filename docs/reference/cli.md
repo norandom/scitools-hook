@@ -114,6 +114,38 @@ highest values: the largest value per metric, whether or not it breaks a limit
   routine.CyclomaticStrict  4  pricing.settle.line_total  pricing/settle.py  line 24
 ```
 
+
+### `--sarif PATH` and Understand's own documents
+
+`--sarif PATH` is a second destination, not a second format: it writes SARIF beside whatever
+`--format` renders, which is what CI wants. With `understand.sarif = true` it also places
+Understand's own documents next to it:
+
+```text
+gate.sarif                          the gate's findings
+gate.understand-analysis.sarif      Understand's parse errors and warnings
+gate.understand-codecheck.sarif     CodeCheck's results, where it is licensed
+```
+
+They are never merged. GitHub code scanning accepts several tools in one upload and tells them
+apart by `tool.driver.name`; merging would mix fingerprints and rule ids from tools that know
+nothing about each other. Upload all three in one step:
+
+```yaml
+- name: Check the change
+  run: scitools-hook check --range "${{ github.event.pull_request.base.sha }}..HEAD" --sarif gate.sarif
+- name: Upload every SARIF this run produced
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: .          # every *.sarif in the directory, as one upload
+```
+
+The run names every file it wrote and every one it could not, and **a missing companion never
+changes the exit code**: the gate's own SARIF is the deliverable and these are extra. The
+analysis companion comes from a whole-project analysis pass, so a warm cache produces none and
+the run says why.
+
 ## `explain`
 
 `--range A..B` compares the two commits. `--range A...B` compares from their **merge base** —
@@ -233,6 +265,33 @@ a commit had violations that were never measured.
 It runs **both** API probes, not just the one that would be used, because a diagnosis has the
 opposite job from a resolution. That is safe because the in-process import is run in a child
 process. Full output on the [Install](../guide/install.md#check-it-works) page.
+
+
+It reports six **feature rows** for the Understand 8.0 features, and three rows about the
+analysis cache that a check reads rather than measures:
+
+```text
+  feature understand sarif: available
+  feature commit before: available
+  feature generated archs: available (21 offered)
+  feature plugin metrics: available
+  feature unused rule: available
+  feature accuracy:  available
+  ...
+  before route:      commit (3ca0a97)   # or `shadow`, or `none`
+  after accuracy:    17%                # or `not measured`
+  snapshot cache:    3 stored, newest 5m ago   # or `empty`
+```
+
+The feature rows are the ones that matter after an upgrade: **a configuration key naming a
+feature this build does not offer stops a run before it starts**, and the record `doctor`
+writes is what that check reads. Run it once when the installation changes; a check never
+probes.
+
+`before route` distinguishes a database built from the base commit from one exported into a
+shadow tree, which hold different file sets. `after accuracy` is what Understand resolved of
+the after database. `snapshot cache` says whether the before side's extraction is being reused,
+which is the difference between a 27-second warm run and a 13-second one.
 
 ## `install-hook` / `uninstall-hook`
 

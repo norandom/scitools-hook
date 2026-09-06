@@ -91,28 +91,98 @@ measuring machine excludes CodeCheck, so the 8.0 output is unmeasured and the in
 not adapted to it. The three CodeCheck contract tests expected-fail on such a build with
 that reason, rather than skip, so the suite keeps saying the contract is open.
 
-## New in 8.0, not used yet
+## What 8.0 buys, measured
 
-Candidates for a follow-up, in the order they seem to pay off for a gate. None is wired.
+Everything below shipped in this release. Each row is a measurement on Build 1262, and each
+feature is **off by default**: a repository that changes no configuration behaves exactly as
+it did on 6.5.
 
-1. **SARIF from Understand itself.** `und codecheck` always writes `results.sarif`, and
-   `und analyze -sarif` exists. GitHub code scanning ingests SARIF directly, so a workflow
-   could upload Understand's findings and the gate's own SARIF in the same step.
-2. **Databases from a commit.** `und create -gitcommit`, `-refdb` and `-gitrepo` build a
-   database from a git revision, which is what the before side of a range check is.
-3. **Generated architectures.** `und arch -generate` produces architectures such as Git
-   Stability; the layer and coupling rules could run against one.
-4. **New metrics.** For Python: `CountGlobalsModified`, `CountGlobalsSet`,
-   `CountGlobalsUsed`, `CountClassCoupledModified`. Project-level: `CorePercentage`,
-   `BidirectionalDepsPercent`, the `CBRI*` family, and comparison metrics between two
-   databases. `CognitiveComplexity` is C/C++ only.
-5. **Unused-function filters** for Python, a candidate for a structural rule.
-6. **CodeCheck baselines.** `-gitfiles`, `-previous results.sarif` (New and Fixed reports),
-   and the `PYTH_02` check; only reachable with a CodeCheck licence.
-7. **`undmcp`**, an MCP server over the database. Its probe spawned two `undaiserver --tcp
-   56767` processes that had to be killed by hand; it stays outside the network boundary.
-8. **`und ai`**, a local model that downloads weights over the network and is off by
-   default. Out of scope on a machine kept off the network.
-9. **`und analyze -accuracy`**, a report on how much the analysis resolved; the call-graph
-   resolution rate the snapshot already computes might be replaced or checked by it.
-10. **Rust**, once a Cargo project is in the fixtures.
+| Feature | Key | What it is worth, measured |
+| --- | --- | --- |
+| Understand's own SARIF beside the gate's | `understand.sarif` | one upload carries three tools; GitHub tells them apart by `tool.driver.name` |
+| The before side built from the base commit | `understand.before_side` | reproducibility, **not** speed: on a warm run the before side already costs 0.0 s |
+| Generated architectures as rule input | `structure.architecture` | `Git Stability` groups files by how the code has behaved rather than by where it was filed |
+| The 8.0 plugin metrics | any threshold naming one | `CountGlobalsUsed` and friends for Python routines, `CountClassCoupledModified` for classes |
+| Unused routines | `structure.unused_routines` | dead code an agent forgot to delete, as a warning |
+| The accuracy of an analysis | `analysis.accuracy_floor` | how much of the run to trust; never blocks |
+| One extraction per side, cached | `understand.snapshot_cache` | the warm one-line check went from **27.7 s to 13.0 s** on this repository |
+
+### Understand's SARIF: a `check` concern, and a whole-project one
+
+`check --sarif PATH` writes the gate's findings there and, with `understand.sarif = true`,
+Understand's own documents beside it as `PATH.understand-analysis.sarif` and
+`PATH.understand-codecheck.sarif`. They are never merged: GitHub code scanning accepts several
+tools in one upload, and merging would mix fingerprints and rule ids from tools that know
+nothing about each other.
+
+`explain` has no SARIF output format, so the companions are a `check` concern only. Requirement
+2.1 names "a check or explain run"; the reading taken is that the clause applies where SARIF
+exists.
+
+**The analysis companion comes from a whole-project pass only.** Measured: `und analyze -sarif`
+reports *the pass*, not the database. A selective pass over one clean file writes a document
+whose `results` array is empty while the database still holds three parse errors, and nothing
+in the document says it is partial. Published, that is a clean bill of health for a repository
+that has none. So a warm run writes no analysis companion and says why; a run over a cold
+cache, or one after `scitools-hook db rebuild`, writes one.
+
+### The before side from a commit: what it changes about the file set
+
+`understand.before_side = "commit"` builds the before database with `und create -gitcommit`
+rather than by exporting a shadow tree. Two consequences an operator should know:
+
+- **The file set is the repository's, not the shadow's.** Without `-refdb` there is no file set
+  to copy, so `und add` decides it under `und -exclude`, while the shadow is
+  `project.include`/`project.exclude` applied by the synchroniser. The two pattern languages do
+  not agree everywhere: measured, `und -exclude 'build/**'` excludes nothing while
+  `-exclude build` drops the tree. Where they differ, the before side sees a different project.
+- **`-refdb` cannot be used at all.** It copies the reference's file *paths*, the gate's after
+  database names its files under a shadow tree in your cache, and `-gitcommit` pins the contents
+  only of files inside `-gitrepo`. A file outside it is read from disk, silently. The before
+  database then held the working tree's code and a range check reporting eight ratchet findings
+  reported one.
+
+### Comparison metrics: none exist yet
+
+`-refdb` registers the two databases as a comparison pair, readable as `Db.comparison_db()`.
+Measured: **no metric on 1262 reads it** -- 108 ids across the file, function, class and project
+kinds, none of them a comparison metric. The gate's own ratchet already answers the question
+those metrics would: it compares each entity's value on the two sides and reports the ones that
+got worse. Nothing is lost by not registering the pair.
+
+### Git architectures need a commit
+
+Measured: the gate's own database, built over an exported shadow tree with
+`GitRepositoryDirectory` set, exports `Git Stability` with **zero** members while exporting
+`Directory Structure` with 260. The plugin runs `git log` and matches its output to the
+database's file paths, and a shadow tree's paths are not paths git has heard of. So the gate
+generates on a third database, rooted at the repository and pinned to the after side's commit,
+and a `--staged` or `--worktree` check has no commit to pin: it says so rather than evaluating
+against an empty architecture.
+
+## Still open on 8.0
+
+**CodeCheck.** The licence on the measuring machine excludes it, so the 8.0 output is
+specified from the shipped plugin sources and unverified. The gate reads violations from
+`results.sarif` where a run wrote one and from the 6.5 CSV exports otherwise; the contract test
+for a real inspection is an expected failure naming the licence, so the suite keeps saying the
+contract is open. `-gitfiles`, `-previous results.sarif` and the `PYTH_02` check are unreached
+for the same reason.
+
+**Rust**, once a Cargo project is in the fixtures. `und create -languages` accepts it; a bare
+`.rs` file analyses to nothing.
+
+## For a contributor: two things deliberately left out
+
+Both are outside the boundary this project works in rather than beyond its interest, and both
+are good first contributions for somebody whose machine is on the network.
+
+**`undmcp`**, an MCP server over an Understand database. Probing it spawned two
+`undaiserver --tcp 56767` processes that had to be killed by hand. A gate that starts a
+listening server as a side effect of a commit hook is not a gate anyone should install, so
+whatever this becomes needs a lifecycle somebody has designed on purpose.
+
+**`und ai`**, a local model that downloads weights over the network and is off by default. The
+machine this project is measured on is kept off the network deliberately, for licensing
+reasons, so nothing here can measure it. Neither feature is refused on its merits; both are
+simply unmeasurable here, and an unmeasured feature is not one this project ships.
