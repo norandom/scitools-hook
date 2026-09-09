@@ -150,6 +150,14 @@ _ROUTINE_HINTS: Final[dict[str, str]] = {
         "the routine is longer than one screen: extract its phases into named routines and "
         "leave this one as the outline"
     ),
+    "routine.CountLineComment": (
+        "the explanation has outgrown the code it explains: split the routine so each part "
+        "needs one sentence, and delete the lines that only restate the signature"
+    ),
+    "routine.LinesPerStatement": (
+        "long without being complex: fold the repeated literal or the wrapped call chain into "
+        "one construct, so the line count follows the work the routine actually does"
+    ),
 }
 
 _CLASS_HINTS: Final[dict[str, str]] = {

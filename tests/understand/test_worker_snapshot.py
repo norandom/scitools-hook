@@ -243,6 +243,44 @@ def test_snapshot_computes_count_params_because_the_native_metric_is_unset(
     assert "CountParams" not in mapping(document, "unavailable").get("Python", [])
 
 
+def test_snapshot_computes_lines_per_statement_from_the_two_native_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Requirement 6.3: source lines per statement, computed by the Gate because Understand
+    # has no such metric. 18 lines over 6 statements is 3.0.
+    project = fake_project()
+    project.build_parser.values = {"CountLineCode": 18, "CountStmt": 6}
+    install(monkeypatch, FakeUnderstand(db=project.db))
+    document = worker.dispatch(
+        "snapshot",
+        snapshot_request(
+            metrics_by_scope={"routine": ["LinesPerStatement"]},
+            synthetic=["LinesPerStatement"],
+        ),
+    )
+    assert records(document)["app.build_parser"]["metrics"]["LinesPerStatement"] == 3.0
+
+
+@pytest.mark.parametrize("values", [{"CountLineCode": 6, "CountStmt": 0}, {"CountLineCode": 6}])
+def test_snapshot_reports_lines_per_statement_unavailable_without_statements(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, int]
+) -> None:
+    """Requirement 6.6: a ratio over no statements is no answer, not a verbosity of zero."""
+    project = fake_project()
+    project.build_parser.values = values
+    install(monkeypatch, FakeUnderstand(db=project.db))
+    document = worker.dispatch(
+        "snapshot",
+        snapshot_request(
+            files=["cli/app.py"],
+            metrics_by_scope={"routine": ["LinesPerStatement"]},
+            synthetic=["LinesPerStatement"],
+        ),
+    )
+    assert "LinesPerStatement" not in records(document)["app.build_parser"]["metrics"]
+    assert "LinesPerStatement" in mapping(document, "unavailable")["Python"]
+
+
 def test_snapshot_computes_count_decl_method_non_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     # CountDeclMethod 4 less two per auto property (1) = 2.
     assert records(snapshot(monkeypatch))["app.Runner"]["metrics"]["CountDeclMethodNonStub"] == 2

@@ -216,7 +216,9 @@
         "CountLineCode": 28.0,
         "CountStmt": 20.0,
         "CountParams": 2.0,
-        "CountPath": 10.0
+        "CountPath": 10.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.4
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -246,7 +248,9 @@
         "CountLineCode": 45.0,
         "CountStmt": 33.0,
         "CountParams": 2.0,
-        "CountPath": 24.0
+        "CountPath": 24.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.36
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -276,7 +280,9 @@
         "CountLineCode": 52.0,
         "CountStmt": 38.0,
         "CountParams": 2.0,
-        "CountPath": 30.0
+        "CountPath": 30.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.37
       },
       "archs": [
         "Directory Structure/src/analysis"
@@ -306,7 +312,9 @@
         "CountLineCode": 75.0,
         "CountStmt": 58.0,
         "CountParams": 0.0,
-        "CountPath": 40.0
+        "CountPath": 40.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.29
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -336,7 +344,9 @@
         "CountLineCode": 26.0,
         "CountStmt": 18.0,
         "CountParams": 1.0,
-        "CountPath": 6.0
+        "CountPath": 6.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.44
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -366,7 +376,9 @@
         "CountLineCode": 18.0,
         "CountStmt": 12.0,
         "CountParams": 1.0,
-        "CountPath": 4.0
+        "CountPath": 4.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.5
       },
       "archs": [
         "Directory Structure/src/cli"
@@ -396,7 +408,9 @@
         "CountLineCode": 34.0,
         "CountStmt": 24.0,
         "CountParams": 2.0,
-        "CountPath": 14.0
+        "CountPath": 14.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.42
       },
       "archs": [
         "Directory Structure/src/understand"
@@ -426,7 +440,9 @@
         "CountLineCode": 20.0,
         "CountStmt": 14.0,
         "CountParams": 2.0,
-        "CountPath": 8.0
+        "CountPath": 8.0,
+        "CountLineComment": 3.0,
+        "LinesPerStatement": 1.43
       },
       "archs": [
         "Directory Structure/src/util"

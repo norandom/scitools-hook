@@ -135,7 +135,7 @@ def test_the_synthetic_metrics_are_declared_so_the_worker_computes_them() -> Non
     # the native metric, finds nothing, and every parameter-count threshold stops firing.
     request = an_extractor({}).request()
 
-    assert request.synthetic == ["CountDeclMethodNonStub", "CountParams"]
+    assert request.synthetic == ["CountDeclMethodNonStub", "CountParams", "LinesPerStatement"]
     assert "CountParams" in request.metrics_by_scope["routine"]
 
 

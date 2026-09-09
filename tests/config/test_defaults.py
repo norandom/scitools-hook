@@ -112,6 +112,8 @@ def test_default_settings_returns_independent_equal_instances() -> None:
         ("routine.CountStmt", Limit(max=40)),
         ("routine.CountParams", Limit(max=5)),
         ("routine.CountPath", Limit(max=100)),
+        ("routine.CountLineComment", Limit(max=20)),
+        ("routine.LinesPerStatement", Limit(max=3.0)),
         ("class.CountDeclMethod", Limit(max=20)),
         ("class.CountDeclMethodNonStub", Limit(max=15)),
         ("class.CountDeclInstanceVariable", Limit(max=10)),
@@ -156,6 +158,8 @@ def test_soft_metrics_default_to_warning_and_all_others_to_error() -> None:
         "class.PercentLackOfCohesion",
         "routine.Essential",
         "class.MaxInheritanceTree",
+        "routine.CountLineComment",
+        "routine.LinesPerStatement",
     }
 
 

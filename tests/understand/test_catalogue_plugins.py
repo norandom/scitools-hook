@@ -49,6 +49,17 @@ CORE_TAGS: Final[dict[str, list[str]]] = {
 }
 """``CorePercentage``: two targets and no language restriction at all."""
 
+DUPLICATE_TAGS: Final[dict[str, list[str]]] = {
+    "targets": ["Files", "Architectures", "Project"],
+    "languages": ["Any"],
+}
+"""``DuplicateLinesOfCode``, from the duplicates solution's own declaration (requirement 5.6).
+
+The metric comes from a plugin Understand discovers rather than from its built-in list, so a
+build with the solution disabled in the Plugin Manager answers this lookup with nothing and
+the metric is offered to nobody -- which is the same path every other plugin metric takes.
+"""
+
 
 class Answers:
     """A runner that answers ``catalogue`` for whatever kind and ids it is asked about.
@@ -138,6 +149,28 @@ def test_any_is_understands_word_for_no_language_restriction() -> None:
 
     assert "CorePercentage" in offered(catalogue, "Fortran", "project")
     assert "CorePercentage" in offered(catalogue, "Python", "arch")
+
+
+@pytest.mark.parametrize("scope", ["file", "arch", "project"])
+def test_a_duplicate_lines_metric_is_offered_at_each_of_its_three_targets(scope: Scope) -> None:
+    """Requirement 5.6: the declaration is what lets the threshold be spelled at all."""
+    catalogue = a_catalogue({"DuplicateLinesOfCode": DUPLICATE_TAGS})
+
+    assert "DuplicateLinesOfCode" in offered(catalogue, "Python", scope)
+
+
+def test_a_duplicate_lines_metric_is_not_offered_to_a_routine_threshold() -> None:
+    """The plugin has no per-routine form, which is why the Gate keeps its own rule."""
+    catalogue = a_catalogue({"DuplicateLinesOfCode": DUPLICATE_TAGS})
+
+    assert offered(catalogue, "Python", "routine") == set()
+
+
+def test_a_build_without_the_duplicates_solution_offers_neither_id() -> None:
+    """Discovered-but-disabled answers no tags, so `config.validate` refuses the threshold."""
+    catalogue = a_catalogue({"DuplicateLinesOfCode": None, "DuplicateLinesOfCodePercent": None})
+
+    assert offered(catalogue, "Python", "file") == set()
 
 
 def test_only_the_candidates_of_this_scope_are_looked_up() -> None:

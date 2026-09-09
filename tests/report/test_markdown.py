@@ -138,23 +138,28 @@ files (3)
       CyclomaticModified  6 -> 11  (+5)
       CyclomaticStrict  6 -> 12  (+6)
       Essential  2 -> 4  (+2)
+      LinesPerStatement  1.33 -> 1.29  (-0.04)
       MaxNesting  2 -> 4  (+2)
     added     routine  app.check_command  line 96
       CountLineCode  - -> 26  (+26)
+      CountLineComment  - -> 3  (+3)
       CountParams  - -> 1  (+1)
       CountPath  - -> 6  (+6)
       CountStmt  - -> 18  (+18)
       CyclomaticModified  - -> 4  (+4)
       CyclomaticStrict  - -> 4  (+4)
       Essential  - -> 1  (+1)
+      LinesPerStatement  - -> 1.44  (+1.44)
       MaxNesting  - -> 2  (+2)
     removed   routine  app.legacy_entry  line 80
       CountLineCode  22 -> -  (-22)
+      CountLineComment  3 -> -  (-3)
       CountPath  6 -> -  (-6)
       CountStmt  15 -> -  (-15)
       CyclomaticModified  4 -> -  (-4)
       CyclomaticStrict  4 -> -  (-4)
       Essential  1 -> -  (-1)
+      LinesPerStatement  1.47 -> -  (-1.47)
       MaxNesting  2 -> -  (-2)
 
 dependencies (3)
@@ -239,21 +244,26 @@ Architecture: `Directory Structure/src/cli`
 | `app.build_parser` | routine | 34 | modified | `CyclomaticModified` | 6 | 11 | +5 |
 | `app.build_parser` | routine | 34 | modified | `CyclomaticStrict` | 6 | 12 | +6 |
 | `app.build_parser` | routine | 34 | modified | `Essential` | 2 | 4 | +2 |
+| `app.build_parser` | routine | 34 | modified | `LinesPerStatement` | 1.33 | 1.29 | -0.04 |
 | `app.build_parser` | routine | 34 | modified | `MaxNesting` | 2 | 4 | +2 |
 | `app.check_command` | routine | 96 | added | `CountLineCode` | - | 26 | +26 |
+| `app.check_command` | routine | 96 | added | `CountLineComment` | - | 3 | +3 |
 | `app.check_command` | routine | 96 | added | `CountParams` | - | 1 | +1 |
 | `app.check_command` | routine | 96 | added | `CountPath` | - | 6 | +6 |
 | `app.check_command` | routine | 96 | added | `CountStmt` | - | 18 | +18 |
 | `app.check_command` | routine | 96 | added | `CyclomaticModified` | - | 4 | +4 |
 | `app.check_command` | routine | 96 | added | `CyclomaticStrict` | - | 4 | +4 |
 | `app.check_command` | routine | 96 | added | `Essential` | - | 1 | +1 |
+| `app.check_command` | routine | 96 | added | `LinesPerStatement` | - | 1.44 | +1.44 |
 | `app.check_command` | routine | 96 | added | `MaxNesting` | - | 2 | +2 |
 | `app.legacy_entry` | routine | 80 | removed | `CountLineCode` | 22 | - | -22 |
+| `app.legacy_entry` | routine | 80 | removed | `CountLineComment` | 3 | - | -3 |
 | `app.legacy_entry` | routine | 80 | removed | `CountPath` | 6 | - | -6 |
 | `app.legacy_entry` | routine | 80 | removed | `CountStmt` | 15 | - | -15 |
 | `app.legacy_entry` | routine | 80 | removed | `CyclomaticModified` | 4 | - | -4 |
 | `app.legacy_entry` | routine | 80 | removed | `CyclomaticStrict` | 4 | - | -4 |
 | `app.legacy_entry` | routine | 80 | removed | `Essential` | 1 | - | -1 |
+| `app.legacy_entry` | routine | 80 | removed | `LinesPerStatement` | 1.47 | - | -1.47 |
 | `app.legacy_entry` | routine | 80 | removed | `MaxNesting` | 2 | - | -2 |
 
 ## Dependencies (3)

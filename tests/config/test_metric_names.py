@@ -177,7 +177,11 @@ def test_too_many_colons_message_mentions_the_colon_rule() -> None:
 
 
 def test_synthetic_registry_contains_exactly_the_documented_metrics() -> None:
-    assert set(SYNTHETIC_METRICS) == {"CountParams", "CountDeclMethodNonStub"}
+    assert set(SYNTHETIC_METRICS) == {
+        "CountParams",
+        "CountDeclMethodNonStub",
+        "LinesPerStatement",
+    }
 
 
 @pytest.mark.parametrize(("name", "entry"), list(SYNTHETIC_METRICS.items()), ids=lambda x: str(x))
@@ -189,6 +193,7 @@ def test_synthetic_entry_is_consistent(name: str, entry: SyntheticMetric) -> Non
     assert isinstance(entry.requires, tuple)
     assert name not in entry.requires
     assert not set(entry.requires) & set(SYNTHETIC_METRICS)
+    assert entry.floor is None or entry.floor[0] in entry.requires
 
 
 def test_count_params_is_bound_to_routines_and_needs_no_native_metric() -> None:
@@ -201,6 +206,13 @@ def test_count_decl_method_non_stub_is_bound_to_classes_and_names_its_inputs() -
     entry = SYNTHETIC_METRICS["CountDeclMethodNonStub"]
     assert entry.scope == "class"
     assert entry.requires == ("CountDeclMethod", "CountDeclPropertyAuto")
+
+
+def test_lines_per_statement_is_bound_to_routines_and_names_its_inputs_and_its_floor() -> None:
+    entry = SYNTHETIC_METRICS["LinesPerStatement"]
+    assert entry.scope == "routine"
+    assert entry.requires == ("CountLineCode", "CountStmt")
+    assert entry.floor == ("CountStmt", 5)
 
 
 def test_synthetic_metric_is_immutable() -> None:

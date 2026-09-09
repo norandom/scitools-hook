@@ -14,7 +14,7 @@
   - Done when every model round-trips through JSON with the new fields absent and present, an old snapshot document still validates, and a test asserts the schema version is unchanged
   - _Requirements: 1.6, 2.5, 5.8, 7.1, 9.2, 9.6_
 
-- [ ] 1.3 Declare the shrink metrics, the floor, and the duplicate-lines plugin metrics
+- [x] 1.3 Declare the shrink metrics, the floor, and the duplicate-lines plugin metrics
   - A synthetic verbosity metric on routines requiring code lines and statements, declared with a statement floor of five; the per-routine comment-line metric offered through the ordinary catalogue path; the two duplicate-lines metric ids declared as plugin metrics for file, architecture and project scope
   - Shipped defaults: verbosity 3.0 and comment lines 20 on routines, both as warnings; the file comment ratio keeps its minimum and accepts a maximum, with none shipped
   - The worker's synthetic answers the ratio whenever statements are present and non-zero, beside the existing parameter-count synthetic
@@ -22,9 +22,11 @@
   - _Requirements: 5.6, 6.1, 6.2, 6.3, 6.4, 6.6_
   - _Boundary: config metric declarations, worker synthetics_
 
-- [ ] 1.4 Apply the floor in the threshold evaluator and the ratchet
+- [ ] 1.4 Apply the floor in the threshold evaluator and the ratchet, and make it configurable
   - An entity below a metric's declared floor is judged on nothing for that metric: no finding, no unavailable record, no ratchet comparison
-  - Done when a routine with four statements and a ratio of 8 raises no finding and no unavailable entry, one with five statements does, and a ratchet comparison between a below-floor before and an above-floor after is skipped
+  - The minimum is configurable, because requirement 6.3 says it is: one key in the `[lean]` section beside the family's other numbers, defaulting to the declaration's five. Task 1.3's review caught that the design had fixed it as a constant, which would have shipped the requirement unsatisfied
+  - Add the sentence task 1.3 could not: with the floor applied, `recommend` on this repository should return `keep` for the verbosity default rather than the `raise 3 -> 4` an unfloored run reports, and the recorded measurement should say which population it describes
+  - Done when a routine with four statements and a ratio of 8 raises no finding and no unavailable entry, one with five statements does, a ratchet comparison between a below-floor before and an above-floor after is skipped, a configured minimum of two makes the four-statement routine judged again, and `recommend` on this repository no longer proposes raising the verbosity default
   - _Requirements: 6.3_
 
 - [ ] 1.5 Give the test suite a lexer fake and the second worker file a place in the import-direction rules
@@ -163,6 +165,13 @@
   - _Depends: 2.6, 5.2, 5.3, 5.4_
   - _Requirements: 5.6, 5.8, 9.2, 9.3_
 
+- [ ] 5.6 Decide what an architecture-scope duplicate-lines threshold means
+  - Measured in task 1.3: the file scope is served end to end and the project scope is served through the population path `CorePercentage` already takes, but an architecture-scope threshold on any plugin metric is accepted by validation and then never requested from the worker, because architecture nodes carry no metrics. The hole is pre-existing and metric-agnostic, and requirement 5.6 names architecture, so this family may not inherit it silently
+  - Take one of two answers and write the reason down: extract metrics for architecture nodes, or refuse an architecture-scope threshold at configuration time naming the metric and why. A threshold that is accepted and never evaluated is the silent no-op this project refuses everywhere else
+  - Done when an architecture-scope duplicate-lines threshold either produces a finding on the contract project or exits 2 with a message naming the scope, and a test pins whichever was chosen
+  - _Requirements: 5.6_
+  - _Boundary: config validation and, if extraction is chosen, the worker's architecture walk_
+
 - [ ] 6. Contract measurements on the licensed install
 - [ ] 6.1 Reference kinds and counts on the contract project
   - On the extended fixture: the Python and C++ inheritance kinds answer the derived class; overrides are flagged on both; the caller count agrees with the plugin caller metric for every routine of the fixture, and any disagreement is recorded with its cause; each reference rule reports its planted case and nothing else
@@ -225,3 +234,6 @@ Cross-cutting findings recorded as they were learned, so a later task does not r
 - **1.2** Adding a name to `StructureRuleName` is never local: `tests/report/test_hints.py` walks the list and fails any rule whose hint falls through to the generic text, so nine names forced nine hints in `report/hints.py` one task before task 2.3 owns them. Task 2.3 still owns the final hint text, the worked examples, the `structure.similar_routine/same_file` variant and the tag-form assertion test. The same edit also forces `tests/fixtures/snapshot_{before,after}.json` to be regenerated, because `test_fixture_file_is_the_canonical_wire_form` compares against the canonical dump.
 - **1.2** `cli/doctor.py` gained a `NO_PROBE` constant, out of boundary and not forced by any test, because the three new `Feature` members would otherwise make a real build print "not checked (the fixture seam starts no processes)" for features that simply have no probe yet. `tests/runner/test_doctor_features.py::test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam` asserts an interim state: **tasks 4.3 and 5.5 must retire or rewrite it** when the probes land.
 - **1.2** A required field with no refusal test is not an invariant. The reviewer defaulted `TokenIndex`'s three halves and the whole 4340-test suite stayed green; the guard that stops a half-built index reading as "no duplicates anywhere" (req 5.8) now has a parametrized `ValidationError` test, verified to fail under that exact mutation.
+- **1.3** `CountLineComment = 20` was shipped against my instinct and on the strength of a measurement: 5916 routines, p50 1, p95 8, 20 routines (0.3%) outside, and `recommend` returns `keep 20`. Docstrings do count as comment lines here, but per routine that is a thin tail rather than the population. The measurement is recorded where the default is declared, per requirement 9.1.
+- **1.3** Requirement 6.3 asks for a *configurable* statement floor and the design had fixed it as a constant. Corrected in the design and folded into task 1.4. A requirement is not satisfied by a design that is merely self-consistent.
+- **1.3** An architecture-scope threshold on a plugin metric validates and is then never requested, because architecture nodes carry no metrics. Pre-existing and metric-agnostic, not introduced here, but requirement 5.6 names architecture, so new task 5.6 owns the decision rather than letting this family inherit a silent no-op.

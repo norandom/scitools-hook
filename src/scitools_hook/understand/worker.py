@@ -579,6 +579,20 @@ def _count_params(ent: Any) -> float | None:
     return float(len(ent.ents("Define", PARAMETER_KIND)))
 
 
+def _lines_per_statement(ent: Any) -> float | None:
+    """The synthetic ``LinesPerStatement`` (req 6.3): source lines divided by statements.
+
+    ``None`` when either count is missing and when the statement count is zero: a ratio over
+    no statements is not a verbosity of zero, it is no answer, and the record says so. The
+    five-statement floor is NOT applied here -- the worker answers, the evaluator judges."""
+    raw = ent.metric(["CountLineCode", "CountStmt"])
+    lines = _as_float(raw.get("CountLineCode"))
+    statements = _as_float(raw.get("CountStmt"))
+    if lines is None or not statements:
+        return None
+    return lines / statements
+
+
 def _count_decl_method_non_stub(ent: Any) -> float | None:
     """The synthetic ``CountDeclMethodNonStub`` (req 3.5): declared methods less two per
     automatic property, floored at zero. A language without ``CountDeclPropertyAuto`` (Python,
@@ -592,7 +606,7 @@ def _count_decl_method_non_stub(ent: Any) -> float | None:
 
 
 SYNTHETICS: Final[dict[str, dict[str, Callable[[Any], float | None]]]] = {
-    "routine": {"CountParams": _count_params},
+    "routine": {"CountParams": _count_params, "LinesPerStatement": _lines_per_statement},
     "class": {"CountDeclMethodNonStub": _count_decl_method_non_stub},
 }
 """Scope -> synthetic metric id -> its computation.

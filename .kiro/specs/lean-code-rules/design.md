@@ -282,7 +282,7 @@ flowchart TD
 | 5.3 | whole project, affected report | duplicates, similar | affected keys as the only query set | |
 | 5.4 | normalisation | worker_lean.token_index | token class map | |
 | 5.5 | configurable, off, warning, path ignore | `LeanRules` | `duplicates_ignore`, `similar_ignore` | |
-| 5.6 | duplicate-lines metric as threshold | `PLUGIN_METRICS`, catalogue | `DuplicateLinesOfCode`, `DuplicateLinesOfCodePercent` | |
+| 5.6 | duplicate-lines metric as threshold | `PLUGIN_METRICS`, catalogue, arch-scope decision (task 5.6) | `DuplicateLinesOfCode`, `DuplicateLinesOfCodePercent` | |
 | 5.7 | measured defaults recorded | contract test, docs | measurement task | |
 | 5.8 | unreadable token stream | worker_lean (skip and note), runner/lean | `TokenIndex.unreadable` | |
 | 6.1 | comment maximum accepted, off | `Limit.max` on `file.RatioCommentToCode`, defaults | | |
@@ -402,7 +402,15 @@ class SyntheticMetric:
     scope: Scope
     description: str
     requires: tuple[str, ...] = ()
-    floor: tuple[str, int] | None = None   # (metric, minimum): below it the entity is not judged on this metric
+    floor: tuple[str, int] | None = None   # (metric, DEFAULT minimum): below it the entity is not judged on this metric
+
+# Requirement 6.3 asks for a *configurable* minimum, so the declaration carries the default
+# and the operator can move it. The key lives in `[lean]` beside the other numbers of this
+# family rather than in `[thresholds.routine]`, because it is not a limit on anything: it
+# says which routines the ratio is meaningful for at all.
+class LeanRules(StrictModel):
+    ...
+    verbosity_min_statements: int = Field(default=5, ge=1)
 
 SYNTHETIC_METRICS["LinesPerStatement"] = SyntheticMetric(
     id="LinesPerStatement", scope="routine",
@@ -410,7 +418,7 @@ SYNTHETIC_METRICS["LinesPerStatement"] = SyntheticMetric(
     requires=("CountLineCode", "CountStmt"), floor=("CountStmt", 5))
 ```
 - Worker: `SYNTHETICS["routine"]["LinesPerStatement"]` answers the ratio, `None` only when `CountStmt` is absent or zero (then the existing unavailable path applies, which is the truthful answer).
-- Guard: `analysis.thresholds._judge` and `analysis.ratchet._compare` call `below_floor(record, metric) -> bool` from `config.metric_names`, and return without a finding and without an unavailable record when it is true.
+- Guard: `analysis.thresholds._judge` and `analysis.ratchet._compare` call `below_floor(record, metric, minimum) -> bool` from `config.metric_names`, and return without a finding and without an unavailable record when it is true. The `minimum` is resolved from `settings.lean.verbosity_min_statements`, falling back to the declaration's default when no settings are in hand, so an operator whose routines are legitimately small can move it (requirement 6.3). An earlier draft hard-coded it, which task 1.3's review caught: the requirement says *configurable* and a constant would have shipped it unsatisfied.
 - Defaults: `routine.LinesPerStatement = 3.0` and `routine.CountLineComment = 20`, both in `_SOFT_THRESHOLDS` (warnings); `file.RatioCommentToCode` keeps `{"min": 0.1}` and accepts `max` (6.1); no `max` is shipped (docstrings are comment lines, `research.md`).
 
 #### Plugin metric declarations
@@ -420,6 +428,7 @@ SYNTHETIC_METRICS["LinesPerStatement"] = SyntheticMetric(
 | Intent | Offer `DuplicateLinesOfCode` and `DuplicateLinesOfCodePercent` as file, arch and project thresholds where the build's tags allow |
 | Requirements | 5.6 |
 
+- **Arch scope is declared and not yet served, and that is a silent no-op this design must not ship.** Measured during task 1.3: file scope is served end to end, project scope is served through the population path `CorePercentage` already takes, and arch scope is never requested at all, because `ArchNode` carries no metrics and `_population_metrics` excludes `arch` by design. The hole is pre-existing and metric-agnostic rather than anything this family introduced, but requirement 5.6 names architecture, and accepting a threshold that is never evaluated is exactly the "read, ignored and quietly measured as something else" behaviour the Understand 8.0 specification refused. Task 5.6 owns the decision: extract arch metrics, or refuse an arch-scope threshold at configuration time with a reason.
 - Two `PluginMetric` entries with `scopes=("file", "arch", "project")` and the language tuple the tags name (`Language: Any`); the catalogue's tag check decides per build. The `Feature.DUPLICATE_METRIC` probe asks `Metric.lookup("DuplicateLinesOfCode")` through the existing `catalogue` op and reports `not on this build` when it answers nothing, with the detail that the solution may be present but disabled in the Plugin Manager.
 
 ### understand

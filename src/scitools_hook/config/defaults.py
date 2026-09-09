@@ -45,6 +45,11 @@ DEFAULT_THRESHOLDS: Final[dict[Scope, ThresholdTable]] = {
         "CountStmt": 40,
         "CountParams": 5,
         "CountPath": 100,
+        # 5 916 routines here: p50 1, p90 6, p95 8, p99 15, max 51; 20 of them (0.3%) over 20.
+        "CountLineComment": 20,
+        # 2 851 routines of >= 5 statements: p50 1.20, p90 2.00, p95 2.29, max 6.6; 49 over 3.
+        # Unfloored -- which is what recommend still reports -- the count is 330; see below.
+        "LinesPerStatement": 3.0,
     },
     "class": {
         "CountDeclMethod": 20,
@@ -105,11 +110,13 @@ _SOFT_THRESHOLDS: Final[frozenset[str]] = frozenset(
         "class.PercentLackOfCohesion",
         "routine.Essential",
         "class.MaxInheritanceTree",
+        "routine.CountLineComment",
+        "routine.LinesPerStatement",
     }
 )
 """Thresholds shipped as warnings: they are reported, they are ratcheted, they never block.
 
-The first two are soft because the metric is a ratio or is unavailable for Python. The other
+The first two are soft because the metric is a ratio or is unavailable for Python. The next
 two are here for a harder reason, measured in task 11.14 on Understand 6.5.1204: **neither
 number is comparable across the entities it ranks**, so neither can carry a refusal. Both
 keep their limits, and both keep their ratchets -- ``analysis.ratchet`` reads ``severity``
@@ -148,6 +155,42 @@ it leaves the inversion in place -- a framework hierarchy four deep still report
 number stays honest about what Understand saw; the severity stops it deciding a commit. The
 real remedy is a depth counted only over bases declared inside the project, which needs a
 synthetic metric and is recorded as the direction in ``research.md``.
+
+**The last two are the shrink signals, and requirement 6.4 ships them as warnings by
+construction**: verbosity and comment volume are judgements about style that a reviewer makes
+and a gate can only point at. Both numbers were measured here before they were shipped, and
+one of them was measured because it was doubted.
+
+``routine.CountLineComment`` was the doubtful one. Understand counts a Python **docstring**
+as comment lines -- measured, and the reason this default was suspected of punishing the
+house rule that every routine carries an explanation: ``report/json_out.py`` has no ``#``
+comment at all, 36 docstring lines and about 6 code lines, and its ``RatioCommentToCode`` is
+5.5. Measured per routine instead of per file the picture is the opposite one: over 5 916
+routines, p50 **1**, p90 **6**, p95 **8**, p99 **15**, max 51, and a ceiling of 20 leaves
+**99.7% inside it** -- 20 routines out, against 96 at a ceiling of 12. The three worst are
+docstrings and nothing else (``cli.common._write_stdout`` 51, ``locator.pinned_python`` 39,
+``locator.chosen_interpreter`` 28), which is what the number is meant to find: a routine
+whose explanation has outgrown it is the one to split, not the one to comment less. So the
+limit ships, and it ships at the value ``recommend`` returns ``keep`` for on this tree.
+
+``routine.LinesPerStatement`` 3.0 is the verbosity ratio, and it is only meaningful above
+its declared floor of five statements (``SYNTHETIC_METRICS``): over the 2 851 routines that
+clear it, p50 1.20, p90 2.00, p95 2.29, max 6.6, and 49 sit above 3.0. The tail is
+literal-heavy code -- a long f-string, a list literal -- rather than prose, which is why the
+number warns and does not block.
+
+**Two counts are in circulation for this one rule, and only the floored one is the rule.**
+The floor is declared on the metric but not yet consulted by ``analysis.thresholds`` or
+``analysis.ratchet``, so until it is, every routine is judged, a two-statement routine spread
+over six lines scores 3.0 on arithmetic alone, and the same repository reports **330 outside
+(5.6% of 5 916)** with ``recommend`` answering ``raise 3 -> 4``. That number is an artefact of
+the missing guard, not evidence against the limit: raising the ceiling to fit routines the
+rule was never meant to judge would calibrate it against three-line functions. 49 is what the
+rule costs once the floor is consulted, and that is the number this default was chosen from.
+
+``file.RatioCommentToCode`` accepts a ``max`` beside its ``min`` from here on (req 6.1) and
+**ships none**: on Python that maximum ranks docstrings, and 4 of this repository's 273 files
+are over 2.0 for no reason but the explanations they carry.
 """
 
 
@@ -171,7 +214,7 @@ DEFAULT_SEVERITIES: Final[SeverityMap] = {
     "structure.coupling": "error",
     "codecheck": "warning",
 }
-"""Rule name -> default severity (req 3.7). The four :data:`_SOFT_THRESHOLDS` only warn."""
+"""Rule name -> default severity (req 3.7). The six :data:`_SOFT_THRESHOLDS` only warn."""
 
 DEFAULT_HINTS: Final[dict[str, str]] = {}
 """Operator hint overrides; the built-in hint catalogue lives in ``report.hints``."""

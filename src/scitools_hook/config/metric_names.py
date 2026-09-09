@@ -101,12 +101,22 @@ class SyntheticMetric:
     """Declaration of a metric the Gate computes itself; the worker owns the computation.
 
     ``requires`` lists the native Understand metrics the computation reads.
+
+    ``floor`` is a ``(metric, minimum)`` pair naming a population this metric is meaningless
+    over: an entity whose ``metric`` is below ``minimum`` is not judged on the synthetic at
+    all -- no finding, no ratchet comparison and no unavailable record, because the value was
+    computed and is simply not a statement about that entity. It is declared here rather than
+    branched on in the evaluator so that the reason travels with the metric and one guard
+    serves both ``analysis.thresholds`` and ``analysis.ratchet`` (req 6.3). The ``minimum``
+    is the **shipped default**, not a constant: requirement 6.3 asks for a configurable one,
+    and the operator's own value overrides it where the guard is applied.
     """
 
     id: str
     scope: Scope
     description: str
     requires: tuple[str, ...] = ()
+    floor: tuple[str, int] | None = None
 
 
 SYNTHETIC_METRICS: Final[dict[str, SyntheticMetric]] = {
@@ -127,8 +137,25 @@ SYNTHETIC_METRICS: Final[dict[str, SyntheticMetric]] = {
         ),
         requires=("CountDeclMethod", "CountDeclPropertyAuto"),
     ),
+    "LinesPerStatement": SyntheticMetric(
+        id="LinesPerStatement",
+        scope="routine",
+        description=(
+            "Source lines per statement: CountLineCode / CountStmt, undefined for a routine "
+            "with no statements, and not judged below five statements."
+        ),
+        requires=("CountLineCode", "CountStmt"),
+        floor=("CountStmt", 5),
+    ),
 }
-"""Synthetic metric id -> declaration (req 3.5)."""
+"""Synthetic metric id -> declaration (req 3.5, 6.3).
+
+``LinesPerStatement`` is the one with a floor, and the floor is why the metric is usable at
+all: the ratio is arithmetic, so a two-statement routine spread over six lines scores 3.0 and
+outranks a genuinely long one. Five statements is where the distribution starts to mean
+something -- measured over this repository's 2 851 routines of at least five statements: p50
+1.20, p90 2.00, p95 2.29, max 6.6.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +213,12 @@ PLUGIN_METRICS: Final[dict[str, PluginMetric]] = {
     "CognitiveComplexity": PluginMetric(
         id="CognitiveComplexity", scopes=("routine",), languages=("C", "C++")
     ),
+    "DuplicateLinesOfCode": PluginMetric(
+        id="DuplicateLinesOfCode", scopes=("file", "arch", "project"), languages=("Any",)
+    ),
+    "DuplicateLinesOfCodePercent": PluginMetric(
+        id="DuplicateLinesOfCodePercent", scopes=("file", "arch", "project"), languages=("Any",)
+    ),
 }
 """Metric id -> declaration, from ``Metric.lookup(id).tags()`` on Build 1262, 2026-09-05.
 
@@ -194,6 +227,13 @@ may not refuse anybody's commit, so they enter the catalogue and the configurati
 and wait there until a repository records a limit for one. ``CognitiveComplexity`` is listed
 because the build carries it, and is C/C++ only -- on a Python repository it is reported
 unavailable rather than silently skipped.
+
+The two ``DuplicateLines`` ids are the exception to the provenance above: they come from the
+duplicates *solution* (``plugins/Solutions/duplicates/``), whose own declaration names
+``Language: Any`` and ``Target: Files, Architectures, Project``, and not from a lookup on an
+install that had loaded it. That is deliberate -- the declaration is only the candidate list,
+the build's tags decide, and a solution that is absent or disabled in the Plugin Manager
+answers the lookup with nothing, so the threshold is refused with the metric named (req 5.6).
 """
 
 SCOPE_KINDS: Final[dict[Scope, str]] = {
