@@ -28,6 +28,7 @@ from scitools_hook.config.metric_names import (
 )
 from scitools_hook.config.models import Limit, Severity, ThresholdSpec
 from scitools_hook.errors import ConfigError
+from scitools_hook.models.change import NetDelta
 from scitools_hook.models.snapshot import DataModel, EntityRef, ParseError
 
 FindingKind = Literal["threshold", "ratchet", "structural", "codecheck", "parse"]
@@ -54,9 +55,26 @@ StructureRuleName = Literal[
     "coupling",
     "duplicate_definition",
     "unused_routine",
+    "unused_parameter",
+    "unused_class",
+    "unused_variable",
+    "pass_through",
+    "single_implementation",
+    "over_export",
+    "duplicate_block",
+    "similar_routine",
+    "net_growth",
 ]
 STRUCTURE_RULES: Final[tuple[StructureRuleName, ...]] = get_args(StructureRuleName)
-"""Every structural rule name, in the order they are documented in the design."""
+"""Every structural rule name, in the order they are documented in the design.
+
+The last nine are the lean-code family, and they keep the ``structure.`` category rather
+than taking one of their own so that the severity map, the SARIF rule ids, the scope
+overrides and the hint lookup work on them unchanged (lean-code requirement 9.6). One list
+is also what holds the layers together: ``tests/report/test_hints.py`` walks it and refuses
+a rule name that no hint answers, so a name added here without a hint is a failing test and
+not a finding that arrives at a reviewer with nothing to do about it.
+"""
 
 AnalysisRuleName = Literal["parse_error", "accuracy"]
 ANALYSIS_RULES: Final[tuple[AnalysisRuleName, ...]] = get_args(AnalysisRuleName)
@@ -289,6 +307,15 @@ class RunResult(DataModel):
     scanning accepts several tools in one upload and tells them apart by
     ``tool.driver.name``, while merging would mix fingerprints and rule ids from tools that
     know nothing about each other (requirement 2.2)."""
+
+    net_delta: NetDelta | None = None
+    """Whether the change made the project longer or shorter (lean-code requirement 7.1).
+
+    ``None`` when the run had no before side to subtract, which ``--all`` never does:
+    requirement 7.4 omits the figure there rather than printing a zero nothing measured.
+    Additive, so ``schema_version`` stays ``2`` -- ``report/json_out.py`` bumps for a field
+    whose meaning changed, not for one that appeared.
+    """
 
     analyzed_files: int = 0
     blocking_count: int = 0

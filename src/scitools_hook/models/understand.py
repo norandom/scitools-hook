@@ -114,6 +114,20 @@ class Feature(StrEnum):
     PLUGIN_METRICS = "plugin_metrics"
     UNUSED_RULE = "unused_rule"
     ACCURACY = "accuracy"
+    LEAN_REFERENCES = "lean_references"
+    """The reference walk the dead-code and layering rules read (lean-code requirement 9.2).
+
+    Every build Understand ships reports references, so this one is recorded as available
+    rather than probed, exactly as ``UNUSED_RULE`` is. It is a member all the same, because
+    ``doctor`` prints one row per capability the family needs and a capability that is
+    always there still has to be *sayable* -- an operator reading the rows must not have to
+    infer from an absent row that the answer is yes."""
+
+    LEAN_TOKENS = "lean_tokens"
+    """The lexer the duplication and similarity rules read (lean-code requirement 9.2)."""
+
+    DUPLICATE_METRIC = "duplicate_metric"
+    """The optional duplicate-lines metric, where the installed build offers one (5.6)."""
 
 
 class Availability(DataModel):
@@ -197,6 +211,27 @@ class ExtractRequest(DataModel):
     include_edges: bool = True
     include_definitions: bool = False
     record_referenced: bool = False
+    """Ask the worker whether anything in the project references each recorded routine.
+
+    Off unless the unused-routine rule is on (requirement 6.4). It costs one reference
+    query per **recorded** routine, and a run that would not read the answer should not pay
+    for it -- the same rule the plugin metrics follow one field up."""
+
+    lean_references: bool = False
+    """Ask the worker for the lean-code family's per-entity facts (lean-code req 9.4).
+
+    Set from ``settings.lean.wants_references``, which is true while any of the five rules
+    that need the reference walk is on. Its own key rather than a widening of
+    ``record_referenced`` because the two buy different walks -- one flag per cost, so a
+    configuration that wants the unused-routine rule and no lean rule pays for one of
+    them."""
+
+    lean_tokens: bool = False
+    """Ask the worker for the project's token index (lean-code requirement 9.4).
+
+    Set from ``settings.lean.wants_tokens``. This is a whole-project lexer pass rather than
+    a per-entity query, which is why it is a second key and not a mode of the first: the
+    duplication rules need it and the reference rules never read it."""
     neighbourhood_rings: int = Field(default=0, ge=0, le=2)
     """How many dependency steps beyond the selection to record entities for (req 8.3).
 
@@ -208,11 +243,6 @@ class ExtractRequest(DataModel):
     Capped at two because that is the widest ring any rule reads: the affected set is one
     step and the rules that look past it read one more. A larger number would record
     entities nothing consumes and cost the document size for nothing."""
-    """Ask the worker whether anything in the project references each recorded routine.
-
-    Off unless the unused-routine rule is on (requirement 6.4). It costs one reference
-    query per **recorded** routine, and a run that would not read the answer should not pay
-    for it -- the same rule the plugin metrics follow one field up."""
 
     @field_validator("kinds_by_scope")
     @classmethod

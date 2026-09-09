@@ -163,6 +163,62 @@ class EntityRef(DataModel):
     line: int | None = None
 
 
+class LeanFacts(DataModel):
+    """What the reference walk saw around one routine or class (lean-code requirements 1.6, 2.5).
+
+    Every field is ``None`` until something measured it, and **``None`` is "the worker was not
+    asked", never "none found"** -- the same three-state discipline :attr:`EntityRecord.
+    referenced` follows, for the same reason: a rule that read an unmeasured record as a zero
+    would report a project full of dead code the first time a snapshot recorded before the
+    rule existed was read back from the analysis cache. A rule that meets a ``None`` on an
+    affected record reports itself unavailable for the run and evaluates nothing.
+
+    A record carries the facts its own kind has. A routine fills the call and parameter
+    fields, a class fills :attr:`referenced`, :attr:`derived` and :attr:`referrers`, and
+    neither fills the other's -- so a ``None`` here is also "this question does not apply to
+    this kind", which no rule asks, because each rule reads only the fields of the kind it
+    walks.
+    """
+
+    callers: int | None = None
+    """Distinct project routines that call this routine.
+
+    A **count with a known undercount**: Understand resolves a Python call through an
+    instance attribute to the attribute rather than to the routine behind it (31.4% of the
+    44 783 call sites of a measured 770-file project bound to nothing callable, recorded in
+    the module docstring), so this is the number of callers the database can *see*. The
+    rules built on it therefore report a routine with too few callers, never one with none.
+    """
+
+    callees: int | None = None
+    """Distinct project routines this routine calls, under the same undercount."""
+
+    forwards_to: str | None = None
+    """Long name of the single callee, when there is exactly one; ``None`` otherwise."""
+
+    overrides: bool | None = None
+    """Whether this routine overrides or implements a routine declared elsewhere.
+
+    Requirement 1.4's exclusion lives on this flag: a parameter a signature forces on an
+    implementation is conformance and not dead code, and a forwarding override is the
+    interface doing its job rather than a layer to delete.
+    """
+
+    unused_parameters: list[str] | None = None
+    """Names of this routine's parameters that no reference in its body reads, sets or
+    modifies. An empty list is "every parameter is used", which ``None`` is not."""
+
+    referenced: bool | None = None
+    """Whether anything in the project references this class."""
+
+    derived: list[str] | None = None
+    """Long names of the classes derived from this one, across every inheritance kind."""
+
+    referrers: int | None = None
+    """Project entities referencing this class other than itself, its own members, its
+    derived classes and their members -- the count requirement 3.1 reads as zero."""
+
+
 class EntityRecord(DataModel):
     """One entity with everything the rules need: metrics, architectures, newness."""
 
@@ -171,6 +227,14 @@ class EntityRecord(DataModel):
     metrics: dict[str, float] = Field(default_factory=dict)
     archs: list[str] = Field(default_factory=list)
     is_new: bool = False
+    lean: LeanFacts | None = None
+    """The lean-code family's facts about this entity, or ``None`` for "not asked".
+
+    Off unless a rule that needs the reference walk is on, because it costs reference
+    queries per recorded entity and a run that would not read the answers should not pay
+    for them (lean-code requirement 9.4).
+    """
+
     referenced: bool | None = None
     """Whether anything in the project references this routine (req 6.2), or ``None``.
 
@@ -447,6 +511,65 @@ class Definition(DataModel):
     path: str
     line: int
     value: str | None = None
+    referenced: bool | None = None
+    """Whether any project reference uses this name, or ``None`` for "not asked".
+
+    Three states, as :attr:`EntityRecord.referenced` is: the unused-variable rule reports
+    itself unavailable on a ``None`` rather than reporting every module constant of a
+    snapshot recorded before the rule existed (lean-code requirement 1.6).
+    """
+
+
+class RoutineShape(DataModel):
+    """One routine's normalised token shape and the lines it spans (lean-code req 5.2, 5.4).
+
+    :attr:`shape` is the routine's token sequence with **identifiers and literals mapped to
+    two classes** and keyword, operator and punctuation text kept, encoded through
+    :attr:`TokenIndex.vocabulary`. That mapping is what requirement 5.4 asks for: a renamed
+    or re-indented copy has to compare equal to its original, so the names are exactly what
+    the comparison must not see.
+
+    :attr:`start` and :attr:`end` are the routine's first and last line in :attr:`path`, so
+    a finding can point at the twin rather than name it in the abstract. A routine whose end
+    the database does not give is absent from the index rather than recorded with a guess.
+    """
+
+    path: str
+    start: int
+    end: int
+    shape: list[int]
+
+
+class TokenIndex(DataModel):
+    """The whole project's code lines and routine shapes, as the duplication rules read them.
+
+    One index per side, built only when a token rule is on (lean-code requirement 9.4).
+    ``None`` on :attr:`ProjectSnapshot.tokens` is "not asked", and both rules report
+    themselves unavailable rather than reporting a project with no duplicates in it.
+
+    The two halves answer the two rules: :attr:`files` carries one hash per **code** line,
+    with whitespace and comments removed so that a re-indented copy still hashes equal
+    (requirement 5.4), keeping the original line numbers so a finding names the lines a
+    reader can open; :attr:`routines` carries the shapes the similarity rule shingles.
+    """
+
+    vocabulary: list[str]
+    """Token texts, in the order first seen; a :attr:`RoutineShape.shape` indexes into it."""
+
+    files: dict[str, list[tuple[int, str]]]
+    """Repository-relative path -> its ``(line number, hash)`` pairs, code lines only."""
+
+    routines: dict[str, RoutineShape]
+    """:attr:`EntityKey.token` -> that routine's shape; keyed by token because JSON object
+    keys must be strings, as ``ChangeSummary.impact`` is."""
+
+    unreadable: list[str] = Field(default_factory=list)
+    """Files whose token stream could not be read, named rather than silently missing.
+
+    Requirement 5.8: such a file contributes no duplicate and no similarity **and is
+    reported once per run**, because a file that was never lexed and a file with nothing to
+    say are the same absence in the index and must not read the same in a report.
+    """
 
 
 class ProjectSnapshot(DataModel):
@@ -466,6 +589,14 @@ class ProjectSnapshot(DataModel):
     unavailable: dict[str, list[str]] = Field(default_factory=dict)
     parse_errors: list[ParseError] = Field(default_factory=list)
     definitions: list[Definition] = Field(default_factory=list)
+    tokens: TokenIndex | None = None
+    """The project's line hashes and routine shapes, or ``None`` for "not asked".
+
+    The token pass is the family's one whole-project walk beyond the entity walk, so it runs
+    only when the duplicate-block or similar-routine rule is on (lean-code requirement 9.4),
+    and both rules read a ``None`` here as unavailable rather than as a project with nothing
+    duplicated in it (requirement 5.8).
+    """
 
     @property
     def call_graph_holds(self) -> frozenset[str]:

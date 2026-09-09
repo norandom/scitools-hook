@@ -60,6 +60,16 @@ NOT_VERIFIED: Final = "not verified"
 NOT_CHECKED: Final = "not checked (the fixture seam starts no processes)"
 """Why the interpreter row can be empty: ``SCITOOLS_HOOK_FAKE_UNDERSTAND`` runs no ``und``."""
 
+NO_PROBE: Final = "not measured (this build was probed before the feature existed)"
+"""Why a feature row can be empty while the other rows are full.
+
+The row set follows the :class:`Feature` enum and the answers come from a stored report, and
+the two can legitimately disagree: a capability added by a later specification has no probe
+until the task that writes one, and a report written by an older version of the Gate has no
+entry for a feature added since. Neither is the fixture seam, and this row said it was --
+which is the kind of confident wrong answer ``doctor`` exists to stop, so it now says what
+is actually true. Re-running ``doctor`` on a build whose probe exists fills the row in."""
+
 NOT_FOUND: Final = "not found"
 NONE_FOUND: Final = "none"
 NO_REPOSITORY: Final = "no repository, so there is no analysis cache"
@@ -159,7 +169,7 @@ def _availability(feature: Feature, report: FeatureReport) -> str:
     """One feature's answer, with the reason whenever it is not a plain yes."""
     found = report.features.get(feature)
     if found is None:
-        return NOT_CHECKED
+        return NO_PROBE
     if found.state == "available":
         offered = len(found.generated)
         return f"available ({offered} offered)" if offered else "available"

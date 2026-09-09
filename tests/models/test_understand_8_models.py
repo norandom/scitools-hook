@@ -45,8 +45,13 @@ def test_an_analysis_result_carries_the_accuracy_and_the_sarif_it_wrote() -> Non
 
 
 def test_every_feature_of_this_specification_has_a_name() -> None:
-    """`doctor` prints one row per member, so the set is the specification's own list."""
-    assert {feature.value for feature in Feature} == {
+    """`doctor` prints one row per member, so this specification's six are all members.
+
+    A subset rather than the whole enum since the lean-code family added three of its own:
+    the enum is every capability a build may or may not offer, across specifications, and
+    `tests/models/test_lean_models.py` pins the full membership.
+    """
+    assert {feature.value for feature in Feature} >= {
         "understand_sarif",
         "commit_before",
         "generated_archs",

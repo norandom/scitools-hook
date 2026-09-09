@@ -44,6 +44,28 @@ class AffectedSet(DataModel):
         return [key.model_dump(mode=_mode(info)) for key in sorted(keys, key=lambda k: k.token)]
 
 
+class NetDelta(DataModel):
+    """Whether the change made the project longer or shorter (lean-code requirement 7.1-7.3).
+
+    Summed over the routines of the change's affected and deleted files on either side, a
+    missing side counting as zero, so a deletion is a negative contribution and a replacement
+    that removes more than it adds shows as a reduction (7.2).
+
+    :attr:`statements` is the figure the report leads with, because it is the one formatting
+    cannot move: it is Understand's ``CountStmt``, the logical lines ponytail's ``net: -N
+    lines`` score means. :attr:`lines` is ``CountLineCode` beside it, and the two disagreeing
+    is information -- a change that removes statements while adding source lines has spread
+    the same logic wider. Both may be negative; :attr:`routines` is a count of what was summed
+    over and may not be, which is why it is the only bounded field here.
+
+    Not stored: it describes one run against one before side and is recomputed, never cached.
+    """
+
+    statements: int
+    lines: int
+    routines: int = Field(ge=0)
+
+
 class EntityDelta(DataModel):
     """One entity added, removed or modified by the change, with its metric movement (9.1)."""
 

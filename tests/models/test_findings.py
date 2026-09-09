@@ -68,6 +68,12 @@ def test_build_rule_name_rejects_an_invalid_metric_name() -> None:
 
 
 def test_structure_rule_covers_every_documented_structural_rule() -> None:
+    """The eleven of the base specification, then the nine of the lean-code family.
+
+    One list for both, because the lean rules keep the ``structure.`` category so that the
+    severity map, the SARIF rule ids, the scope overrides and the hint lookup work on them
+    unchanged; `tests/models/test_lean_models.py` holds the family's own order.
+    """
     assert set(STRUCTURE_RULES) == {
         "file_cycle",
         "arch_cycle",
@@ -80,6 +86,15 @@ def test_structure_rule_covers_every_documented_structural_rule() -> None:
         "coupling",
         "duplicate_definition",
         "unused_routine",
+        "unused_parameter",
+        "unused_class",
+        "unused_variable",
+        "pass_through",
+        "single_implementation",
+        "over_export",
+        "duplicate_block",
+        "similar_routine",
+        "net_growth",
     }
     assert structure_rule("file_cycle") == "structure.file_cycle"
 

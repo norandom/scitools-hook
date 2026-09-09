@@ -18,7 +18,7 @@ from pathlib import Path
 from conftest import FakeCommandLog, MakeGitRepo
 from doctor_stubs import UndAnswers, install, isolated_env, options, seam
 
-from scitools_hook.cli.doctor import render_report
+from scitools_hook.cli.doctor import NO_PROBE, NOT_CHECKED, render_report
 from scitools_hook.models.understand import Feature, FeatureReport
 from scitools_hook.runner.doctor import run_doctor
 from scitools_hook.understand.features import FEATURES_FILE
@@ -212,6 +212,37 @@ def test_the_report_prints_one_row_per_feature(
     ):
         assert label in text, label
     assert text.count("available") >= 6
+
+
+def test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The rows follow the `Feature` enum and the answers follow a stored report.
+
+    The two disagree whenever a capability arrives before the task that probes it -- the
+    lean-code family's three -- and the row used to answer "the fixture seam starts no
+    processes" for them, on a build that had just been probed for six other features. That is
+    a confident wrong answer in the one command whose whole job is to say what is true.
+
+    **Deliberately temporary, and these are the tasks that end it.** Task 4.3 of the
+    lean-code specification records `LEAN_REFERENCES` as available on every build, and task
+    5.5 writes the lexer and duplicate-metric probes; from then on a probed build carries all
+    three answers and `NO_PROBE` no longer appears for them, so whoever lands those tasks
+    rewrites this test around whatever features are then unprobed, or deletes it if none are.
+    What must survive either way is the rule it pins: a feature the report does not answer
+    says it was not measured, and never blames the fixture seam.
+    """
+    home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
+    env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+
+    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+
+    for label in ("feature lean references", "feature lean tokens", "feature duplicate metric"):
+        assert f"{label}: {NO_PROBE}" in text, label
+        # Narrowed to the feature rows on purpose: `NOT_CHECKED` is still the right answer for
+        # the interpreter row when no pin was read, and asserting its absence from the whole
+        # report would fail this test for a row that has nothing to do with features.
+        assert f"{label}: {NOT_CHECKED}" not in text, label
 
 
 def test_a_row_for_a_missing_feature_carries_the_builds_reason(

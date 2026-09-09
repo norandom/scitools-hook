@@ -348,12 +348,62 @@ _GENERIC_HINTS: Final[dict[str, str]] = {
     ),
 }
 
+_LEAN_HINTS: Final[dict[str, str]] = {
+    "structure.unused_parameter": (
+        "delete: the parameter and every argument passed for it -- nothing in the routine "
+        "reads it. If a signature it overrides declares it, that is not this finding; if a "
+        "caller Understand cannot see passes it, add the name to lean.unused_parameters_ignore"
+    ),
+    "structure.unused_class": (
+        "delete: the class and its file if nothing else lives there -- nothing in the project "
+        "references it. If it is reached in a way references cannot show, a registry, an entry "
+        "point, a test collection, add a pattern to lean.unused_classes_ignore"
+    ),
+    "structure.unused_variable": (
+        "delete: the module-level name -- nothing in the project reads it. A constant kept for "
+        "an outside importer belongs in lean.unused_variables_ignore, not in the module"
+    ),
+    "structure.pass_through": (
+        "yagni: delete this routine and let its one caller call what it forwards to -- the "
+        "layer adds a name and a file, not behaviour"
+    ),
+    "structure.single_implementation": (
+        "yagni: fold the base into its one implementation -- an abstraction written for a "
+        "second implementation that never came costs a file and a hop and buys nothing"
+    ),
+    "structure.over_export": (
+        "yagni: move the definition into the one file that depends on it and delete this file "
+        "-- a module with one definition and one importer is a name, not a boundary"
+    ),
+    "structure.duplicate_block": (
+        "delete: keep one copy of these lines and call it from the others -- the finding names "
+        "where the rest of them are"
+    ),
+    "structure.similar_routine": (
+        "delete: keep one of the two routines and pass what differs as an argument -- they "
+        "are the same code under different names"
+    ),
+    "structure.net_growth": (
+        "shrink: this change adds more logical lines than the limit allows -- cut what it "
+        "replaced before adding what replaces it, and check the shorter form of each new "
+        "routine first"
+    ),
+}
+"""The lean-code family, in ponytail's tag form: one tag, what to cut, what replaces it.
+
+Three tags and no others. `stdlib:` and `native:` are ponytail's remaining two, and the Gate
+never emits them: whether a routine re-implements something the language already ships is a
+semantic question a reference database cannot answer, so it stays with the agent (lean-code
+requirement 8.3).
+"""
+
 DEFAULT_CATALOGUE: Final[dict[str, str]] = {
     **_ROUTINE_HINTS,
     **_CLASS_HINTS,
     **_FILE_HINTS,
     **_PROJECT_HINTS,
     **_STRUCTURE_HINTS,
+    **_LEAN_HINTS,
     **_PARSE_HINTS,
     **_SHARED_METRIC_HINTS,
     **_GENERIC_HINTS,

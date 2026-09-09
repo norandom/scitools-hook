@@ -56,10 +56,17 @@ WIRE_KEYS: Final[frozenset[str]] = frozenset(
         "include_definitions",
         "record_referenced",
         "neighbourhood_rings",
+        "lean_references",
+        "lean_tokens",
         "parse_errors",
     }
 )
-"""Every key ``worker._plan`` reads. A missing one is refused; an extra one is ignored."""
+"""Every key ``worker._plan`` reads. A missing one is refused; an extra one is ignored.
+
+The two lean keys travel from the moment ``ExtractRequest`` declares them, which is one task
+before ``_plan`` reads them: an extra key is ignored, so the request is valid on both sides of
+that gap, and a key the plan reads before the request carries it would not be.
+"""
 
 MODEL_CANNOT_CARRY: Final[frozenset[str]] = frozenset({"db", "root", "side", "parse_errors"})
 """The keys ``ExtractRequest`` has no field for (task 6.2 handoff); the rest come from it."""

@@ -8,7 +8,7 @@
   - Done when a configuration naming every new key validates, a configuration without the section produces effective settings identical to today, and the fingerprint test shows a change when one reference rule is switched on
   - _Requirements: 1.5, 2.4, 3.4, 4.3, 5.5, 7.5, 9.4_
 
-- [ ] 1.2 Extend the shared models for lean facts, the token index, the net delta and the nine rule names
+- [x] 1.2 Extend the shared models for lean facts, the token index, the net delta and the nine rule names
   - Per-entity lean facts as an optional record (callers, callees, forwards-to, overrides, unused parameters, referenced, derived, referrers), an optional referenced flag on a module-level definition, an optional token index on the snapshot (vocabulary, per-file line hashes with line numbers, per-routine shapes with ranges, unreadable files), a net delta value (statements, lines, routines) on the run result, two request keys for references and tokens, and three feature members
   - The nine structural rule names become legal for severities, SARIF ids and hints; the JSON schema version stays at 2
   - Done when every model round-trips through JSON with the new fields absent and present, an old snapshot document still validates, and a test asserts the schema version is unchanged
@@ -216,3 +216,12 @@
   - Done when the docs build with the new page in the navigation
   - _Depends: 6.4_
   - _Requirements: 8.3, 8.4, 10.2, 10.4_
+
+## Implementation Notes
+
+Cross-cutting findings recorded as they were learned, so a later task does not rediscover them.
+
+- **1.1** The design said `wants_references` covered six rules in one sentence and five in another. Resolved to five: `over_export` is answered from file metrics, file edges and the definitions walk, so putting it in the reference set would make an over-export-only configuration pay for a `refs` call on every recorded entity and read none of the answers (req 9.4, 9.5). Both design sentences now say five, and two named tests pin it.
+- **1.2** Adding a name to `StructureRuleName` is never local: `tests/report/test_hints.py` walks the list and fails any rule whose hint falls through to the generic text, so nine names forced nine hints in `report/hints.py` one task before task 2.3 owns them. Task 2.3 still owns the final hint text, the worked examples, the `structure.similar_routine/same_file` variant and the tag-form assertion test. The same edit also forces `tests/fixtures/snapshot_{before,after}.json` to be regenerated, because `test_fixture_file_is_the_canonical_wire_form` compares against the canonical dump.
+- **1.2** `cli/doctor.py` gained a `NO_PROBE` constant, out of boundary and not forced by any test, because the three new `Feature` members would otherwise make a real build print "not checked (the fixture seam starts no processes)" for features that simply have no probe yet. `tests/runner/test_doctor_features.py::test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam` asserts an interim state: **tasks 4.3 and 5.5 must retire or rewrite it** when the probes land.
+- **1.2** A required field with no refusal test is not an invariant. The reviewer defaulted `TokenIndex`'s three halves and the whole 4340-test suite stayed green; the guard that stops a half-built index reading as "no duplicates anywhere" (req 5.8) now has a parametrized `ValidationError` test, verified to fail under that exact mutation.

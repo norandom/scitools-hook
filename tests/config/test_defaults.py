@@ -223,13 +223,24 @@ def test_no_shipped_hint_asks_for_another_inheritance_layer() -> None:
         if any(word in text.lower() for word in INHERITANCE_VOCABULARY)
     }
 
-    assert set(mentions) == {"MaxInheritanceTree", "CountClassDerived"}, (
+    assert set(mentions) == {
+        "MaxInheritanceTree",
+        "CountClassDerived",
+        "structure.single_implementation",
+    }, (
         "a hint that talks about inheritance has been added or removed; if it recommends "
         f"another layer, class.MaxInheritanceTree must lose its ratchet too: {mentions}"
     )
     assert "replace one layer with composition" in mentions["MaxInheritanceTree"]
     assert "hold the base as a field and delegate to it" in mentions["MaxInheritanceTree"]
     assert "replace the variation with a strategy object" in mentions["CountClassDerived"]
+    # The lean-code family's third mention, and the decision this tripwire asks for, taken:
+    # `structure.single_implementation` pushes a class OUT of an inheritance layer -- fold the
+    # base into its one implementation -- which is the direction `MaxInheritanceTree` wants and
+    # not the one that would raise it. So the ratchet stays on, for the same argument as before.
+    assert (
+        "fold the base into its one implementation" in mentions["structure.single_implementation"]
+    )
     assert "class.MaxInheritanceTree" not in DECOMPOSITION_COUNTS, (
         "the ratchet stays on precisely while no hint pushes into it"
     )
