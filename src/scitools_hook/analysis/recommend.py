@@ -49,7 +49,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from scitools_hook.config.metric_names import ELEMENT_SCOPES, Scope
+from scitools_hook.config.metric_names import ELEMENT_SCOPES, Scope, below_floor
 from scitools_hook.config.models import ThresholdSpec
 from scitools_hook.config.template import RecommendedThreshold
 from scitools_hook.models.snapshot import ProjectSnapshot
@@ -258,6 +258,7 @@ def recommend(
     specs: Sequence[ThresholdSpec],
     target: float = TARGET_COVERAGE,
     scopes: Sequence[str] = (),
+    minimum: int | None = None,
 ) -> Recommendation:
     """Measure ``snapshot`` against the ceilings in ``specs`` and say which of them fit.
 
@@ -266,8 +267,16 @@ def recommend(
     limits. ``snapshot`` must be a whole-project extraction: a bounded one holds the entities
     of one change, and a percentile over a handful of files is not a statement about a
     repository. The caller guarantees that; nothing here can check it.
+
+    ``minimum`` is ``settings.lean.verbosity_min_statements``, and it prices a floored metric
+    over the population the gate actually judges (req 6.3). Without it this command answered a
+    different question from ``check``: measured on this repository before the floor was
+    consulted, ``routine.LinesPerStatement`` was priced over 5 940 routines with 330 outside
+    the shipped 3.0 and ``raise 3 -> 4`` proposed -- a ceiling calibrated on the three-line
+    routines the rule was never meant to judge. ``None`` leaves each metric's declared default
+    in force, which is what a caller with no settings in hand should get.
     """
-    populations = _populations(snapshot)
+    populations = _populations(snapshot, minimum)
     advice: list[MetricAdvice] = []
     skipped: list[Skipped] = []
     for spec in specs:
@@ -306,18 +315,26 @@ def _counts(snapshot: ProjectSnapshot) -> dict[Scope, int]:
     return counts
 
 
-def _populations(snapshot: ProjectSnapshot) -> dict[tuple[Scope, str], tuple[Offender, ...]]:
+def _populations(
+    snapshot: ProjectSnapshot, minimum: int | None = None
+) -> dict[tuple[Scope, str], tuple[Offender, ...]]:
     """Every ``(scope, metric)`` this snapshot carries, as entities that hold a value.
 
     Built from ``snapshot.entities`` rather than from ``snapshot.populations``: the population
     vectors are bare floats, and a recommendation that could not name the routine at the top
     of the tail would be the number generator this module exists not to be.
+
+    An entity below a metric's floor contributes nothing to that metric's population, for the
+    same reason ``analysis.thresholds`` raises no finding for it: the value is not a statement
+    about the entity, and a percentile taken over one prices a rule nobody is judged by.
     """
     found: dict[tuple[Scope, str], list[Offender]] = {}
     for key, record in snapshot.entities.items():
         if key.scope not in ELEMENT_SCOPES:
             continue
         for metric, value in record.metrics.items():
+            if below_floor(record.metrics, metric, minimum):
+                continue
             found.setdefault((key.scope, metric), []).append(
                 Offender(
                     value=value,

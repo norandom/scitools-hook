@@ -30,10 +30,10 @@ they have no per-entity before value to compare. A metric missing on either side
 reporting it as unavailable is ``analysis.thresholds``' job (req 5.5), which sees the same
 entities.
 
-**Two before values are not measurements of the change, and this module drops both**
-(task 11.9). Requirement 4.5 already says an entity the change *added* has no pre-change
-value; these are the same statement about a value that exists but does not mean what the
-comparison assumes.
+**Three before values are not measurements of the change, and this module drops all three**
+(tasks 11.9 and lean-code 1.4). Requirement 4.5 already says an entity the change *added* has
+no pre-change value; these are the same statement about a value that exists but does not mean
+what the comparison assumes.
 
 * **The entity got simpler and the count went up.** ``MaxNesting``'s hint offers two
   remedies, and the second one -- "invert the condition and return early so the body stops
@@ -53,6 +53,12 @@ comparison assumes.
   that fixed a syntax error. So an entity whose file is named in ``before.parse_errors`` is
   not ratcheted; the parse error itself is still reported by the run (req 2.6), so nothing
   goes quiet.
+* **The entity was below the metric's declared floor.** ``LinesPerStatement`` is not judged
+  for a routine of fewer than five statements (lean-code req 6.3), so a ratio taken there is
+  arithmetic and not a reading. Both steps drop it: :func:`_either_side_below_the_floor` stops
+  the comparison, and :func:`attach_before` refuses to hand the value to
+  ``analysis.classify``, which would otherwise call a **new** violation pre-existing on the
+  strength of a number the floor already declared meaningless.
 
 **A routine whose parameter list changed is still the same routine** (task 11.6).
 ``EntityKey`` keeps ``parameters`` so that a real C++ overload pair stays two entities, which
@@ -91,7 +97,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, Self
 
 from scitools_hook.analysis.thresholds import resolve_for_path
-from scitools_hook.config.metric_names import ELEMENT_SCOPES, format_metric_name
+from scitools_hook.config.metric_names import ELEMENT_SCOPES, below_floor, format_metric_name
 from scitools_hook.config.models import DECOMPOSITION_COUNTS, Limit, PathScope
 from scitools_hook.models.findings import EffectiveThreshold, Finding, build_rule_name
 from scitools_hook.models.snapshot import EntityKey, EntityRecord, ProjectSnapshot
@@ -237,7 +243,9 @@ def unparsed_files(snapshot: ProjectSnapshot) -> frozenset[str]:
     return frozenset(error.path.as_posix() for error in snapshot.parse_errors)
 
 
-def attach_before(findings: Iterable[Finding], before: ProjectSnapshot) -> list[Finding]:
+def attach_before(
+    findings: Iterable[Finding], before: ProjectSnapshot, minimum: int | None = None
+) -> list[Finding]:
     """Return ``findings`` with ``before`` filled in wherever the entity exists on both sides.
 
     Only threshold findings are touched, and only those that belong to an entity: a
@@ -252,9 +260,19 @@ def attach_before(findings: Iterable[Finding], before: ProjectSnapshot) -> list[
     measured a 30-line routine at the parse site reporting ``CountStmt`` 66; that number would
     forgive any statement-count violation the change introduced. Leaving ``before`` unset says
     "not known", which blocks, instead of "was worse", which does not.
+
+    **A before value taken below the metric's floor is the same class of value**, and
+    ``minimum`` -- ``settings.lean.verbosity_min_statements``, or ``None`` for the declared
+    default -- is what recognises it (req 6.3). Measured: a routine of four statements at a
+    ratio of 8.0, judged on nothing for ``LinesPerStatement`` because it is below the floor,
+    growing to six statements at 5.0 against a maximum of 3.0. Attaching that 8.0 made
+    ``analysis.classify`` report a **new** violation as ``preexisting`` and stop it blocking.
+    The floor says the 8.0 is not a statement about the routine; a value that is not a
+    statement about the routine may not excuse a violation of it, which is exactly the
+    argument the parse-error paragraph above makes.
     """
     blind = unparsed_files(before)
-    return [_with_before(finding, before, blind) for finding in findings]
+    return [_with_before(finding, before, blind, minimum) for finding in findings]
 
 
 def _is_ratcheted(threshold: EffectiveThreshold) -> bool:
@@ -322,9 +340,33 @@ def _compare_all(
     for key in keys:
         if before.unreadable(key):
             continue  # the before side of this file did not parse; see the module docstring
-        finding = _compare(threshold, after.entities.get(key), before.record_of(key))
+        now, was = after.entities.get(key), before.record_of(key)
+        if _either_side_below_the_floor(threshold, was, now):
+            continue  # req 6.3: one of the two numbers was never meant to be judged
+        finding = _compare(threshold, now, was)
         if finding is not None:
             yield finding
+
+
+def _either_side_below_the_floor(
+    threshold: EffectiveThreshold, before: EntityRecord | None, after: EntityRecord | None
+) -> bool:
+    """Whether either side of this comparison sits under the metric's floor (req 6.3).
+
+    **Either**, not both, and that is the whole point: a routine that crosses the floor
+    between the two sides has one value that is a statement about it and one that is not, and
+    subtracting them is arithmetic on two different questions. A routine that grows from four
+    statements to six has not got worse at ``LinesPerStatement`` -- it has become measurable.
+
+    The absolute check still judges the after side on its own, so nothing goes quiet: what is
+    dropped here is only the comparison against a number the floor already declared
+    meaningless. A metric that declares no floor answers ``False`` for every entity, which is
+    what leaves ``CyclomaticStrict``, ``CountLineCode`` and every rule before this family
+    ratcheting exactly as they did.
+    """
+    metric = threshold.metric.metric
+    sides = (record.metrics for record in (before, after) if record is not None)
+    return any(below_floor(metrics, metric, threshold.floor) for metrics in sides)
 
 
 def _compare(
@@ -485,7 +527,9 @@ def _message(subject: str, metric: str, was: float, now: float, worse: _Worse) -
     return f"{moved}, still within the {edge} {_number(worse.limit)}"
 
 
-def _with_before(finding: Finding, before: ProjectSnapshot, blind: Collection[str]) -> Finding:
+def _with_before(
+    finding: Finding, before: ProjectSnapshot, blind: Collection[str], minimum: int | None = None
+) -> Finding:
     """``finding`` with its pre-change value, or unchanged when there is none to give."""
     if finding.kind != "threshold" or finding.entity is None or finding.metric is None:
         return finding
@@ -494,6 +538,8 @@ def _with_before(finding: Finding, before: ProjectSnapshot, blind: Collection[st
     record = before.entities.get(finding.entity.key)
     if record is None:
         return finding
+    if below_floor(record.metrics, finding.metric, minimum):
+        return finding  # req 6.3: the before side was judged on nothing, so it excuses nothing
     value = record.metrics.get(finding.metric)
     if value is None:
         return finding

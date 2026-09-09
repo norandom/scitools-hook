@@ -21,6 +21,7 @@ from fixtures.constants import LEAN_REFERENCE_RULES, LEAN_RULE_SWITCHES, LEAN_TO
 from pydantic import ValidationError
 
 from scitools_hook.config.defaults import default_settings
+from scitools_hook.config.metric_names import SYNTHETIC_METRICS
 from scitools_hook.config.models import (
     DEFAULT_LEAN_CLASS_IGNORE,
     DEFAULT_LEAN_IMPLEMENTATION_IGNORE,
@@ -64,6 +65,7 @@ similar_routines = "warning"
 similar_min_statements = 8
 similar_threshold = 0.95
 similar_ignore = ["tests/**"]
+verbosity_min_statements = 2
 max_net_growth = 40
 net_growth_severity = "error"
 """
@@ -96,8 +98,30 @@ def test_a_configuration_without_the_lean_section_means_exactly_what_it_did_befo
     assert settings.lean.wants_tokens is False
 
 
+def test_the_verbosity_floor_ships_at_the_number_the_metric_declares() -> None:
+    """Requirement 6.3 asks for a *configurable* minimum, and the default is the declared one.
+
+    Read off ``SYNTHETIC_METRICS`` rather than written as 5, because the whole point of the
+    key is that the declaration owns the number and the operator may move it. A default that
+    drifted from the declaration would give ``check`` and the metric's own documentation two
+    different floors.
+    """
+    declared = SYNTHETIC_METRICS["LinesPerStatement"].floor
+
+    assert declared is not None
+    assert default_settings().lean.verbosity_min_statements == declared[1]
+
+
+def test_the_verbosity_floor_asks_for_nothing_extra() -> None:
+    """It judges statements the snapshot already carries, so no walk is paid for (req 9.4)."""
+    lean = LeanRules.model_validate({"verbosity_min_statements": 2})
+
+    assert lean.wants_references is False
+    assert lean.wants_tokens is False
+
+
 def test_a_configuration_naming_every_new_key_validates() -> None:
-    """All twenty-two keys together, in the spellings the documentation will show."""
+    """All twenty-three keys together, in the spellings the documentation will show."""
     settings = Settings.model_validate(tomllib.loads(EVERY_KEY))
 
     assert settings.lean.unused_variables == "error"
@@ -105,6 +129,7 @@ def test_a_configuration_naming_every_new_key_validates() -> None:
     assert settings.lean.duplicates_min_lines == 10
     assert settings.lean.similar_threshold == 0.95
     assert settings.lean.similar_ignore == ["tests/**"]
+    assert settings.lean.verbosity_min_statements == 2
     assert settings.lean.max_net_growth == 40
     assert settings.lean.net_growth_severity == "error"
 
@@ -189,8 +214,17 @@ def test_a_path_ignore_list_takes_globs_not_regexes(field: str) -> None:
         {"similar_threshold": 0.0},
         {"similar_threshold": 1.5},
         {"max_net_growth": -1},
+        {"verbosity_min_statements": 0},
     ],
-    ids=["budget", "min_lines", "min_statements", "threshold_zero", "threshold_high", "growth"],
+    ids=[
+        "budget",
+        "min_lines",
+        "min_statements",
+        "threshold_zero",
+        "threshold_high",
+        "growth",
+        "verbosity_floor",
+    ],
 )
 def test_a_number_outside_the_range_the_rule_can_mean_is_refused(
     payload: dict[str, object],

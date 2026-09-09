@@ -47,8 +47,8 @@ DEFAULT_THRESHOLDS: Final[dict[Scope, ThresholdTable]] = {
         "CountPath": 100,
         # 5 916 routines here: p50 1, p90 6, p95 8, p99 15, max 51; 20 of them (0.3%) over 20.
         "CountLineComment": 20,
-        # 2 851 routines of >= 5 statements: p50 1.20, p90 2.00, p95 2.29, max 6.6; 49 over 3.
-        # Unfloored -- which is what recommend still reports -- the count is 330; see below.
+        # 2 963 routines of >= 5 statements: p50 1.2, p90 2, p95 2.33, p99 3.43, max 7.2;
+        # 53 over 3 (1.8%), and `recommend` answers `keep 3`. See the docstring below.
         "LinesPerStatement": 3.0,
     },
     "class": {
@@ -174,19 +174,23 @@ whose explanation has outgrown it is the one to split, not the one to comment le
 limit ships, and it ships at the value ``recommend`` returns ``keep`` for on this tree.
 
 ``routine.LinesPerStatement`` 3.0 is the verbosity ratio, and it is only meaningful above
-its declared floor of five statements (``SYNTHETIC_METRICS``): over the 2 851 routines that
-clear it, p50 1.20, p90 2.00, p95 2.29, max 6.6, and 49 sit above 3.0. The tail is
+its floor of five statements -- declared on the metric (``SYNTHETIC_METRICS``), configurable
+through ``[lean] verbosity_min_statements`` and applied by ``config.metric_names.below_floor``
+wherever the number is read: the absolute check, the ratchet, the before value the ratchet
+attaches, the population ``recommend`` prices and the worst value ``baseline`` records.
+**Every number here describes that population and no other**: over the 2 963 routines of
+this repository that clear the floor, p50 1.2, p90 2, p95 2.33, p99 3.43, max 7.2, and 53 sit
+above 3.0 -- 1.8% of them, which is why ``recommend`` answers ``keep 3``. The tail is
 literal-heavy code -- a long f-string, a list literal -- rather than prose, which is why the
 number warns and does not block.
 
-**Two counts are in circulation for this one rule, and only the floored one is the rule.**
-The floor is declared on the metric but not yet consulted by ``analysis.thresholds`` or
-``analysis.ratchet``, so until it is, every routine is judged, a two-statement routine spread
-over six lines scores 3.0 on arithmetic alone, and the same repository reports **330 outside
-(5.6% of 5 916)** with ``recommend`` answering ``raise 3 -> 4``. That number is an artefact of
-the missing guard, not evidence against the limit: raising the ceiling to fit routines the
-rule was never meant to judge would calibrate it against three-line functions. 49 is what the
-rule costs once the floor is consulted, and that is the number this default was chosen from.
+**The unfloored count was a different rule, and it is recorded here because it was nearly
+believed.** Measured on the same tree with the guard removed, all 5 940 routines are judged,
+a two-statement routine spread over six lines scores 3.0 on arithmetic alone, **330 sit
+outside (5.6%)** and ``recommend`` answers ``raise 3 -> 4``. Raising the ceiling to fit
+routines the rule was never meant to judge would have calibrated it against three-line
+functions. 53 over 2 963 is what the rule costs, and it is the number this default was
+chosen from.
 
 ``file.RatioCommentToCode`` accepts a ``max`` beside its ``min`` from here on (req 6.1) and
 **ships none**: on Python that maximum ranks docstrings, and 4 of this repository's 273 files

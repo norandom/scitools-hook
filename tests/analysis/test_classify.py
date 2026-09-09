@@ -513,3 +513,76 @@ def test_no_parse_settings_leaves_every_finding_exactly_as_it_was() -> None:
     assert classify(findings, LENIENT, severities={}) == classify(
         findings, LENIENT, severities={}, parse=ParseSettings()
     )
+
+
+# --- a before value taken below the metric's floor (lean-code task 1.4; req 6.3) ---
+#
+# The defect this pins: the floor says a below-floor routine is judged on nothing for the
+# metric, but `attach_before` was handing that value to `classify` all the same, where it
+# decided whether the *after* side's violation blocks. The reviewer's own case, replayed.
+
+FLOOR_KEY = EntityKey(scope="routine", path=PATH, longname="app.grew_into_measurability")
+VERBOSITY = Limit(max=3.0)
+
+
+def verbosity_side(
+    which: Literal["before", "after"], statements: float, ratio: float
+) -> ProjectSnapshot:
+    """One routine, one side, carrying the statement count and the ratio taken over it."""
+    entity = EntityRecord(
+        ref=EntityRef(
+            key=FLOOR_KEY, kind="Python Function", name="grew_into_measurability", line=1
+        ),
+        language="Python",
+        metrics={"CountStmt": statements, "LinesPerStatement": ratio},
+    )
+    return ProjectSnapshot(side=which, languages=["Python"], entities={FLOOR_KEY: entity})
+
+
+def verbosity_spec() -> EffectiveThreshold:
+    """The verbosity threshold as an error, so that ``blocking`` is a question worth asking."""
+    configured = ThresholdSpec(
+        scope="routine", metric="LinesPerStatement", limit=VERBOSITY, severity="error"
+    )
+    return EffectiveThreshold(
+        spec=configured, metric=parse_metric_name("LinesPerStatement"), limit=VERBOSITY, floor=5
+    )
+
+
+def test_a_below_floor_before_value_does_not_excuse_the_violation_that_follows_it() -> None:
+    """Four statements at 8.0 is judged on nothing, so it may not make 5.0 pre-existing (6.3).
+
+    ``preexisting`` is what stops a finding blocking in lenient mode, so attaching the 8.0
+    turned a **new** violation into one the gate reports and lets through. The floor already
+    says that 8.0 is arithmetic rather than a reading; ``attach_before`` leaving ``before``
+    unset says "not known", which blocks -- the same answer it gives for a before side that
+    did not parse, and for the same reason.
+    """
+    after, before = verbosity_side("after", 6.0, 5.0), verbosity_side("before", 4.0, 8.0)
+    keys = set(after.entities) | set(before.entities)
+    thresholds = [verbosity_spec()]
+
+    findings = attach_before(evaluate_thresholds(after, keys, thresholds).findings, before, 5)
+    findings += evaluate_ratchet(after, before, keys, thresholds)
+    classified = classify(findings, LENIENT, {})
+
+    (finding,) = classified
+    assert finding.kind == "threshold"
+    assert finding.before is None
+    assert finding.preexisting is False
+    assert finding.blocking is True
+
+
+def test_an_above_floor_before_value_still_calls_the_violation_pre_existing() -> None:
+    """The negative above is only worth having beside the excuse it is declining to withdraw."""
+    after, before = verbosity_side("after", 6.0, 5.0), verbosity_side("before", 6.0, 8.0)
+    keys = set(after.entities) | set(before.entities)
+    thresholds = [verbosity_spec()]
+
+    findings = attach_before(evaluate_thresholds(after, keys, thresholds).findings, before, 5)
+    classified = classify(findings, LENIENT, {})
+
+    (finding,) = classified
+    assert finding.before == pytest.approx(8.0)
+    assert finding.preexisting is True
+    assert finding.blocking is False

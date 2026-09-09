@@ -214,6 +214,18 @@ class EffectiveThreshold(DataModel):
     metric: MetricRef
     limit: Limit
     source: Literal["config", "baseline"] = "config"
+    floor: int | None = None
+    """The configured statement minimum this metric is judged above, or ``None`` (req 6.3).
+
+    Set only for a metric that declares a floor (``config.metric_names.declared_floor``);
+    ``None`` everywhere else, and also on a metric that has one when no settings were in hand,
+    which leaves the declaration's own default in force.
+
+    It travels on the threshold because that is the one thing ``analysis.thresholds`` and
+    ``analysis.ratchet`` both receive: neither is given the settings, and neither may grow a
+    parameter to be given them -- ``evaluate_thresholds`` already declares six and this
+    project caps a routine at five.
+    """
 
     @property
     def rule(self) -> str:

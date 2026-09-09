@@ -187,6 +187,20 @@ def test_the_net_growth_maximum_does_not_change_the_fingerprint() -> None:
     assert analysis_fingerprint(bounded) == analysis_fingerprint(base)
 
 
+def test_the_verbosity_floor_does_not_change_the_fingerprint() -> None:
+    """It moves which routines are *judged*, not which numbers are extracted (req 6.3).
+
+    The same distinction ``max_net_growth`` is pinned for above: the fingerprint covers the
+    document a run produces, and ``CountStmt`` and ``LinesPerStatement`` are recorded for
+    every routine whatever the floor is set to. A key that entered it would throw away a warm
+    analysis cache for a limit, which is the cost requirement 9.4 exists to avoid.
+    """
+    base = default_settings()
+    floored = changed(lean=base.lean.model_copy(update={"verbosity_min_statements": 2}))
+
+    assert analysis_fingerprint(floored) == analysis_fingerprint(base)
+
+
 def test_a_lean_ignore_list_alone_does_not_change_the_fingerprint() -> None:
     """A list belonging to a rule that is off changes neither the extraction nor the judgement."""
     base = default_settings()

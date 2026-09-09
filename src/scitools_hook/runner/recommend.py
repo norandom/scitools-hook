@@ -66,7 +66,13 @@ class RecommendCmd:
             return Recommendation(counts={}, advice=(), skipped=())
         analyses = self._engine.analyse(plan)
         snapshot = self._engine.extract("after", plan.files, analyses)
-        return recommend(snapshot, specs, target, tuple(self.ctx.settings.scope))
+        return recommend(
+            snapshot,
+            specs,
+            target,
+            tuple(self.ctx.settings.scope),
+            self.ctx.settings.lean.verbosity_min_statements,
+        )
 
     def _ceilings(self) -> Sequence[ThresholdSpec]:
         """The thresholds actually in force, after the metric catalogue has had its say.

@@ -101,7 +101,8 @@ class BaselineCmd:
         # compare against, so the second, neighbourhood-bounded pass `check` makes would read
         # the same database again for nothing.
         snapshot = self._engine.extract("after", plan.files, analyses)
-        captured = baseline_rules.capture(snapshot, specs, self.ctx.started_at)
+        floor = self.ctx.settings.lean.verbosity_min_statements
+        captured = baseline_rules.capture(snapshot, specs, self.ctx.started_at, floor)
         BaselineStore(destination).save(captured)
         return self._captured(destination, captured, specs, written=True)
 

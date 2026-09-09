@@ -24,7 +24,7 @@ from scitools_hook.analysis.ratchet import (
     pair_changed_signatures,
     within_limit,
 )
-from scitools_hook.analysis.thresholds import evaluate_thresholds
+from scitools_hook.analysis.thresholds import evaluate_thresholds, with_floor
 from scitools_hook.config.metric_names import Scope, parse_metric_name
 from scitools_hook.config.models import Limit, Severity, ThresholdSpec
 from scitools_hook.models.findings import EffectiveThreshold, Finding
@@ -906,3 +906,85 @@ def test_the_message_on_a_minimum_names_the_minimum(
         "file src/analysis/rules.py RatioCommentToCode fell from 0.2 to 0.19, "
         "still within the minimum 0.1"
     )
+
+
+# --- the statement floor a metric declares (task 1.4; req 6.3) --------------------
+
+
+def verbosity_side(side: Side, statements: int, ratio: float, lines: float) -> ProjectSnapshot:
+    """One routine, one side of a change, carrying the three numbers the cases below move."""
+    key = EntityKey(scope="routine", path="src/verbose.py", longname="verbose.routine")
+    record = EntityRecord(
+        ref=EntityRef(key=key, kind="Python Function", name="routine", line=1),
+        language="Python",
+        metrics={
+            "CountStmt": float(statements),
+            "LinesPerStatement": ratio,
+            "CountLineCode": lines,
+        },
+    )
+    return ProjectSnapshot(side=side, languages=["Python"], entities={key: record})
+
+
+def floored(minimum: int | None = None) -> EffectiveThreshold:
+    """The verbosity threshold, ratcheted, with ``minimum`` stamped where one is given."""
+    spec = threshold("routine", "LinesPerStatement", Limit(max=3.0), severity="warning")
+    return spec if minimum is None else with_floor([spec], minimum)[0]
+
+
+def test_a_routine_that_crosses_the_statement_floor_is_not_ratcheted() -> None:
+    """The two numbers are not comparable: one of them was never meant to be judged (6.3).
+
+    Four statements to six is a routine that has become *measurable*, not one that got worse,
+    and subtracting a ratio taken below the floor from one taken above it is arithmetic over
+    two different questions.
+    """
+    findings = ratchet(
+        verbosity_side("after", statements=6, ratio=9.0, lines=54.0),
+        verbosity_side("before", statements=4, ratio=8.0, lines=32.0),
+        floored(),
+    )
+
+    assert findings == []
+
+
+def test_two_sides_above_the_floor_are_still_compared() -> None:
+    """The negative above is only worth having beside the comparison it is declining to make."""
+    findings = ratchet(
+        verbosity_side("after", statements=6, ratio=3.0, lines=18.0),
+        verbosity_side("before", statements=6, ratio=2.0, lines=12.0),
+        floored(),
+    )
+
+    (finding,) = findings
+    assert finding.kind == "ratchet"
+    assert finding.rule == "routine.LinesPerStatement"
+    assert finding.before == pytest.approx(2.0)
+    assert finding.value == pytest.approx(3.0)
+
+
+def test_a_configured_minimum_of_two_compares_across_the_same_crossing() -> None:
+    """The floor the ratchet honours is the operator's, not a constant (req 6.3)."""
+    findings = ratchet(
+        verbosity_side("after", statements=6, ratio=9.0, lines=54.0),
+        verbosity_side("before", statements=4, ratio=8.0, lines=32.0),
+        floored(minimum=2),
+    )
+
+    (finding,) = findings
+    assert finding.before == pytest.approx(8.0)
+    assert finding.value == pytest.approx(9.0)
+
+
+def test_a_metric_without_a_floor_is_compared_across_the_same_crossing() -> None:
+    """CountLineCode over the very same pair of records ratchets as it always has."""
+    findings = ratchet(
+        verbosity_side("after", statements=6, ratio=9.0, lines=54.0),
+        verbosity_side("before", statements=4, ratio=8.0, lines=32.0),
+        threshold("routine", "CountLineCode", Limit(max=60)),
+    )
+
+    (finding,) = findings
+    assert finding.rule == "routine.CountLineCode"
+    assert finding.before == pytest.approx(32.0)
+    assert finding.value == pytest.approx(54.0)

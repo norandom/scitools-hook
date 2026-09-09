@@ -18,6 +18,7 @@ from typing import Final, Literal, TypeVar, get_args
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from scitools_hook.config.metric_names import (
+    DEFAULT_FLOOR_MINIMUM,
     ELEMENT_SCOPES,
     MetricRef,
     Scope,
@@ -847,6 +848,16 @@ class LeanRules(StrictModel):
     similar_min_statements: int = Field(default=6, ge=2)
     similar_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     similar_ignore: list[str] = Field(default_factory=list)
+    # The statement floor `LinesPerStatement` is judged above (requirement 6.3 asks for a
+    # *configurable* minimum, and a constant would leave it unsatisfied). It lives here rather
+    # than in `[thresholds.routine]` because it is not a limit on anything: it says which
+    # routines the ratio is a statement about at all. The default is the declaration's own --
+    # `SYNTHETIC_METRICS["LinesPerStatement"].floor` -- measured on this repository, where the
+    # 2 851 routines of at least five statements score p50 1.20, p90 2.00, p95 2.29, max 6.6,
+    # while below five the ratio is arithmetic: a two-statement routine spread over six lines
+    # scores 3.0 and outranks a genuinely long one. `ge=1` because a floor of zero would judge
+    # a routine with no statements at all, whose ratio is undefined rather than large.
+    verbosity_min_statements: int = Field(default=DEFAULT_FLOOR_MINIMUM, ge=1)
     # A maximum on the net LLOC delta, off by default: requirement 7.5 says the delta never
     # blocks unless an operator asks it to. ``0`` is a legal maximum and means "this change
     # may not make the project longer", which is why the bound is ``ge=0`` and not ``ge=1``.

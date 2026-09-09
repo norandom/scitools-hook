@@ -19,6 +19,7 @@ from scitools_hook.analysis.thresholds import (
     ThresholdOutcome,
     evaluate_thresholds,
     resolve_for_path,
+    with_floor,
 )
 from scitools_hook.config.metric_names import Scope, parse_metric_name
 from scitools_hook.config.models import IgnoreRules, Limit, PathScope, Severity, ThresholdSpec
@@ -570,3 +571,188 @@ def test_the_finding_order_is_unchanged_by_the_scope_machinery(after: ProjectSna
     assert order[1][0] == "routine.CyclomaticStrict"
     assert ("project.MaxNesting", "") in order
     assert order.index(("project.MaxNesting", "")) < order.index(("file.CountLineCode", ENGINE))
+
+
+# --- the statement floor a metric declares (task 1.4; req 6.3) --------------------
+#
+# `LinesPerStatement` declares `floor=("CountStmt", 5)`, so a routine below it is judged on
+# nothing for that metric. Both halves are asserted separately: no finding, and no
+# *unavailable* record either -- reporting the routine as unavailable would tell an operator
+# their build cannot compute a metric it computed perfectly well.
+
+VERBOSE_RATIO = 8.0
+"""Far above every limit used below, so which routines are judged is the only variable."""
+
+
+def verbose_routines(*statements: int) -> ProjectSnapshot:
+    """One routine per statement count, each at ``VERBOSE_RATIO`` and 40 code lines.
+
+    ``CountLineCode`` rides along because the regression cases need a metric that declares no
+    floor measured over the very same entities.
+    """
+    entities = [
+        {
+            "ref": {
+                "key": {
+                    "scope": "routine",
+                    "path": f"src/verbose{index}.py",
+                    "longname": f"verbose.routine{index}",
+                    "parameters": "",
+                },
+                "kind": "Python Function",
+                "name": f"routine{index}",
+                "line": index + 1,
+            },
+            "language": "Python",
+            "metrics": {
+                "CountStmt": float(count),
+                "LinesPerStatement": VERBOSE_RATIO,
+                "CountLineCode": 40.0,
+            },
+        }
+        for index, count in enumerate(statements)
+    ]
+    return ProjectSnapshot.model_validate(
+        {"side": "after", "languages": ["Python"], "entities": entities}
+    )
+
+
+def verbosity(minimum: int | None = None) -> EffectiveThreshold:
+    """The shipped verbosity threshold, with ``minimum`` stamped on it where one is given."""
+    spec = threshold("routine", "LinesPerStatement", Limit(max=3.0), severity="warning")
+    return spec if minimum is None else with_floor([spec], minimum)[0]
+
+
+def test_a_routine_below_the_statement_floor_raises_no_finding() -> None:
+    """Four statements over 32 lines scores 8.0 on arithmetic alone, and is not judged."""
+    outcome = evaluate(verbose_routines(4), verbosity())
+
+    assert outcome.findings == []
+
+
+def test_a_routine_below_the_statement_floor_is_not_recorded_as_unavailable() -> None:
+    """The subtle half of req 6.3: not applicable is not the same answer as not available.
+
+    The metric was computed for this routine -- it is in the record -- so a run that reported
+    ``LinesPerStatement`` unavailable for Python would be telling an operator their build
+    cannot answer a question it just answered. Nothing is tracked as a highest value either:
+    ``RunResult.highest`` is what the human report's highest-values section prints, and naming
+    a routine the rule does not judge as the top of the distribution would put an entity in
+    front of an operator that no finding can ever be raised about. (It is not the adaptive
+    baseline's input -- ``runner.check`` takes a fresh ``capture`` for that, and says why.)
+    """
+    outcome = evaluate(verbose_routines(4), verbosity())
+
+    assert outcome.unavailable == {}
+    assert outcome.highest == []
+
+
+def test_a_routine_at_the_statement_floor_is_judged() -> None:
+    """Five statements is the declared minimum, and a minimum is inclusive."""
+    outcome = evaluate(verbose_routines(5), verbosity())
+
+    (finding,) = outcome.findings
+    assert finding.rule == "routine.LinesPerStatement"
+    assert finding.value == pytest.approx(VERBOSE_RATIO)
+    assert longnames(outcome.findings) == {"verbose.routine0"}
+
+
+def test_only_the_routines_above_the_floor_are_judged() -> None:
+    """The guard is per entity, not per run: one snapshot, one threshold, both answers."""
+    outcome = evaluate(verbose_routines(4, 6), verbosity())
+
+    assert longnames(outcome.findings) == {"verbose.routine1"}
+
+
+def test_a_configured_minimum_of_two_judges_the_four_statement_routine() -> None:
+    """Requirement 6.3 asks for a configurable minimum, and this is what configuring it does."""
+    outcome = evaluate(verbose_routines(4), verbosity(minimum=2))
+
+    (finding,) = outcome.findings
+    assert finding.rule == "routine.LinesPerStatement"
+
+
+def test_a_configured_minimum_of_seven_stops_judging_a_six_statement_routine() -> None:
+    """The number moves in both directions; only the declared default is a default."""
+    outcome = evaluate(verbose_routines(6), verbosity(minimum=7))
+
+    assert outcome.findings == []
+
+
+def test_a_metric_that_declares_no_floor_judges_the_same_small_routine() -> None:
+    """The regression that matters: CountLineCode behaves exactly as it did before task 1.4."""
+    outcome = evaluate(verbose_routines(4), threshold("routine", "CountLineCode", Limit(max=10.0)))
+
+    assert longnames(outcome.findings) == {"verbose.routine0"}
+    assert outcome.highest[0].value == pytest.approx(40.0)
+
+
+def test_with_floor_leaves_a_threshold_whose_metric_declares_none_untouched() -> None:
+    """The stamp is per metric; a configured minimum may not reach CyclomaticStrict."""
+    cyclomatic = threshold("routine", "CyclomaticStrict", Limit(max=10))
+
+    (stamped,) = with_floor([cyclomatic], 2)
+
+    assert stamped.floor is None
+    assert stamped == cyclomatic
+
+
+def test_with_floor_stamps_the_metric_that_declares_one() -> None:
+    """And leaves everything else about the threshold alone, limit and source included."""
+    (stamped,) = with_floor([threshold("routine", "LinesPerStatement", Limit(max=3.0))], 2)
+
+    assert stamped.floor == 2
+    assert stamped.limit == Limit(max=3.0)
+    assert stamped.spec.rule == "routine.LinesPerStatement"
+
+
+def test_a_threshold_a_scope_adds_back_is_floored_by_the_configured_minimum() -> None:
+    """A rule a scope re-adds has no base to inherit the floor from, and still gets it.
+
+    Two scopes over one path, in declaration order: the first switches ``LinesPerStatement``
+    off, so the second one *adds* it and ``_apply_override`` has ``base=None``. Written as a
+    test rather than left as a comment because the fallback it would otherwise take -- the
+    declaration's own five -- is silent, and a configured 2 that stops applying inside a scope
+    is exactly the "looks configured" failure this project refuses.
+    """
+    scopes = {
+        "off": PathScope.model_validate(
+            {"paths": ["src/**"], "thresholds": {"routine": {"LinesPerStatement": False}}}
+        ),
+        "back": PathScope.model_validate(
+            {"paths": ["src/**"], "thresholds": {"routine": {"LinesPerStatement": 3.0}}}
+        ),
+    }
+    snapshot = verbose_routines(4)
+
+    outcome = evaluate_thresholds(
+        snapshot, set(snapshot.entities), [verbosity(minimum=2)], scopes=scopes
+    )
+
+    assert [finding.rule for finding in outcome.findings] == ["routine.LinesPerStatement"]
+
+
+def test_a_scope_added_threshold_keeps_the_declared_floor_when_nothing_global_carries_one() -> None:
+    """The honest residue: with no floored metric configured globally, the declaration wins.
+
+    ``_run_minimum`` reads the run's number off the global thresholds, so a configuration that
+    stamps none has none to find. The declared five still applies -- the four-statement routine
+    is not judged -- which is the safe direction, and it is pinned here so the limit of the
+    mechanism is a fact rather than an assumption.
+    """
+    scopes = {
+        "small": PathScope.model_validate(
+            {"paths": ["src/**"], "thresholds": {"routine": {"LinesPerStatement": 3.0}}}
+        )
+    }
+
+    snapshot = verbose_routines(4)
+
+    outcome = evaluate_thresholds(
+        snapshot,
+        set(snapshot.entities),
+        [threshold("routine", "CountLineCode", Limit(max=999))],
+        scopes=scopes,
+    )
+
+    assert outcome.findings == []

@@ -31,7 +31,13 @@ from dataclasses import dataclass, field
 from typing import Final, Literal
 
 from scitools_hook.analysis.population import IgnoreFilter, filter_keys, reduce
-from scitools_hook.config.metric_names import ELEMENT_SCOPES, Scope, format_metric_name
+from scitools_hook.config.metric_names import (
+    ELEMENT_SCOPES,
+    Scope,
+    below_floor,
+    declared_floor,
+    format_metric_name,
+)
 from scitools_hook.config.models import (
     IgnoreRules,
     Limit,
@@ -149,6 +155,7 @@ def _overlay(
     scopes: Mapping[str, PathScope],
 ) -> ScopeResolution:
     """Apply every matching scope's overrides to ``specs``, keeping the global order."""
+    minimum = _run_minimum(specs)
     resolved: dict[str, EffectiveThreshold | None] = {item.rule: item for item in specs}
     ignored: list[str] = []
     for name in applied:
@@ -159,7 +166,9 @@ def _overlay(
                 ignored.append(f"{name}: {rule} has no limit here and none globally")
                 continue
             resolved[rule] = replacement
-    kept = tuple(item for item in resolved.values() if item is not None)
+    # Re-stamped rather than only inherited: a rule a scope *adds* has no base to take the
+    # run's configured minimum from (:func:`_run_minimum`).
+    kept = tuple(with_floor([item for item in resolved.values() if item is not None], minimum))
     disabled = tuple(sorted(rule for rule, item in resolved.items() if item is None))
     return ScopeResolution(
         path=path,
@@ -205,7 +214,16 @@ def _apply_override(
         }
     )
     source = "config" if override.limit is not None or base is None else base.source
-    return EffectiveThreshold(spec=spec, metric=spec.ref, limit=limit, source=source)
+    # The floor is a property of the metric, not of the limit, so a scope that moves the limit
+    # keeps it. A rule a scope *adds* has no base to inherit from and leaves ``None`` here;
+    # ``_overlay`` re-stamps the run's minimum over the result, which is where it gets one.
+    return EffectiveThreshold(
+        spec=spec,
+        metric=spec.ref,
+        limit=limit,
+        source=source,
+        floor=base.floor if base is not None else None,
+    )
 
 
 def _base_limit(base: EffectiveThreshold | None) -> Limit | None:
@@ -233,6 +251,55 @@ def _first(*values: Severity | None) -> Severity:
         if value is not None:
             return value
     raise AssertionError("_first needs a non-None fallback as its last argument")
+
+
+def with_floor(
+    specs: Sequence[EffectiveThreshold], minimum: int | None
+) -> list[EffectiveThreshold]:
+    """``specs`` with the operator's statement floor on every metric that declares one (6.3).
+
+    The one place ``settings.lean.verbosity_min_statements`` enters the analysis layer. It is
+    a stamp on the thresholds rather than an argument to the evaluators because
+    :func:`evaluate_thresholds` already declares six parameters and
+    ``analysis.ratchet.evaluate_ratchet`` five, against this project's own cap of five: a
+    seventh would make the gate refuse the change that added it. Carrying it on the threshold
+    also means the ratchet reads the same number the absolute check did, with nothing to keep
+    in step.
+
+    Every other threshold is returned untouched -- ``declared_floor`` answers ``None`` for
+    ``CyclomaticStrict``, ``CountLineCode`` and every metric shipped before this family -- so
+    the floor is per metric and never a switch over the run.
+
+    A ``minimum`` of ``None`` changes nothing at all, which is what :func:`_overlay` needs
+    when no global threshold on a floored metric survived to say what the run was stamped
+    with: clearing a floor that is already there would be worse than not knowing one.
+    """
+    if minimum is None:
+        return list(specs)
+    return [
+        item.model_copy(update={"floor": minimum})
+        if declared_floor(item.metric.metric) is not None
+        else item
+        for item in specs
+    ]
+
+
+def _run_minimum(specs: Sequence[EffectiveThreshold]) -> int | None:
+    """The statement floor this run was stamped with, read back off the global thresholds.
+
+    Every threshold :func:`with_floor` touched carries the same number, so any one of them
+    answers for the run. It is read back rather than passed down because a path scope can
+    **add** a threshold no global one defines -- an operator who disabled ``LinesPerStatement``
+    globally and set it for one directory -- and such a threshold has no base to inherit a
+    floor from. Without this it would silently fall back to the declaration's five and ignore
+    a configured minimum, which is the shape of bug this family exists to stop.
+
+    ``None`` when no floored metric is configured globally at all, and then the scope-added
+    threshold keeps the declaration's own default. That residue is unavoidable here and is
+    honest: with nothing configured on the metric anywhere but in the scope, there is no
+    operator number in the analysis layer to find.
+    """
+    return next((item.floor for item in specs if item.floor is not None), None)
 
 
 def evaluate_thresholds(
@@ -349,9 +416,18 @@ def _is_population(threshold: EffectiveThreshold) -> bool:
 def _evaluate_elements(
     threshold: EffectiveThreshold, records: Sequence[EntityRecord], tally: _Tally
 ) -> None:
-    """Check one element-scope threshold against every requested entity of its scope."""
+    """Check one element-scope threshold against every requested entity of its scope.
+
+    An entity below the metric's floor is passed over **entirely**: no finding, no highest
+    value and -- the half that is easy to get wrong -- no unavailable record either
+    (req 6.3). The value was computed and is simply not a statement about that entity, so
+    calling it unavailable would tell an operator their build cannot answer a metric it
+    answers perfectly well. See ``config.metric_names.below_floor``.
+    """
     metric = threshold.metric.metric
     for record in records:
+        if below_floor(record.metrics, metric, threshold.floor):
+            continue
         value = record.metrics.get(metric)
         if value is None:
             tally.record_unavailable(record.language, metric)

@@ -460,3 +460,63 @@ def test_an_empty_project_recommends_nothing_and_claims_nothing() -> None:
     assert result.advice == ()
     assert result.counts == {}
     assert [item.rule for item in result.skipped] == [CYCLOMATIC]
+
+
+# --- the statement floor a metric declares (task 1.4; req 6.3) --------------------
+
+
+def verbosity_snapshot(pairs: list[tuple[int, float]]) -> ProjectSnapshot:
+    """One routine per ``(statements, ratio)`` pair, each in its own file."""
+    entities = [
+        _record(
+            "routine",
+            f"src/f{index}.py",
+            f"mod.f{index}",
+            index + 1,
+            CountStmt=float(statements),
+            LinesPerStatement=ratio,
+        )
+        for index, (statements, ratio) in enumerate(pairs)
+    ]
+    return ProjectSnapshot.model_validate(
+        {"side": "after", "languages": ["Python"], "entities": entities}
+    )
+
+
+def test_a_below_floor_routine_is_left_out_of_the_population_that_prices_the_ceiling() -> None:
+    """`recommend` must price the rule over the population `check` judges, and only that one.
+
+    The two answers came apart on this repository before the floor was consulted: 5 940
+    routines with 330 outside the shipped 3.0, and ``raise 3 -> 4`` -- a ceiling calibrated on
+    three-line routines that raise no finding at all. Here the four below-floor routines carry
+    the highest ratios in the snapshot, so leaving them in would move both the count and the
+    verdict.
+    """
+    snapshot = verbosity_snapshot([(2, 9.0), (3, 9.0), (4, 9.0), (4, 9.0), (8, 1.0), (9, 2.0)])
+
+    advice = only(recommend(snapshot, [spec("routine", "LinesPerStatement", max=3.0)]))
+
+    assert advice.distribution.count == 2
+    assert advice.distribution.maximum == pytest.approx(2.0)
+    assert advice.verdict == "keep"
+    assert advice.proposed is None
+
+
+def test_a_configured_minimum_changes_the_population_it_is_priced_over() -> None:
+    """The same snapshot, judged by an operator who says two statements is enough (req 6.3)."""
+    snapshot = verbosity_snapshot([(2, 9.0), (3, 9.0), (4, 9.0), (4, 9.0), (8, 1.0), (9, 2.0)])
+
+    advice = only(recommend(snapshot, [spec("routine", "LinesPerStatement", max=3.0)], minimum=2))
+
+    assert advice.distribution.count == 6
+    assert advice.verdict != "keep"
+
+
+def test_a_metric_without_a_floor_keeps_every_routine_in_its_population() -> None:
+    """The regression: CountStmt itself is priced over all six routines, floor or no floor."""
+    snapshot = verbosity_snapshot([(2, 9.0), (3, 9.0), (4, 9.0), (4, 9.0), (8, 1.0), (9, 2.0)])
+
+    advice = only(recommend(snapshot, [spec("routine", "CountStmt", max=40)]))
+
+    assert advice.distribution.count == 6
+    assert advice.distribution.maximum == pytest.approx(9.0)

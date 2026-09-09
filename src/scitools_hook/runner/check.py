@@ -85,7 +85,11 @@ from scitools_hook.analysis.structure.definitions import find_duplicate_definiti
 from scitools_hook.analysis.structure.fan import evaluate_fan
 from scitools_hook.analysis.structure.layers import evaluate_layers
 from scitools_hook.analysis.structure.unused import find_unused_routines
-from scitools_hook.analysis.thresholds import ThresholdOutcome, evaluate_thresholds
+from scitools_hook.analysis.thresholds import (
+    ThresholdOutcome,
+    evaluate_thresholds,
+    with_floor,
+)
 from scitools_hook.config.fingerprint import analysis_fingerprint
 from scitools_hook.config.models import SeverityMap, ThresholdSpec
 from scitools_hook.models.baseline import Baseline
@@ -217,6 +221,12 @@ class CheckPipeline:
         specs = list(self.ctx.availability.thresholds)
         stored, unreadable = self._store.load(specs)
         effective, issues = baseline_rules.apply(specs, stored)
+        # The statement floor of a metric that declares one, from `[lean]` (req 6.3). Stamped
+        # on the thresholds here because this is where the settings and the effective limits
+        # are both in hand, and because it is what both evaluators read: neither
+        # `evaluate_thresholds` nor `evaluate_ratchet` can take another parameter without
+        # breaking this project's own five-parameter limit.
+        effective = with_floor(effective, self.ctx.settings.lean.verbosity_min_statements)
         # Requirement 8.6: a baseline that cannot be read, and an entry no configured
         # threshold owns, are both reported and then stepped over -- the run continues on the
         # configured limits for exactly the thresholds those entries would have narrowed.
@@ -286,7 +296,8 @@ class CheckPipeline:
         findings = self._unparsed(plan.files, seen.unreadable)
         findings.extend(outcome.findings)
         if before is not None:
-            findings = attach_before(findings, before)
+            floor = self.ctx.settings.lean.verbosity_min_statements
+            findings = attach_before(findings, before, floor)
             findings.extend(
                 evaluate_ratchet(after, before, affected.keys, effective, self.ctx.settings.scope)
             )
@@ -534,7 +545,8 @@ class CheckPipeline:
         if mode != "all":
             self._report([PARTIAL_VIEW_NOTE])
             return []
-        observed = baseline_rules.capture(after, specs, self.ctx.started_at)
+        floor = self.ctx.settings.lean.verbosity_min_statements
+        observed = baseline_rules.capture(after, specs, self.ctx.started_at, floor)
         tightened, lowered = baseline_rules.tighten(stored, observed.values)
         if lowered:
             self._store.save(tightened)

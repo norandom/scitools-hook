@@ -49,7 +49,7 @@ from math import isfinite
 from typing import Any, Final, Literal
 
 from scitools_hook.analysis.population import reduce
-from scitools_hook.config.metric_names import ELEMENT_SCOPES
+from scitools_hook.config.metric_names import ELEMENT_SCOPES, below_floor
 from scitools_hook.config.models import Limit, ThresholdSpec
 from scitools_hook.models.baseline import Baseline, BaselineIssue
 from scitools_hook.models.findings import EffectiveThreshold, TightenedLimit
@@ -139,7 +139,10 @@ def tighten(
 
 
 def capture(
-    snapshot: ProjectSnapshot, specs: Sequence[ThresholdSpec], captured_at: str | None = None
+    snapshot: ProjectSnapshot,
+    specs: Sequence[ThresholdSpec],
+    captured_at: str | None = None,
+    minimum: int | None = None,
 ) -> Baseline:
     """Record the current worst value of every configured threshold (req 8.1).
 
@@ -149,13 +152,23 @@ def capture(
     uses. A threshold whose metric no entity carries, and a population that cannot be
     reduced, yield no entry, so a baseline never claims a value it did not observe.
 
+    **The population is the one the gate judges**, which is why ``minimum`` --
+    ``settings.lean.verbosity_min_statements``, or ``None`` for each metric's declared default
+    -- is taken here as well (req 6.3). An entity below a metric's floor is judged on nothing
+    for it, so a worst value read off one is a ceiling nobody is held to: measured on this
+    repository, an unfloored capture records ``routine.LinesPerStatement`` at **22.5** where
+    the floored maximum is **7.2**. That difference is not cosmetic. ``apply`` narrows a
+    configured limit to a recorded value that sits below it, so on a repository whose operator
+    had written a maximum of 30 the unfloored number would become the effective limit and
+    loosen the rule by three times, against routines the rule never judged.
+
     ``captured_at`` defaults to the current UTC instant; every caller that needs a
     reproducible result -- tests, and any pipeline that stamps a whole run once -- passes its
     own, so nothing in this module reads the clock behind a caller's back.
     """
     values: dict[str, float] = {}
     for spec in specs:
-        observed = _observed(snapshot, spec)
+        observed = _observed(snapshot, spec, minimum)
         if observed is not None:
             values[spec.rule] = observed
     return Baseline(captured_at=captured_at if captured_at is not None else _now(), values=values)
@@ -289,11 +302,13 @@ def _below_minimum(spec: ThresholdSpec, value: float) -> str:
     )
 
 
-def _observed(snapshot: ProjectSnapshot, spec: ThresholdSpec) -> float | None:
+def _observed(
+    snapshot: ProjectSnapshot, spec: ThresholdSpec, minimum: int | None = None
+) -> float | None:
     """The current value of one threshold, or ``None`` when the snapshot has no data for it."""
     if spec.ref.is_population or spec.scope not in ELEMENT_SCOPES:
         return _population_value(snapshot, spec)
-    return _element_value(snapshot, spec)
+    return _element_value(snapshot, spec, minimum)
 
 
 def _population_value(snapshot: ProjectSnapshot, spec: ThresholdSpec) -> float | None:
@@ -309,13 +324,23 @@ def _population_value(snapshot: ProjectSnapshot, spec: ThresholdSpec) -> float |
     return max(values) if values else None
 
 
-def _element_value(snapshot: ProjectSnapshot, spec: ThresholdSpec) -> float | None:
-    """The worst value of ``spec``'s metric among the entities of its scope (req 8.1)."""
+def _element_value(
+    snapshot: ProjectSnapshot, spec: ThresholdSpec, minimum: int | None = None
+) -> float | None:
+    """The worst value of ``spec``'s metric among the entities of its scope (req 8.1).
+
+    An entity below the metric's floor contributes nothing, exactly as it contributes nothing
+    to a finding, to a ratchet comparison or to the population ``analysis.recommend`` prices:
+    all four are the same question, and answering it four ways is how a gate stops agreeing
+    with itself.
+    """
     metric = spec.ref.metric
     values = [
         record.metrics[metric]
         for record in snapshot.entities.values()
-        if record.key.scope == spec.scope and metric in record.metrics
+        if record.key.scope == spec.scope
+        and metric in record.metrics
+        and not below_floor(record.metrics, metric, minimum)
     ]
     if not values:
         return None

@@ -388,3 +388,72 @@ def test_capture_then_apply_flags_nothing_on_the_snapshot_it_captured(
     assert issues == []
     assert {threshold.source for threshold in thresholds} == {"baseline"}
     assert outcome.findings == []
+
+
+# --- the population a capture records (lean-code task 1.4; req 6.3) ---------------
+
+
+def verbosity_project(*pairs: tuple[float, float]) -> ProjectSnapshot:
+    """One routine per ``(statements, ratio)`` pair, each in its own file."""
+    entities = [
+        {
+            "ref": {
+                "key": {
+                    "scope": "routine",
+                    "path": f"src/v{index}.py",
+                    "longname": f"v.routine{index}",
+                    "parameters": "",
+                },
+                "kind": "Python Function",
+                "name": f"routine{index}",
+                "line": index + 1,
+            },
+            "language": "Python",
+            "metrics": {"CountStmt": statements, "LinesPerStatement": ratio},
+        }
+        for index, (statements, ratio) in enumerate(pairs)
+    ]
+    return ProjectSnapshot.model_validate(
+        {"side": "after", "languages": ["Python"], "entities": entities}
+    )
+
+
+def test_a_capture_records_the_worst_value_of_the_population_the_gate_judges() -> None:
+    """A routine below the metric's floor is judged on nothing, so it is no one's ceiling.
+
+    Measured on this repository: an unfloored capture records
+    ``routine.LinesPerStatement = 22.5`` where the floored maximum is 7.2. The number is not
+    inert -- ``apply`` narrows a configured limit down to a recorded value below it, so on a
+    repository whose operator wrote a maximum of 30 the unfloored figure would become the
+    effective limit and loosen the rule threefold, on the strength of routines it never judged.
+    """
+    snapshot = verbosity_project((2.0, 22.5), (4.0, 9.0), (8.0, 7.2), (9.0, 2.0))
+
+    captured = capture(
+        snapshot, [spec("routine", "LinesPerStatement", Limit(max=3.0))], captured_at=STAMP
+    )
+
+    assert captured.values == {"routine.LinesPerStatement": pytest.approx(7.2)}
+
+
+def test_a_configured_minimum_moves_the_population_a_capture_records() -> None:
+    """The floor a capture honours is the operator's, not a constant (req 6.3)."""
+    snapshot = verbosity_project((2.0, 22.5), (4.0, 9.0), (8.0, 7.2), (9.0, 2.0))
+
+    captured = capture(
+        snapshot,
+        [spec("routine", "LinesPerStatement", Limit(max=3.0))],
+        captured_at=STAMP,
+        minimum=2,
+    )
+
+    assert captured.values == {"routine.LinesPerStatement": pytest.approx(22.5)}
+
+
+def test_a_metric_without_a_floor_is_captured_over_every_entity() -> None:
+    """The regression: CountStmt over the very same routines keeps its true maximum."""
+    snapshot = verbosity_project((2.0, 22.5), (4.0, 9.0), (8.0, 7.2), (9.0, 2.0))
+
+    captured = capture(snapshot, [spec("routine", "CountStmt", Limit(max=40))], captured_at=STAMP)
+
+    assert captured.values == {"routine.CountStmt": pytest.approx(9.0)}

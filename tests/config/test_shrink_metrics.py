@@ -18,7 +18,13 @@ from collections.abc import Mapping
 import pytest
 
 from scitools_hook.config.defaults import default_settings
-from scitools_hook.config.metric_names import PLUGIN_METRICS, SYNTHETIC_METRICS, Scope
+from scitools_hook.config.metric_names import (
+    PLUGIN_METRICS,
+    SYNTHETIC_METRICS,
+    Scope,
+    below_floor,
+    declared_floor,
+)
 from scitools_hook.config.models import Limit, ProjectSettings, Settings, ThresholdSpec
 from scitools_hook.config.validate import validate_settings
 from scitools_hook.errors import ConfigError
@@ -166,3 +172,50 @@ def test_no_duplicate_lines_metric_ships_as_a_threshold() -> None:
     shipped = {spec.metric for spec in default_settings().thresholds}
 
     assert shipped.isdisjoint({"DuplicateLinesOfCode", "DuplicateLinesOfCodePercent"})
+
+
+# --- the guard that applies a declared floor (task 1.4; req 6.3) -------------------
+#
+# The declaration was pinned above; what follows is the one predicate every consumer of it
+# asks. It is stated here rather than in `tests/analysis` because the answer belongs to the
+# metric, and because both evaluators and `recommend` have to agree on it.
+
+BELOW = {"CountStmt": 4.0, "LinesPerStatement": 8.0}
+"""A routine of four statements over 32 lines: a ratio of 8, and a statement about nothing."""
+
+AT_THE_FLOOR = {"CountStmt": 5.0, "LinesPerStatement": 8.0}
+"""The same ratio one statement higher, which is where the distribution starts to mean it."""
+
+
+def test_a_routine_under_the_declared_minimum_is_below_the_floor() -> None:
+    """Four statements is under the declared five, so the ratio judges nothing (req 6.3)."""
+    assert below_floor(BELOW, "LinesPerStatement") is True
+
+
+def test_a_routine_at_the_declared_minimum_is_not_below_the_floor() -> None:
+    """The floor is a minimum, not a threshold to exceed: five statements is judged."""
+    assert below_floor(AT_THE_FLOOR, "LinesPerStatement") is False
+
+
+def test_a_configured_minimum_replaces_the_declared_one() -> None:
+    """Requirement 6.3 asks for a configurable minimum, so two makes the small routine judged."""
+    assert below_floor(BELOW, "LinesPerStatement", 2) is False
+    assert below_floor(AT_THE_FLOOR, "LinesPerStatement", 6) is True
+
+
+def test_a_metric_that_declares_no_floor_is_never_below_one() -> None:
+    """The floor is per metric: CountLineCode over the same routine is judged as it always was."""
+    assert below_floor(BELOW, "CountLineCode") is False
+    assert below_floor(BELOW, "CountLineCode", 99) is False
+
+
+def test_an_entity_without_the_counted_metric_is_not_below_the_floor() -> None:
+    """Absent is not below: a metric Understand did not provide is the unavailable report's."""
+    assert below_floor({"LinesPerStatement": 8.0}, "LinesPerStatement") is False
+
+
+def test_declared_floor_answers_the_pair_for_the_one_metric_that_has_one() -> None:
+    """The guard reads the declaration rather than a constant of its own."""
+    assert declared_floor("LinesPerStatement") == ("CountStmt", 5)
+    assert declared_floor("CountParams") is None
+    assert declared_floor("CyclomaticStrict") is None

@@ -10,7 +10,7 @@ that has entities. It imports nothing above ``scitools_hook.errors``.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, NamedTuple, TypeGuard
 
@@ -156,6 +156,46 @@ outranks a genuinely long one. Five statements is where the distribution starts 
 something -- measured over this repository's 2 851 routines of at least five statements: p50
 1.20, p90 2.00, p95 2.29, max 6.6.
 """
+
+
+# --- the floor a metric declares -----------------------------------------------------
+
+DEFAULT_FLOOR_MINIMUM: Final = 5
+"""Fallback minimum when a caller has no configured one; equals the declaration's own."""
+
+
+def declared_floor(metric: str) -> tuple[str, int] | None:
+    """``metric``'s declared ``(counted metric, default minimum)`` floor, or ``None``.
+
+    ``None`` for every native Understand metric and for every synthetic one that declares no
+    floor, which is what keeps :func:`below_floor` a no-op for ``CountLineCode``,
+    ``CyclomaticStrict`` and every other threshold shipped before this family.
+    """
+    synthetic = SYNTHETIC_METRICS.get(metric)
+    return None if synthetic is None else synthetic.floor
+
+
+def below_floor(metrics: Mapping[str, float], metric: str, minimum: int | None = None) -> bool:
+    """Whether this entity is under ``metric``'s floor and so is judged on nothing for it.
+
+    ``metrics`` is the entity's metric mapping rather than the record holding it, because
+    this module sits below ``models`` in the layer order and may not import a snapshot type.
+
+    ``minimum`` is the operator's number -- ``settings.lean.verbosity_min_statements`` (req
+    6.3) -- and ``None`` means "no settings in hand", which leaves the declaration's own
+    default in force. A metric that declares no floor answers ``False`` here whatever is
+    configured, so the guard is per metric and not a global switch.
+
+    An entity that does not carry the counted metric at all answers ``False``: absent is not
+    below, and the truthful report for a metric Understand did not provide is the unavailable
+    record ``analysis.thresholds`` already makes, not silence.
+    """
+    floor = declared_floor(metric)
+    if floor is None:
+        return False
+    counted, declared = floor
+    value = metrics.get(counted)
+    return value is not None and value < (declared if minimum is None else minimum)
 
 
 @dataclass(frozen=True, slots=True)
