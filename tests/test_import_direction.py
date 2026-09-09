@@ -62,6 +62,8 @@ SRC = REPO_ROOT / "src"
 PACKAGE = "scitools_hook"
 WORKER_MODULE = "scitools_hook.understand.worker"
 WORKER_PATH = SRC / "scitools_hook" / "understand" / "worker.py"
+WORKER_LEAN_MODULE = "scitools_hook.understand.worker_lean"
+WORKER_LEAN_PATH = SRC / "scitools_hook" / "understand" / "worker_lean.py"
 
 SUBPROCESS_TIMEOUT_S = 60.0
 
@@ -131,6 +133,17 @@ MODULE_RULES: dict[str, frozenset[str]] = {
     # even the leaf. `test_the_worker_answers_ping_under_an_isolated_interpreter` below
     # executes it to prove the rule holds at runtime and not only in the parse.
     WORKER_MODULE: frozenset(),
+    # `worker_lean.py` is the worker's measurement sibling (design.md, *Allowed
+    # Dependencies*). `worker.py` is at 1 060 of its 1 200 code lines, so the lean
+    # measurements go beside it rather than in it, and `worker.py` reaches them through
+    # `spec_from_file_location` on its own directory rather than through an import
+    # statement. A by-path load runs the file under exactly the interpreter the loader is
+    # already in -- `upython`, with no copy of this package anywhere -- so the sibling is
+    # held to the same allowance of *nothing*. Naming it here also removes the implicit
+    # same-layer allowance, which is what stops it importing `worker` back: the parse
+    # would otherwise read `understand -> understand` as legal and the runtime would fail
+    # on the first licensed machine.
+    WORKER_LEAN_MODULE: frozenset(),
     # The composition root, widened rather than restricted, and the only entry of that kind.
     # `"cli"` is written out because a module named here does not get the implicit same-layer
     # allowance -- that is what stops `worker` importing its own siblings -- so an entry that
@@ -439,11 +452,23 @@ def test_the_package_leaf_imports_nothing_from_the_package() -> None:
     assert targets == {"scitools_hook.exit_codes"}
 
 
-def test_the_worker_imports_nothing_from_the_package_at_all() -> None:
-    """Not even the leaf: ``upython`` has no copy of this project on its path."""
-    source = WORKER_PATH.read_text(encoding="utf-8")
-    assert intra_package_imports(WORKER_MODULE, source) == []
-    assert check_module(WORKER_MODULE, source) == []
+@pytest.mark.parametrize(
+    ("module", "path"),
+    [
+        pytest.param(WORKER_MODULE, WORKER_PATH, id="worker"),
+        pytest.param(WORKER_LEAN_MODULE, WORKER_LEAN_PATH, id="worker-lean"),
+    ],
+)
+def test_a_worker_file_imports_nothing_from_the_package_at_all(module: str, path: Path) -> None:
+    """Not even the leaf: ``upython`` has no copy of this project on its path.
+
+    Two files answer to this now. The second is reached by ``spec_from_file_location``
+    rather than by ``import``, and that is precisely why it is listed: nothing in the
+    import graph would ever have led a reader, or a checker, to it.
+    """
+    source = path.read_text(encoding="utf-8")
+    assert intra_package_imports(module, source) == []
+    assert check_module(module, source) == []
 
 
 def test_the_worker_answers_ping_under_an_isolated_interpreter() -> None:
@@ -472,6 +497,57 @@ def test_the_worker_answers_ping_under_an_isolated_interpreter() -> None:
         assert answer["error"]["type"] in {"ApiUnavailable", "NoApiLicense"}
     else:
         assert answer["version"]
+
+
+ISOLATED_LOAD = """
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("worker_lean", PATH)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+json.dump(sorted(n for n in sys.modules if n.split(".")[0] == "scitools_hook"), sys.stdout)
+"""
+"""The load ``worker.py`` will perform, written so ``python -c`` can perform it too.
+
+It reports the package modules the load created rather than merely finishing, so the check
+below can fail on a forbidden import that *succeeded* as well as on one that could not.
+"""
+
+
+def test_the_worker_sibling_loads_under_an_isolated_interpreter() -> None:
+    """The sibling's runtime half, in the only form that says anything about it.
+
+    ``worker.py`` is run as a script with an op name, so its runtime check asks it for an
+    answer. ``worker_lean.py`` has no entry point at all -- it is only ever reached through
+    ``spec_from_file_location``, so "does it start" is not a question that can be put to it.
+    What can be put to it is the thing the rule is actually about: **execute the module
+    body under the interpreter ``upython`` presents and see whether any of this package
+    arrives.** ``-I`` drops the environment and the script directory from ``sys.path`` and
+    ``-S`` drops ``site-packages``, so an import of ``scitools_hook`` cannot resolve and
+    raises; the exit code catches that. The ``sys.modules`` sweep catches the case the exit
+    code cannot -- a machine where the package *is* reachable anyway, where a forbidden
+    import would succeed in silence.
+
+    The load is spelled with ``importlib`` rather than by running the file as a script
+    because that is the mechanism ``worker._lean_module()`` WILL use once task 3.3 writes it
+    (design.md names it; nothing loads the sibling yet): a script run would
+    execute the body under ``__name__ == "__main__"`` and prove something about a path
+    nothing takes.
+    """
+    program = f"PATH = {str(WORKER_LEAN_PATH)!r}\n{ISOLATED_LOAD}"
+    proc = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", program],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=SUBPROCESS_TIMEOUT_S,
+        check=False,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert PACKAGE not in proc.stderr
+    assert json.loads(proc.stdout) == []
 
 
 # --- the recorded exceptions stay narrow and stay used -----------------------------
@@ -711,6 +787,18 @@ def test_the_composition_root_is_the_module_the_source_tree_actually_holds() -> 
             "from scitools_hook.exit_codes import ExitCode\n",
             "forbidden-layer",
             id="worker-may-not-even-import-the-leaf",
+        ),
+        pytest.param(
+            WORKER_LEAN_MODULE,
+            "from scitools_hook.exit_codes import ExitCode\n",
+            "forbidden-layer",
+            id="the-worker-sibling-may-not-either",
+        ),
+        pytest.param(
+            WORKER_LEAN_MODULE,
+            "from scitools_hook.understand.worker import dispatch\n",
+            "forbidden-layer",
+            id="the-worker-sibling-may-not-import-back-into-the-worker",
         ),
         pytest.param(
             "scitools_hook.report.human",

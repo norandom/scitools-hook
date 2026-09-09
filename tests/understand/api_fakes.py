@@ -4,8 +4,8 @@ The worker is the only module that may touch the ``understand`` API, and its uni
 drive :func:`scitools_hook.understand.worker.dispatch` against these stand-ins so that the
 mapping, the request validation and the ``try/finally`` around the database are covered on
 a machine with no licence. Each fake models the slice of the API the worker reads -- kinds,
-references, entities, architectures, metrics -- and nothing more, so a test that needs a
-member the fake lacks fails loudly instead of passing on ``None``.
+references, entities, architectures, metrics, lexemes -- and nothing more, so a test that
+needs a member the fake lacks fails loudly instead of passing on ``None``.
 
 Two generations of ``understand.Metric`` are here because the worker serves both:
 :class:`FakeMetrics` answers as 7.x did (id strings, a class-level ``description``) and
@@ -92,6 +92,71 @@ class FakeRef:
         return self.forward
 
 
+@dataclass(eq=False)
+class FakeLexeme:
+    """One token of a file's lexical stream: its class, its text and the line it starts on.
+
+    Three members of the real ``understand.Lexeme`` and no others. The API also offers
+    ``line_end``, ``column_begin``, ``column_end``, ``next``, ``previous``, ``inactive``,
+    ``ent`` and ``ref``; none of them is read by anything here, and a fake that answered them
+    anyway would invite a measurement to depend on a value nobody has checked against a real
+    database. ``token()`` is Understand's own vocabulary -- ``Comment``, ``Identifier``,
+    ``Keyword``, ``Literal``, ``Newline``, ``Operator``, ``Preprocessor``, ``Punctuation``,
+    ``String``, ``Whitespace``, ``Indent``, ``Dedent`` and the rest -- so a test names the
+    class the code will branch on rather than a spelling of its own.
+    """
+
+    token_class: str
+    content: str
+    line: int
+
+    def token(self) -> str:
+        """The token's kind, in Understand's spelling."""
+        return self.token_class
+
+    def text(self) -> str:
+        """The source text of the token, which may legitimately be empty."""
+        return self.content
+
+    def line_begin(self) -> int:
+        """The 1-based line the token starts on."""
+        return self.line
+
+
+class FakeLexer:
+    """A file's lexical stream, answering the line-range form of ``Lexer.lexemes``.
+
+    Built from ``(token class, text, line)`` triples rather than from ready-made lexemes, so
+    that a caller -- a test, or :meth:`FakeEnt.lexer` -- describes a file's tokens without
+    having to know what a lexeme object is. Making lexemes is the lexer's own work, and
+    leaving it here is what keeps :class:`FakeEnt` from depending on both classes at once.
+
+    **The range is inclusive at both ends and counted from 1**, which is what the API
+    documents and what a hand-written stand-in most often gets wrong; a fake that treated
+    ``end_line`` as exclusive would shift every answer by a line and the tests written
+    against it would agree with it. Both bounds are optional and absent means unbounded, so
+    ``lexemes()`` is the whole file.
+
+    Deliberately not iterable, though the real ``Lexer`` is: nothing here walks a lexer that
+    way, and a fake that supported both forms would let a caller pick the one the worker
+    does not use without anything noticing.
+    """
+
+    def __init__(self, tokens: Sequence[tuple[str, str, int]] = ()) -> None:
+        self.stream = [FakeLexeme(*token) for token in tokens]
+
+    def lexemes(
+        self, start_line: int | None = None, end_line: int | None = None
+    ) -> list[FakeLexeme]:
+        """The tokens between the two lines, both ends included."""
+        return [
+            lexeme
+            for lexeme in self.stream
+            if (start_line is None or lexeme.line_begin() >= start_line)
+            and (end_line is None or lexeme.line_begin() <= end_line)
+        ]
+
+
 _ENTITY_IDS = itertools.count(1)
 """Hands every fake entity the database-unique numeric id ``Ent.id()`` answers with."""
 
@@ -122,6 +187,22 @@ class FakeEnt:
     refs_to: list[FakeEnt] = field(default_factory=list)
     members: list[FakeEnt] = field(default_factory=list)
     source: str | None = None
+    tokens: Sequence[tuple[str, str, int]] | None = None
+    """``(token class, text, line)`` per token of the file, or ``None`` when it cannot be lexed.
+
+    ``None`` and ``[]`` are different answers on purpose, exactly as they are for
+    :attr:`source`: an empty list is a readable file with nothing in it, ``None`` is the file
+    requirement 5.8 is about -- deleted, or changed since the parse -- and :meth:`lexer`
+    raises for it the way the API does.
+
+    Triples rather than :class:`FakeLexeme` objects because building lexemes is the lexer's
+    work rather than the entity's, and because this class has no room to pay for it: measured
+    on 2026-09-09 it sits at ``CountClassCoupled`` **12 of 12**, the limit exactly. That limit
+    is an absolute error with no ratchet, so the next member coupling a NEW class to this fake
+    blocks the gate rather than warning about it. Scalar and tuple-shaped members are free,
+    and so are ``object``-annotated parameters -- that escape is already spent, on ``lexer()``.
+    Task 1.9 gives this class room before the tasks that need it.
+    """
     refs_error: str | None = None
     drawable: tuple[str, ...] = ("Butterfly", "Calls", "Called By")
     drawn: list[tuple[str, str]] = field(default_factory=list)
@@ -178,6 +259,36 @@ class FakeEnt:
         if self.source is None:
             raise FakeUnderstandError(f"no contents for {self.qualified}")
         return self.source
+
+    def lexer(
+        self,
+        lookup_ents: object = True,
+        show_inactive: object = False,
+        expand_macros: object = False,
+    ) -> FakeLexer:
+        """The file's lexical stream, raising when the source cannot be read.
+
+        The three parameters are the API's own, accepted and ignored: ``lookup_ents`` is a
+        construction-speed switch over entity and reference lookup, which is not modelled
+        here at all, so there is nothing for the fake to vary. They are declared rather than
+        dropped because ``lexer(False)`` is the spelling the callers use.
+
+        They are annotated ``object`` rather than ``bool`` because the fake never reads them.
+        That is not a stylistic preference: measured on this database, a ``bool`` here is one
+        more class coupled to :class:`FakeEnt`, which sits at 11 of the 12 the gate allows it,
+        and the lexer it now returns takes the twelfth. Spending the last one on the type of
+        an argument nothing looks at would leave none for the next member the API needs.
+
+        The raise is the part with behaviour behind it. ``Ent.lexer`` documents
+        ``UnderstandError`` "if unable to construct the lexer", and says the source file must
+        still exist and be unchanged since the last parse -- a condition a gate that measures
+        a worktree between two commits meets often. Requirement 5.8 turns on that error being
+        distinguishable from an empty file, so :attr:`tokens` being ``None`` raises here and
+        an empty list does not.
+        """
+        if self.tokens is None:
+            raise FakeUnderstandError(f"unable to lex {self.path or self.qualified}")
+        return FakeLexer(self.tokens)
 
     def ref(self, refkinds: str) -> FakeRef | None:
         """The first reference of ``refkinds``; the worker asks for the container file."""
