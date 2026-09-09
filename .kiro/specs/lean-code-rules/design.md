@@ -458,19 +458,49 @@ class LeanContext:            # built by worker.py, plain attributes
     project_path: Callable[[Any, str], str | None]
     root: str
 
-REFERENCE_KINDS = "callby, useby, setby, modifyby, typedby"      # what counts as use, any language
+REFERENCE_KINDS = (                                              # what counts as use, any language
+    "callby, useby, setby, modifyby, typedby, "
+    "inheritby, derive, extendby, implementby"                   # inheritance IS use -- see below
+)
 CALLER_KINDS = "callby"
 CALLEE_KINDS = "call"
 OVERRIDE_KINDS = "overrides"
 DERIVED_KINDS = "derive, inheritby, extendby, implementby"        # contract test decides Java's couple kinds
 PARAMETER_KINDS = "parameter ~catch"
-PARAMETER_USE = "useby, setby, modifyby"
+PARAMETER_USE = "useby, setby, modifyby, callby"                 # a called parameter is used
+
+# **`callby` belongs in PARAMETER_USE, and leaving it out was the same defect as the
+# inheritance one, one member set over.** Measured on the contract project: a parameter used
+# only as `return cls()` has `useby`, `setby` and `modifyby` all empty and a single `Call`
+# reference. Without `callby` it reads as unused. The fixture masks it because the parameter
+# is named `cls` and the shipped ignore list excuses that name, but `def apply(fn): return
+# fn()` is the same shape with no ignore to hide behind, and a callback parameter reported as
+# dead is exactly the false finding that makes an agent delete working code.
 
 def routine_facts(ent, ctx: LeanContext) -> dict[str, object]:
     """{'callers': int, 'callees': int, 'forwards_to': str | None, 'overrides': bool,
         'unused_parameters': list[str]} -- callers and callees are distinct project routines;
     forwards_to is the callee's longname when callees == 1; a parameter is unused when no
     PARAMETER_USE reference to it comes from a project file."""
+
+# **Inheritance counts as a reference, and leaving it out was a defect.** Task 1.6 planted a
+# base class whose only inbound project reference is the inheritance reference from its one
+# subclass. Without the inheritance kinds above, `unused_class` reports it as dead while
+# `single_implementation` reports the same class as an abstraction with one implementation --
+# two findings on one class telling the agent to delete it and to fold it into its
+# implementation. The rules must not contradict each other, and the honest reading is that a
+# class its subclass inherits from is used. `single_implementation` still reports it, because
+# `referrers` deliberately excludes the derived class; `unused_class` no longer does.
+#
+# Two things measured about that fix, recorded so it is not mistaken for more than it is.
+# Only `inheritby` actually fires on Build 1262 for Python and C++; `derive`, `extendby` and
+# `implementby` match nothing on this fixture and are carried for the languages the contract
+# project does not build. `derive` is also an OUTBOUND kind sitting in an otherwise inbound
+# set: on a class it answers that class's subclasses rather than its users, which gives the
+# same boolean here only because "has a subclass" and "is inherited by something" coincide.
+# And the fix has a cost: `unused_class` can now never reach a base class that has any
+# subclass, including an abstract base whose whole subtree is dead. That is accepted as the
+# cheaper error than two rules contradicting each other on one class.
 
 def class_facts(ent, ctx: LeanContext) -> dict[str, object]:
     """{'referenced': bool, 'derived': list[str], 'referrers': int} -- derived are the

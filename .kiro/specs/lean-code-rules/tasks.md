@@ -35,7 +35,7 @@
   - Serves the design's allowed-dependency rule for the worker sibling; no acceptance criterion of its own
   - Done when the import-direction suite passes with the new entry and the lexer fake serves a first unit test
 
-- [ ] 1.6 Plant the Python contract cases
+- [x] 1.6 Plant the Python contract cases
   - In the contract project's Python sources: an unused parameter, an unused class, an unused module variable, a pass-through routine with one caller, a base class with one derived class and no other user, a file holding one definition for one importer, a twelve-line block copied into two files, and a routine that is a renamed twin of another
   - Done when the extended fixture builds on the licensed install and the counts it changes are listed in the task's commit message for task 1.7 to apply
   - _Requirements: 5.7, 9.1_
@@ -179,6 +179,14 @@
   - _Requirements: 5.6_
   - _Boundary: config validation and, if extraction is chosen, the worker's architecture walk_
 
+- [ ] 5.7 Make the plugin-metric budget measure a signal instead of noise
+  - `tests/contract/test_plugin_metrics_contract.py`'s per-entity budget differences two wall-clock subprocess timings where the signal is 1 to 3 per cent of each run. Measured three times on the extended fixture: 0.269, 0.757 and 0.626 milliseconds per entity, from numerators of 6.5, 18.2 and 15.0 milliseconds against runs of about 550 milliseconds. It is measuring variance
+  - It began passing during task 1.6 without being fixed, because the fixture grew and the denominator with it, raising the tolerated numerator from about 52 to about 96 milliseconds. A budget that passes because its denominator grew is weaker than it was, and this family's cost tests must not lean on it
+  - Make the measurement signal-dominated rather than re-tightening the number, which would only make it flaky: repeat the read enough times to dominate process startup, or time the API call rather than the process
+  - Done when the budget fails if the per-entity cost genuinely doubles, and passes repeatably otherwise, demonstrated by running it several times
+  - _Requirements: 9.5_
+  - _Boundary: tests/contract/test_plugin_metrics_contract.py_
+
 - [ ] 6. Contract measurements on the licensed install
 - [ ] 6.1 Reference kinds and counts on the contract project
   - On the extended fixture: the Python and C++ inheritance kinds answer the derived class; overrides are flagged on both; the caller count agrees with the plugin caller metric for every routine of the fixture, and any disagreement is recorded with its cause; each reference rule reports its planted case and nothing else
@@ -252,3 +260,6 @@ Cross-cutting findings recorded as they were learned, so a later task does not r
 - **1.5** `snapshot_cache.worker_digest()` still hashes only `worker.py`. That is correct while the sibling is empty, and task 3.3 must extend it before `worker_lean.py` gains content, or a cached before-side snapshot will survive a change to the measurements that produced it.
 - **1.5** Understand 8.0's `Ent.lexer` documentation contradicts itself: the signature says `show_inactive=False` while the prose says True by default, and it documents a `tabstop` parameter the signature does not have. The fake follows the signature, which is right. Do not "fix" it to match the prose.
 - **1.5** Measured on commit: a file that is a docstring and nothing else reports `RatioCommentToCode` **0**, and the gate calls it under-documented against the 0.1 minimum. The ratio is comment lines over code lines, so a file with no code has an undefined ratio that arrives as zero. Harmless here and non-blocking, but requirement 6.1 adds a *maximum* to this same metric, and whoever writes that documentation should say what the metric does at both ends rather than let an operator meet this on their own.
+- **1.6** The reference sets had a second omission of the same kind as the inheritance one: `PARAMETER_USE` lacked `callby`, so a parameter used only as `fn()` read as unused. Masked in the fixture by the `self|cls|this` ignore, but `def apply(fn): return fn()` has no ignore to hide behind. Corrected in the design.
+- **1.6** Of the four inheritance kinds now in the reference set, only `inheritby` fires on Build 1262 for Python and C++, and `derive` is an outbound kind in an otherwise inbound set. Recorded in the design so it is not read as four measured facts.
+- **1.6** Uniqueness in the contract project is a per-language property until task 1.7 lands. `Shape` is a second unused class and `native/shape.h` a second over-export, both pre-existing on the C++ side, and 1.7 owns resolving them.

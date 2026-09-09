@@ -17,6 +17,25 @@ root, and a directory that holds both files and a subdirectory.
 Everything here is built with plain ``und`` subprocess calls. A contract test that built its
 database through :class:`~scitools_hook.understand.database.DatabaseManager` would be testing
 the manager; the databases are the *given*, and the adapters are what is under test.
+
+**The lean-code cases.** ``lean/`` holds one instance of each shape the lean-code rules
+report -- a dead parameter, class and module variable, a pass-through routine, an abstraction
+with one implementation, an over-exporting file, a copied block and a renamed twin -- and one
+control beside each, so that a rule which reported every routine, every class or every module
+variable fails here instead of passing. There is deliberately exactly *one* instance of each
+**in the Python sources**, because a fixture holding two of a shape can only be asserted by
+counting. Adding a routine, a class or an import to any of these files can create a second
+instance somewhere else: ``app/entry.py`` carries a module-level constant, and both it and
+``core.Engine.run`` carry a statement of their own, for no other reason.
+
+Uniqueness is per language until the C++ cases are planted. Measured on the installed build,
+the C++ sources hold two second instances that task 1.7 owns and must resolve: ``Shape`` in
+``native/shape.h`` is a second unused class -- the only inbound reference Understand records
+for it is the ``Nameby`` from the file that defines its methods, and no use, call or typed
+reference at all -- and ``native/shape.h`` itself is a second over-exporting file, with
+``CountDeclClass`` 1, ``CountDeclFunction`` 0 and one inbound edge. The only other
+module-level entity in that header is a Macro, and the definitions walk does not record a
+Macro, so nothing takes the file back out of the rule.
 """
 
 from __future__ import annotations
@@ -59,16 +78,36 @@ def main():
     return entry_point()
 ''',
     # A sibling of `pkg/`, so that one architecture node really depends on another.
+    # Two lines here are not decoration, and both keep a lean-code case unique. `START_VALUE`
+    # is a module-level definition, without which this file defines one routine that exactly
+    # one file imports -- the over-export rule's whole predicate (lean-code 4.1) -- and
+    # `lean/exported.py` stops being the only Python instance of that case. The `started`
+    # binding is a statement of `entry_point`'s own: without it the routine has one caller
+    # (`main.main`), one callee that is a project routine (`core.Engine.run`; the sibling call
+    # target `core.Engine` is a Class and is filtered out) and `CountStmt` 2, which is the
+    # pass-through predicate (2.1) exactly, and `lean/layers.py`'s `display_name` stops being
+    # the only instance. Neither line changes a reference count: `main.py -> app/entry.py`
+    # stays at 3 and `app/entry.py -> pkg/core.py` at 4, because the call chain is untouched.
     "app/entry.py": '''"""A directory beside the package, so a sibling architecture edge exists."""
 
 from pkg.core import Engine
 
+START_VALUE = 1
+
 
 def entry_point():
-    return Engine().run(1)
+    started = START_VALUE
+    return Engine().run(started)
 ''',
     # A directory that holds a file *and* a subdirectory: `pkg/core.py` beside `pkg/inner/`.
     # This is what decides which node holds `core.py` at depth 2.
+    # `run` binds `widened` for the same reason `entry_point` binds `started`. With a single
+    # forwarding expression it has one caller, `CountStmt` 2 and one call reference into a
+    # project file -- `widen`, which Understand records as `python Unknown Ambiguous
+    # Attribute` in `pkg/inner/leaf.py`. A pass-through rule that counts every call reference
+    # rather than only the ones whose target is a routine would report it, so the fixture
+    # keeps `display_name` the only instance under *both* readings rather than relying on the
+    # implementation choosing the stricter one.
     "pkg/core.py": '''"""A class with a method, a classmethod and a staticmethod."""
 
 from pkg.inner.leaf import Leaf
@@ -79,7 +118,8 @@ class Engine:
         self.leaf = Leaf()
 
     def run(self, value):
-        return self.leaf.widen(value)
+        widened = self.leaf.widen(value)
+        return widened
 
     @classmethod
     def build(cls):
@@ -95,6 +135,197 @@ class Engine:
 class Leaf:
     def widen(self, value):
         return value + 1
+''',
+    # --- the lean-code cases (lean-code-rules 5.7, 9.1) ---------------------------------
+    #
+    # `lean/` holds one clean instance of each shape the lean-code rules report, because a
+    # rule measured against a fixture that holds two of a shape can only be asserted by
+    # counting, and a rule measured against none can be asserted at all. Every routine here
+    # is either the case itself or the control beside it -- the routine with one caller and a
+    # body of its own, the used module variable, the class the one implementation is derived
+    # from -- so a rule that reported everything of a kind would fail rather than pass.
+    #
+    # "One instance" means one in the *Python* sources. `native/shape.h` is a second unused
+    # class (`Shape`) and a second over-exporting file, measured; task 1.7 owns both when it
+    # plants the C++ cases. Nothing here relies on the C++ side holding none of a shape.
+    #
+    # Written to parse as Python 2: the installed Understand resolves no bare `python` on
+    # this machine and falls back to its Python 2 grammar, so no f-string and no annotation
+    # may appear in any of these files.
+    #
+    # The over-exporting file: one routine, no other definition, exactly one importer (4.1).
+    "lean/exported.py": '''"""One routine for one importer: the over-exporting file (lean-code 4.1).
+
+Nothing else is defined here and ``lean/dead.py`` is the only file that imports it, which is
+the whole of the rule's predicate. A second definition, or a second importer, and the Python
+sources lose their only instance of this case. ``native/shape.h`` is a second instance on the
+C++ side -- one class, no functions, one inbound edge -- which task 1.7 resolves.
+"""
+
+
+def only_export(value):
+    return value * 3
+''',
+    # The three dead-code shapes requirement 1 adds to the routine rule, with their controls.
+    "lean/dead.py": '''"""A module variable, a class and a parameter nothing uses (lean-code 1).
+
+``RETRY_LIMIT`` and ``ForgottenReport`` are what nothing in the project names. ``DEFAULT_STEP``
+and ``advance`` are the controls beside them, because a rule that reported every module
+variable and every class would pass a fixture that held only the dead ones. ``advance``
+carries the unused parameter, and its body is two statements of its own so that the
+pass-through rule has to leave it alone (2.2).
+
+``ForgottenReport`` is the only unused class in the *Python* sources. The C++ class ``Shape``
+in ``native/shape.h`` carries no use, call or typed reference either, and is a second instance
+until task 1.7 plants the C++ cases and resolves it.
+"""
+
+from lean.exported import only_export
+
+RETRY_LIMIT = 3
+
+DEFAULT_STEP = 2
+
+
+class ForgottenReport(object):
+    """A class nothing in the project references: the unused-class case (1.1)."""
+
+
+def advance(value, verbose):
+    """``verbose`` is never read: the unused-parameter case (1.2)."""
+    stepped = value + DEFAULT_STEP
+    return only_export(stepped)
+''',
+    # The pass-through routine (2.1) and the abstraction with one implementation (3.1).
+    "lean/layers.py": '''"""A routine that forwards, and a base class with one implementation.
+
+``display_name`` is the pass-through: one project caller, one project callee, no body of its
+own. ``canonical_name`` beside it has one caller too and a body, which is the decomposition
+requirement 2.2 says must never be reported. ``BaseChannel`` is named by nothing in the
+project except the class derived from it, and ``OnlyChannel`` is used by ``open_channel``, so
+that the Python sources' one unused class is in ``lean/dead.py`` and not here.
+"""
+
+
+class BaseChannel(object):
+    """One derived class and no other user: the single-implementation case (3.1)."""
+
+    def send(self, message):
+        return message
+
+
+class OnlyChannel(BaseChannel):
+    """The one implementation, and the override the parameter and layering rules exempt."""
+
+    def send(self, message):
+        labelled = display_name(message)
+        return labelled + "!"
+
+
+def canonical_name(raw):
+    """One caller and a body of its own, so the pass-through rule must stay silent (2.2)."""
+    trimmed = raw.strip()
+    return trimmed.lower()
+
+
+def display_name(raw):
+    """The pass-through: forwards to ``canonical_name`` and does nothing else (2.1)."""
+    return canonical_name(raw)
+
+
+def open_channel(message):
+    """Gives ``OnlyChannel`` the project reference that keeps it out of the dead-code rule."""
+    channel = OnlyChannel()
+    return channel.send(message)
+''',
+    # The renamed twin (5.2), one half in each file. Nothing imports either: a single-routine
+    # file with one importer would be an over-export finding as well.
+    "lean/twin_left.py": '''"""One half of the renamed twin pair (lean-code 5.2).
+
+Every difference between this routine and ``lean/twin_right.py``'s is an identifier or a
+literal, which is exactly what requirement 5.4 says similarity normalises away, and both are
+well past the six-statement floor the rule ships with.
+"""
+
+
+def summarise_orders(orders):
+    total = 0
+    count = 0
+    for order in orders:
+        total = total + order["total"]
+        count = count + 1
+    if count == 0:
+        return 0
+    return total / count
+''',
+    "lean/twin_right.py": '''"""The other half of the renamed twin pair (lean-code 5.2).
+
+The same routine as ``lean/twin_left.py``'s under other names. It is deliberately not a
+copied *block*: no twelve consecutive lines are identical between the two files, so the
+duplicate-block rule has nothing to say about this pair and the similarity rule has.
+"""
+
+
+def summarise_invoices(invoices):
+    amount = 0
+    seen = 0
+    for invoice in invoices:
+        amount = amount + invoice["amount"]
+        seen = seen + 1
+    if seen == 0:
+        return 0
+    return amount / seen
+''',
+    # The copied block (5.1): the fourteen lines from `return {` to `}` are identical in both
+    # files, past the twelve-line minimum the rule ships with.
+    "lean/table_left.py": '''"""One half of the copied block (lean-code 5.1).
+
+The copy is a literal rather than a run of statements on purpose. It has to survive the
+duplication rule's twelve-line minimum once whitespace and comments are dropped, and it has
+to stay *below* the similar-routine rule's six-statement floor, so that the twin pair in
+``lean/twin_left.py`` and ``lean/twin_right.py`` stays the fixture's only similarity finding.
+"""
+
+
+def order_columns():
+    return {
+        "identifier": "order_id",
+        "customer": "customer_id",
+        "created": "created_at",
+        "updated": "updated_at",
+        "status": "status",
+        "currency": "currency",
+        "subtotal": "subtotal",
+        "discount": "discount",
+        "shipping": "shipping",
+        "tax": "tax",
+        "total": "total",
+        "notes": "notes",
+    }
+''',
+    "lean/table_right.py": '''"""The other half of the copied block (lean-code 5.1).
+
+The routine is named differently and the module says something else, so the duplicate run is
+the literal itself: fourteen consecutive lines this file shares with ``lean/table_left.py``
+and with nothing else in the project.
+"""
+
+
+def invoice_columns():
+    return {
+        "identifier": "order_id",
+        "customer": "customer_id",
+        "created": "created_at",
+        "updated": "updated_at",
+        "status": "status",
+        "currency": "currency",
+        "subtotal": "subtotal",
+        "discount": "discount",
+        "shipping": "shipping",
+        "tax": "tax",
+        "total": "total",
+        "notes": "notes",
+    }
 ''',
     # Two overload pairs: one member function and one free function. `EntityKey` must tell
     # each pair apart, and the header/source split must not produce two entities per routine.
