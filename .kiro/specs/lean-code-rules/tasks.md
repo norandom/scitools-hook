@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: configuration, models, metric declarations, the floor guard, and the test seams every later group needs
-- [ ] 1.1 Add the `[lean]` configuration section with every rule off
+- [x] 1.1 Add the `[lean]` configuration section with every rule off
   - One settings section holding the nine rule switches as severity-or-off, their ignore lists with the shipped defaults from the design (receivers and underscore-prefixed parameters, error and exception classes, module idioms, initialiser paths), the three numbers of the duplication rules, the pass-through statement budget and the optional net-growth maximum, with the same validation the existing ignore lists get
   - Two derived answers on the section saying whether any reference rule and whether any token rule is on
   - The analysis fingerprint changes when either derived answer changes, and its definitions key also turns on when over-export is on

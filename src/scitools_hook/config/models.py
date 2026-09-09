@@ -726,6 +726,196 @@ class ParseSettings(StrictModel):
         return [entry for entry in self.acknowledged if not any(map(entry.matched_by, paths))]
 
 
+# --- the lean-code family --------------------------------------------------------
+
+DEFAULT_LEAN_PARAMETER_IGNORE: Final[tuple[str, ...]] = (
+    r"^(self|cls|this)$",
+    r"^_",
+    r"^(args|kwargs)$",
+)
+"""Parameters a routine declares without reading, **on purpose** (req 1.4, 1.5).
+
+The receiver is the language's, not the author's: Python spells it ``self``/``cls``, and a
+method that never touches it still has to declare it. A leading underscore is the convention
+every linter already reads as "declared and deliberately unused", and ``*args``/``**kwargs``
+are how a signature says it forwards what it was given. Each is a parameter the rule would
+report and no author would delete, which is the definition of noise.
+"""
+
+DEFAULT_LEAN_CLASS_IGNORE: Final[tuple[str, ...]] = (
+    r"(^|\.)Test",
+    r"Error$",
+    r"Exception$",
+)
+"""Classes nothing in the project references, by construction (req 1.5).
+
+An exception class is *raised* and *caught*; in most languages neither is a reference to the
+class from a second file that a caller-based rule can see, so an error hierarchy reads as
+entirely dead code. pytest collects ``Test``-prefixed classes by name discovery, the same
+blind spot ``DEFAULT_UNUSED_IGNORE`` records for ``test_`` functions.
+"""
+
+DEFAULT_LEAN_VARIABLE_IGNORE: Final[tuple[str, ...]] = (
+    r"^__\w+__$",
+    r"^(log|logger|pytestmark)$",
+)
+"""Module-level names the runtime reads rather than the code (req 1.5).
+
+``__all__``, ``__version__`` and their kind are read by the interpreter, the packaging tools
+and the documentation build. A module logger is assigned once and used through the logging
+machinery; ``pytestmark`` is collected by pytest. None has a reference to find.
+"""
+
+DEFAULT_LEAN_IMPLEMENTATION_IGNORE: Final[tuple[str, ...]] = (r"Error$", r"Exception$")
+"""Base classes that exist for one implementation and are still right (req 3.3).
+
+An exception base with a single subclass is a hierarchy an operator will keep: it is what
+``except <Base>`` catches, and collapsing it changes what callers can catch. The rule would
+otherwise report every project's first two error classes.
+"""
+
+DEFAULT_LEAN_OVER_EXPORT_IGNORE: Final[tuple[str, ...]] = (
+    "**/__init__.py",
+    "**/index.*",
+    "**/mod.rs",
+    "**/__main__.py",
+)
+"""Files whose job **is** to hold one definition for one importer (req 4.2).
+
+Path patterns, not name patterns: these are module and package initialisers, and a language
+decides them by file name. A package ``__init__.py`` that re-exports one symbol is the
+idiom, not the finding; ``index.*`` is the same idiom in the JavaScript and TypeScript
+worlds, ``mod.rs`` in Rust, and ``__main__.py`` is an entry point with exactly one caller
+that is not a file at all.
+"""
+
+
+class LeanRules(StrictModel):
+    """``[lean]``: the lean-code family's switches, numbers and ignore lists (req 1.5-7.5).
+
+    Its own section rather than more fields on ``StructureRules`` because an operator
+    configures one section for one question, and ``StructureRules`` already carries twenty
+    fields. The findings keep the ``structure.`` category all the same, so the severity map,
+    the SARIF rule ids, the scope overrides and the hint lookup work unchanged (req 9.6).
+
+    Every rule follows ``StructureRules.unused_routines``: ``Severity | None``, where ``None``
+    is off, so the whole family ships silent and each rule is enabled by naming a severity
+    (req 9.1). ``wants_references`` and ``wants_tokens`` are what requirement 9.4 turns on --
+    while both are false the extractor asks the worker for nothing on the family's behalf and
+    a warm check costs what it costs today.
+
+    **The numbers are starting values with a measurement behind them, not final ones.**
+    Measured on this repository with Python's own tokenizer as a stand-in for Understand's
+    lexer (research.md): exact duplicate windows fall from 641 at 5 lines to 72 at 12, of
+    which 24 are in ``src/`` and 2 were judged genuine; similar routines at ratio >= 0.9
+    number 184, of which 10 are in ``src/`` and all 10 are real copies. Hence 12, 0.9 and a
+    six-statement floor. Requirement 5.7 asks for the same counts under Understand's lexer
+    before the documentation records a default, and that measurement is a later task's.
+    """
+
+    unused_parameters: Severity | None = None
+    unused_parameters_ignore: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_LEAN_PARAMETER_IGNORE)
+    )
+    unused_classes: Severity | None = None
+    unused_classes_ignore: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_LEAN_CLASS_IGNORE)
+    )
+    unused_variables: Severity | None = None
+    unused_variables_ignore: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_LEAN_VARIABLE_IGNORE)
+    )
+    pass_through: Severity | None = None
+    # At most two statements, because the third is a body: requirement 2.2 draws the line at
+    # "a routine with one caller and a body of its own is a decomposition the Gate's own hints
+    # ask for". One call and a return is the forwarding shape; a guard clause in front of it
+    # is the second statement an operator may want to allow.
+    pass_through_max_statements: int = Field(default=2, ge=1)
+    pass_through_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_UNUSED_IGNORE))
+    single_implementation: Severity | None = None
+    single_implementation_ignore: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_LEAN_IMPLEMENTATION_IGNORE)
+    )
+    over_export: Severity | None = None
+    over_export_ignore: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_LEAN_OVER_EXPORT_IGNORE)
+    )
+    duplicates: Severity | None = None
+    duplicates_min_lines: int = Field(default=12, ge=3)
+    duplicates_ignore: list[str] = Field(default_factory=list)
+    similar_routines: Severity | None = None
+    similar_min_statements: int = Field(default=6, ge=2)
+    similar_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    similar_ignore: list[str] = Field(default_factory=list)
+    # A maximum on the net LLOC delta, off by default: requirement 7.5 says the delta never
+    # blocks unless an operator asks it to. ``0`` is a legal maximum and means "this change
+    # may not make the project longer", which is why the bound is ``ge=0`` and not ``ge=1``.
+    max_net_growth: int | None = Field(default=None, ge=0)
+    net_growth_severity: Severity = "warning"
+
+    @field_validator(
+        "unused_parameters_ignore",
+        "unused_classes_ignore",
+        "unused_variables_ignore",
+        "pass_through_ignore",
+        "single_implementation_ignore",
+    )
+    @classmethod
+    def _name_patterns_compile(cls, patterns: list[str]) -> list[str]:
+        return compile_patterns(patterns)
+
+    @field_validator("over_export_ignore", "duplicates_ignore", "similar_ignore")
+    @classmethod
+    def _path_patterns_are_usable(cls, patterns: list[str]) -> list[str]:
+        """Prove each path pattern says something, in the glob language ``[project]`` speaks.
+
+        These three lists name *files*, not entities, so they are compiled by
+        ``compile_path_pattern`` rather than as regular expressions -- writing ``.*\\.py$``
+        here would be a literal that matches nothing. A glob cannot fail to compile (every
+        character but ``*`` and ``?`` is escaped), so the failure worth catching is the blank
+        entry: ``matching_pattern`` skips it, which makes it a line that looks like an
+        exclusion and excludes nothing.
+        """
+        for pattern in patterns:
+            if not pattern.strip():
+                raise ValueError("a blank path pattern ignores nothing; remove it")
+            compile_path_pattern(pattern)
+        return patterns
+
+    @property
+    def wants_references(self) -> bool:
+        """Whether any rule needing the per-entity reference walk is on (req 9.4).
+
+        **Five rules, and ``over_export`` is deliberately not one of them.** Over-export is
+        answered from file metrics, ``file_edges`` and the definitions walk the snapshot
+        already carries, so it needs no ``refs`` call on any entity and has no feature probe
+        of its own; what it turns on is the fingerprint's ``definitions`` key, next to
+        ``structure.duplicate_definitions``. Adding it here would make an over-export-only
+        configuration pay for a reference call on every recorded entity and read none of the
+        answers, which is the cost requirement 9.4 forbids while a rule is off and
+        requirement 9.5 puts a ceiling on when one is on.
+
+        The design says the same thing twice on purpose (its ``LeanRules`` note and its
+        ``ASKED_BY`` note): an earlier draft said six here and five there, and the two must
+        stay in agreement or the extractor pays for the difference.
+        """
+        return any(
+            rule is not None
+            for rule in (
+                self.unused_parameters,
+                self.unused_classes,
+                self.unused_variables,
+                self.pass_through,
+                self.single_implementation,
+            )
+        )
+
+    @property
+    def wants_tokens(self) -> bool:
+        """Whether either rule answered from the token index is on (req 9.4)."""
+        return self.duplicates is not None or self.similar_routines is not None
+
+
 class Settings(StrictModel):
     """Effective configuration; ``thresholds`` accepts the TOML table shape or a list."""
 
@@ -742,6 +932,7 @@ class Settings(StrictModel):
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     scope: dict[str, PathScope] = Field(default_factory=dict)
     parse: ParseSettings = Field(default_factory=ParseSettings)
+    lean: LeanRules = Field(default_factory=LeanRules)
 
     @field_validator("thresholds", mode="before")
     @classmethod

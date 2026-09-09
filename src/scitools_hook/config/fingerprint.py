@@ -19,6 +19,16 @@ severity, the ratchet levers, the baseline. Editing a threshold is the commonest
 operator does, and making it cost a full re-analysis would be the fastest way to have the
 cache switched off.
 
+**A rule that asks for a measurement is on this side of the line.** Every lean-code rule is
+off by default and none of them changes a limit, but six of them need per-entity reference
+facts and two need a token index, so switching one on changes what the worker records rather
+than how a recorded value is judged. ``lean_references`` and ``lean_tokens`` carry that, and
+they are the reason a snapshot taken before the operator enabled a rule is a miss rather than
+a document the rule would read as an empty project. The optional net-growth maximum is on the
+other side: it judges statements the snapshot already carries. ``definitions`` is shared --
+``lean.over_export`` reads the definitions walk ``structure.duplicate_definitions`` asks for,
+so the key is the disjunction of the two and either setting alone turns the walk on.
+
 **The metric set, not the limits.** ``thresholds`` reaches the fingerprint as the set of
 ``scope.metric`` names it names, with the statistics prefix kept because a prefixed threshold
 is collected differently. Changing a maximum leaves that set identical; adding a threshold on
@@ -53,7 +63,12 @@ def analysis_fingerprint(settings: Settings) -> str:
         "architecture_file": _text(settings.structure.architecture_file),
         "architecture_options": dict(sorted(settings.structure.architecture_options.items())),
         "depth": settings.structure.depth,
-        "definitions": settings.structure.duplicate_definitions is not None,
+        "definitions": (
+            settings.structure.duplicate_definitions is not None
+            or settings.lean.over_export is not None
+        ),
+        "lean_references": settings.lean.wants_references,
+        "lean_tokens": settings.lean.wants_tokens,
         "ignore": {
             "files": sorted(settings.ignore.files),
             "classes": sorted(settings.ignore.classes),

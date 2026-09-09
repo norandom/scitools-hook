@@ -347,13 +347,17 @@ flowchart TD
 
 **Responsibilities & Constraints**
 - Follows `StructureRules.unused_routines`: a rule is `Severity | None`, `None` is off. Ignore lists are validated with `compile_patterns` (names) or `compile_path_pattern` (paths).
-- Exposes two derived booleans the extractor reads: `wants_references` (any of the six reference rules on) and `wants_tokens` (either token rule on).
+- Exposes two derived booleans the extractor reads: `wants_references` (any of the **five** rules that need the per-entity reference walk: `unused_parameters`, `unused_classes`, `unused_variables`, `pass_through`, `single_implementation`) and `wants_tokens` (either token rule on). **`over_export` is deliberately not among them**: it is answered from file metrics, `file_edges` and the definitions walk that today's snapshot already carries, so it asks for no reference walk and has no feature of its own. An `over_export`-only configuration that flipped `wants_references` would pay for a per-entity `refs` call on every recorded entity and read none of it, which requirement 9.4 forbids and requirement 9.5 charges for. What `over_export` does turn on is the definitions walk, through the fingerprint's `definitions` key below.
 
 ##### State Management
 ```python
 class LeanRules(StrictModel):
     unused_parameters: Severity | None = None
     unused_parameters_ignore: list[str]      # default DEFAULT_LEAN_PARAMETER_IGNORE: r"^(self|cls|this)$", r"^_", r"^(args|kwargs)$"
+    # A decorator-registered handler is the fourth shape requirement 1.5 names and no pattern
+    # here covers it, because the name of such a routine or class says nothing. Task 4.1 owns
+    # the answer: it is a reference the decorator makes, so it is visible to the reference walk
+    # where the decorator is in the project, and invisible where it is not.
     unused_classes: Severity | None = None
     unused_classes_ignore: list[str]         # default: r"(^|\.)Test", r"Error$", r"Exception$"
     unused_variables: Severity | None = None
@@ -498,7 +502,7 @@ def token_index(file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, 
 
 - `ExtractRequest.lean_references: bool = False`, `lean_tokens: bool = False`, set in `SnapshotExtractor.request` from `settings.lean.wants_references/wants_tokens`; `_plan` copies them to `_Plan.lean_references/lean_tokens`.
 - `Feature.LEAN_REFERENCES` (hard-coded available, as `UNUSED_RULE` is: every build reports references), `Feature.LEAN_TOKENS` (probe: `file.lexer(False)` on doctor's scratch database, through a `lexer_probe` request on the existing `catalogue` op), `Feature.DUPLICATE_METRIC` (probe: lookup as above). `ASKED_BY` maps `lean.unused_parameters`, `lean.unused_classes`, `lean.unused_variables`, `lean.pass_through`, `lean.single_implementation` to `LEAN_REFERENCES` and `lean.duplicates`, `lean.similar_routines` to `LEAN_TOKENS`; a threshold on `DuplicateLinesOfCode*` goes through the plugin-metric refusal that exists.
-- `over_export` asks for nothing new and has no feature.
+- `over_export` asks for no reference walk and has no feature; it needs only `include_definitions`, which the fingerprint's `definitions` key already carries. This is the same statement as the `wants_references` note above, and the two must stay in agreement: an earlier draft said "six reference rules" here and five in `ASKED_BY`, which task 1.1's review caught before the extractor could pay for it.
 
 ### models
 

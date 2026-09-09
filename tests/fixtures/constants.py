@@ -21,3 +21,28 @@ STARTED_AT: Final = "2026-01-02T03:04:05+00:00"
 
 BUILD: Final = "(Build 1204)"
 """The build suffix the fake Understand reports, as the real 6.5.1204 spells it."""
+
+LEAN_REFERENCE_RULES: Final[tuple[str, ...]] = (
+    "unused_parameters",
+    "unused_classes",
+    "unused_variables",
+    "pass_through",
+    "single_implementation",
+)
+"""The lean rules that need the per-entity reference walk, and therefore a new snapshot.
+
+``over_export`` is not here: it reads file metrics, ``file_edges`` and the definitions walk,
+so it turns on the fingerprint's ``definitions`` key and no reference call. Written once and
+shared because the settings tests and the fingerprint tests each parametrise over this list,
+and a draft in which the two disagreed is exactly the defect this feature's review caught.
+"""
+
+LEAN_TOKEN_RULES: Final[tuple[str, ...]] = ("duplicates", "similar_routines")
+"""The lean rules answered from the token index -- a second pass over every file."""
+
+LEAN_RULE_SWITCHES: Final[tuple[str, ...]] = (
+    *LEAN_REFERENCE_RULES,
+    "over_export",
+    *LEAN_TOKEN_RULES,
+)
+"""Every ``Severity | None`` switch in ``[lean]``; each must ship off (requirement 9.1)."""
