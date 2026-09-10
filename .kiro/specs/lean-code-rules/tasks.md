@@ -82,7 +82,7 @@
   - _Requirements: 8.1, 8.2, 8.3, 8.6_
   - _Boundary: Hints and examples_
 
-- [ ] 2.4 (P) The lean section of the agent-rules snippet, and the four missing structural rules
+- [x] 2.4 (P) The lean section of the agent-rules snippet, and the four missing structural rules
   - A section listing every enabled lean rule with its severity and tag, the two tags the Gate never emits and that the agent applies itself, the seven rungs one line each, and how to read the net line
   - The structure section names the unused-routine, duplicate-definition, call-cycle and reachable-complexity rules
   - Done when the rendered snippet with every rule on contains all nine lean rules and all ten pre-existing structural rules, and with every rule off contains the ladder and the two-tag note only

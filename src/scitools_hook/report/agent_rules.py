@@ -1,8 +1,9 @@
 """The rules an agent reads before it writes code, and how they get into its file (req 10).
 
 Two pure functions. :func:`render_rules` turns the effective configuration into a Markdown
-snippet -- the limits, the structural rules, the ratchet, the two commands, the JSON fields
-and what to do about a blocked commit -- and :func:`insert_between_markers` puts that
+snippet -- the limits, the structural rules, the lean-code family and its ladder, the
+ratchet, the two commands, the JSON fields and what to do about a blocked commit -- and
+:func:`insert_between_markers` puts that
 snippet into a file the operator already owns, between the markers this module names, so a
 regeneration updates the block instead of appending a second copy (req 10.3).
 
@@ -29,7 +30,9 @@ Like the other renderers this returns a plain string with no trailing newline an
   ``max_new_dependencies_per_file = None`` and an unset CodeCheck configuration each drop
   their line entirely: a rules document that lists rules nobody enabled teaches an agent to
   distrust the document. The two cycle rules cannot be switched off (they carry a severity,
-  not an on/off switch), so they are always described.
+  not an on/off switch), so they are always described. The one thing printed whether or not
+  a rule is behind it is the lean-code ladder, and only because two of its rungs are the
+  ones the Gate says outright it will never check for you (lean-code req 8.3).
 * **The text is written at an agent, in the imperative.** Requirement 10.1 asks for plain
   language and a workflow, not a configuration dump, so a population threshold says what it
   is measured over, a warning says that it does not block, and the blocked-commit section
@@ -50,7 +53,8 @@ guesses (update the first block, append a second) silently leave a stale block b
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import textwrap
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
 from scitools_hook.config.metric_names import (
@@ -65,18 +69,36 @@ from scitools_hook.config.models import (
     CouplingRule,
     FanKey,
     LayerRule,
+    LeanRules,
     Limit,
     Settings,
     StructureRules,
 )
 from scitools_hook.errors import ConfigError
-from scitools_hook.models.findings import EffectiveThreshold
+from scitools_hook.models.findings import (
+    EffectiveThreshold,
+    StructureRuleName,
+    structure_rule,
+)
+from scitools_hook.report.hints import DEFAULT_CATALOGUE
+from scitools_hook.report.lean_examples import LEAN_RULES
 
 BEGIN_MARKER: Final = "<!-- scitools-hook:begin -->"
 """Start of the region :func:`insert_between_markers` owns (req 10.3)."""
 
 END_MARKER: Final = "<!-- scitools-hook:end -->"
 """End of that region; everything from here on is the operator's."""
+
+_WIDTH: Final = 95
+"""Where a generated bullet folds; the width the prose in this module is written at."""
+
+_IGNORE_KEY: Final = "_ignore"
+"""What a clause of a hint that is about configuration rather than about code names.
+
+Every ignore list in ``[lean]`` and ``[structure]`` ends in it -- ``unused_parameters_ignore``,
+``unused_classes_ignore``, ``duplicates_ignore`` -- so a clause mentioning one is recognised
+without a second list of key names here to fall out of step with the settings model.
+"""
 
 _MARKER_HINT: Final = (
     f"the block is delimited by exactly one {BEGIN_MARKER} and one {END_MARKER}, "
@@ -123,6 +145,52 @@ Each limit below is checked on the entities your change touches. An `error` bloc
 commit; a `warning` is reported but does not block."""
 
 _NO_LIMITS: Final = "- no metric limits are configured; only the structural rules apply"
+
+_LEAN_INTRO: Final = """\
+## Lean code
+
+Every limit above asks whether a piece of code is too complex. None of them asks whether it
+should exist at all: a routine nothing calls once its replacement landed, a parameter nothing
+reads, a wrapper that only forwards, an abstraction with one implementation, a file that
+exports one name, the same twelve lines in three places. Each of those is inside every limit
+above and costs a reader anyway, so this section is about cutting rather than simplifying."""
+
+_LADDER: Final = """\
+### Before you write it
+
+Walk these in order and stop at the first that answers; only the last one writes code.
+
+1. Does this need to exist at all?
+2. Does it already exist in this codebase?
+3. Does the standard library do it?
+4. Does a native platform feature cover it?
+5. Does an already-installed dependency solve it?
+6. Can it be one line?
+7. Then write the minimum that works.
+
+Rungs 3, 4 and 5 are yours alone. No finding will ever carry either `stdlib:` or `native:`:
+whether the standard library, the platform or a dependency this project already installs
+would have done the job is a semantic question a reference database cannot ask. Their
+absence from a report is not a clearance -- nobody checked them but you."""
+
+_LEAN_RULES_INTRO: Final = """\
+### The rules in force
+
+The rules this repository has enabled: the severity each reports at, and the tag its hint
+opens with. The tag is the edit being asked for -- `delete:` it is not used, `yagni:` it
+should not have been written, `shrink:` the same work fits in less code."""
+
+_NET_LINE: Final = """\
+### The net line
+
+A check with a before side ends with one line for the whole change:
+`net: +12 lloc (+30 lines) over 7 routines`. That is logical lines added minus logical lines
+removed, the source-line delta beside it, and the number of routines it was summed over.
+`--all` has no before side, so it prints no net line.
+
+A positive number is not a violation -- a feature costs code -- but it is the figure to argue
+with. The usual reason it is positive is that the path the change replaced is still there:
+delete that, and the tests that only covered it, before you accept the number."""
 
 _RATCHET_INTRO: Final = """\
 ## The ratchet
@@ -204,6 +272,7 @@ def render_rules(settings: Settings, effective: Sequence[EffectiveThreshold]) ->
             _TITLE,
             _limits_section(effective),
             _structure_section(settings.structure, settings.codecheck),
+            _lean_section(settings.lean, {**DEFAULT_CATALOGUE, **settings.hints}),
             _ratchet_section(settings, effective),
             _COMMANDS,
             _JSON,
@@ -291,24 +360,103 @@ def _limit_text(limit: Limit) -> str:
 
 
 def _structure_section(structure: StructureRules, codecheck: CodeCheckSettings) -> str:
-    """The structural rules that are in force, and only those (req 6.1-6.6, 6.9)."""
-    rules = [
-        f"New import or include cycles between files are reported ({structure.file_cycles})",
-        f"New cycles between the architecture nodes of `{structure.architecture}` are "
-        f"reported ({structure.arch_cycles})",
+    """The structural rules that are in force, and only those (req 6.1-6.6, 6.9, lean 8.5)."""
+    bullets = [f"- {rule}" for rule in _structure_rules(structure, codecheck)]
+    return "\n".join([_structure_intro(structure), "", *bullets])
+
+
+def _structure_rules(structure: StructureRules, codecheck: CodeCheckSettings) -> list[str]:
+    """Every structural rule in force, in the order the section lists them."""
+    return [
+        *_cycle_rules(structure),
         *_fan_rules(structure),
         *_new_dependency_rules(structure),
         *_layer_rules(structure.layers),
         *_coupling_rules(structure.coupling),
+        *_call_graph_rules(structure),
+        *_project_wide_rules(structure),
         *_codecheck_rules(codecheck),
     ]
-    intro = (
-        "## Structural rules\n\n"
-        "These are about how the code fits together, not about one entity's own numbers.\n"
+
+
+def _cycle_rules(structure: StructureRules) -> list[str]:
+    """The two rules that cannot be switched off; both carry a severity and no switch."""
+    return [
+        f"New import or include cycles between files are reported ({structure.file_cycles})",
+        f"New cycles between the architecture nodes of `{structure.architecture}` are "
+        f"reported ({structure.arch_cycles})",
+    ]
+
+
+def _structure_intro(structure: StructureRules) -> str:
+    """What the rules below are measured over; the call-graph line only when one is listed.
+
+    Both call-graph rules ship off, so the sentence about them is printed only when one of
+    them is: a document that describes what a rule nobody enabled applies to has listed the
+    rule, and this module refuses to list one.
+
+    It asks :func:`_call_graph_rules` the same question the bullet list asks, rather than
+    taking a flag from the caller, so the sentence and the bullets cannot come apart.
+    """
+    lines = [
+        "## Structural rules",
+        "",
+        "These are about how the code fits together, not about one entity's own numbers.",
         f"The rules that group by architecture use `{structure.architecture}`; "
-        "the file-level ones apply to every file."
-    )
-    return "\n".join([intro, "", *(f"- {rule}" for rule in rules)])
+        "the file-level ones apply to every file.",
+    ]
+    if _call_graph_rules(structure):
+        lines.append("The call-graph ones apply to every routine your change touches.")
+    return "\n".join(lines)
+
+
+def _call_graph_rules(structure: StructureRules) -> list[str]:
+    """The two rules that read which routine calls which, each only when it is on (8.5).
+
+    Both ship off and both were missing from this snippet entirely, which is worse than a
+    rule an agent disagrees with: a rule nobody is told about is one nobody can satisfy.
+
+    ``reachable_complexity`` prints its own ``max`` rather than :func:`_limit_text`, because
+    ``evaluate_reachable_complexity`` judges the maximum and nothing else -- a limit carrying
+    only a minimum switches the rule off there, and "at least 5" would describe a rule that
+    does not run.
+    """
+    rules = []
+    limit = structure.reachable_complexity
+    if limit is not None and limit.max is not None:
+        rules.append(
+            "Reachable complexity of a routine (its own `CyclomaticStrict` and that of "
+            f"everything it transitively calls): at most {_number(limit.max)} "
+            f"({structure.reachable_complexity_severity})"
+        )
+    if structure.call_cycles is not None:
+        rules.append(
+            f"Two or more routines that call one another are reported "
+            f"({structure.call_cycles}); a routine that calls itself is not a cycle"
+        )
+    return rules
+
+
+def _project_wide_rules(structure: StructureRules) -> list[str]:
+    """Unused routines and scattered definitions: two questions asked of the whole project.
+
+    Both are decided over the database rather than over the change -- a routine called from a
+    file this commit never touched is used -- so the line says so, or an agent reads a
+    finding as a claim about its own diff and goes looking in the wrong place (8.5).
+    """
+    rules = []
+    if structure.unused_routines is not None:
+        rules.append(
+            "A routine your change touches that nothing in the whole project calls or uses "
+            f"is reported ({structure.unused_routines})"
+        )
+    limit = structure.duplicate_definitions
+    if limit is not None:
+        rules.append(
+            f"A module-level name bound to the same value in more than {limit} files is "
+            f"reported ({structure.duplicate_definitions_severity})"
+        )
+    return rules
 
 
 def _fan_rules(structure: StructureRules) -> list[str]:
@@ -364,6 +512,167 @@ def _codecheck_rules(codecheck: CodeCheckSettings) -> list[str]:
         f"The CodeCheck configuration `{codecheck.config}` runs on the files you change "
         f"({codecheck.severity})"
     ]
+
+
+def _lean_section(lean: LeanRules, hints: Mapping[str, str]) -> str:
+    """The lean-code family: the ladder and the net line always, the rules when any is on.
+
+    One of the three parts is conditional and two are not. The **ladder** is the agent's own
+    work -- rungs 3, 4 and 5 ask whether the standard library, the platform or an installed
+    dependency already does this, which no reference database can answer -- so it prints
+    whatever the configuration says, together with the promise that no finding will ever
+    carry ``stdlib:`` or ``native:`` (lean-code req 8.3). Nothing else in the snippet, and no
+    finding, raises that question. The **net line** prints unconditionally too: requirement
+    7.1 computes the delta whenever a check has a before side and attaches no condition about
+    this family, and 7.6 shows the author scoping by enablement where they meant to. A line
+    the report prints in the shipped default and this document declines to explain would be
+    the worse failure of the two.
+
+    The **rules in force** are the conditional part, because the whole family ships off and
+    naming a rule nobody enabled is what teaches an agent to distrust the document.
+
+    ``hints`` is the shipped catalogue under the operator's ``[hints]`` table, so the tag
+    beside a rule is the tag its findings will carry even where 8.6 retagged one. The design
+    sketches ``_lean_section(lean, effective)``; the thresholds are not read, because the
+    family's two shrink *metrics* are ordinary limits, listed under Limits already, and
+    naming them here would put lean-code lines in a snippet with the family switched off.
+    """
+    parts = [_LEAN_INTRO, _LADDER]
+    rules = _lean_rule_lines(lean, hints)
+    if rules:
+        parts.append("\n".join([_LEAN_RULES_INTRO, "", *rules]))
+    parts.append(_NET_LINE)
+    return "\n\n".join(parts)
+
+
+def _lean_rule_lines(lean: LeanRules, hints: Mapping[str, str]) -> list[str]:
+    """One line per enabled rule, in the family's own order (req 8.4).
+
+    The order is :data:`~scitools_hook.report.lean_examples.LEAN_RULES` rather than the order
+    :class:`~scitools_hook.config.models.LeanRules` declares its fields in, so the snippet
+    reads the same as the documentation and cannot pick up a configuration's order.
+
+    A rule in the family with no entry in :func:`_lean_labels` raises ``KeyError`` here rather
+    than dropping out of the list: the family is a compile-time constant, and the parametrised
+    test over ``LEAN_RULES`` is what stops a tenth rule reaching an operator as a silence.
+    """
+    labels = _lean_labels(lean)
+    lines = []
+    for name in LEAN_RULES:
+        label = labels[name]
+        if not label:
+            continue
+        rule = structure_rule(name)
+        lines.append(_lean_rule_line(rule, label, hints.get(rule, "")))
+    return lines
+
+
+def _lean_labels(lean: LeanRules) -> dict[StructureRuleName, str]:
+    """Each lean rule's severity as it is printed; ``""`` is a rule that is switched off.
+
+    The one place the family's rule names and its configuration keys meet. They differ by
+    more than a plural -- ``duplicate_block`` is configured as ``duplicates`` and
+    ``similar_routine`` as ``similar_routines`` -- so the mapping has to be written down
+    once, and this is the only copy.
+    """
+    return {
+        "unused_parameter": lean.unused_parameters or "",
+        "unused_class": lean.unused_classes or "",
+        "unused_variable": lean.unused_variables or "",
+        "pass_through": lean.pass_through or "",
+        "single_implementation": lean.single_implementation or "",
+        "over_export": lean.over_export or "",
+        "duplicate_block": lean.duplicates or "",
+        "similar_routine": lean.similar_routines or "",
+        "net_growth": _net_growth_label(lean),
+    }
+
+
+def _net_growth_label(lean: LeanRules) -> str:
+    """The one rule in the family carrying a number, and the number is its switch (req 7.5).
+
+    ``net_growth_severity`` has a value whether or not the rule is on, so the severity cannot
+    say whether it is; ``max_net_growth`` is what an operator sets to turn it on, and ``0`` is
+    a legal maximum meaning "this change may not make the project longer".
+    """
+    if lean.max_net_growth is None:
+        return ""
+    return f"{lean.net_growth_severity}, at most +{lean.max_net_growth} lloc per change"
+
+
+def _lean_rule_line(rule: str, label: str, hint: str) -> str:
+    """``- `structure.pass_through` (warning), `yagni:` -- delete the routine and ...``.
+
+    The hint is quoted whole but for its ignore-list advice (:func:`_quoted`). An earlier
+    draft of this task kept only the first sentence, and that is the one edit this line must
+    not make: three of the nine hints carry a **behavioural exclusion** in their second
+    sentence -- an overridden signature keeps its parameter, a constant read by an importer
+    outside the project stays, a class a registry reaches is not dead -- and each of those
+    sentences exists because task 2.3's review caught the hint telling an agent to delete
+    working code without it. Truncated here they would be missing from the one document an
+    agent reads *before* it writes anything.
+    """
+    head = f"- `{rule}` ({label})"
+    text = _quoted(hint)
+    if not text:
+        return head
+    tag = _tag_of(text)
+    if not tag:
+        return _wrapped(f"{head} -- {text}")
+    return _wrapped(f"{head}, `{tag}` -- {text.removeprefix(tag).strip()}")
+
+
+def _quoted(hint: str) -> str:
+    """``hint`` without the clauses that name an ignore list, and without anything else cut.
+
+    An ignore list is a configuration decision and this section is read before any code is
+    written, so ``add its name to lean.unused_variables_ignore`` is the one part of a hint
+    that does not belong here. Everything else does, exclusions first.
+
+    A sentence that is *nothing but* that advice is kept whole all the same, because in
+    ``structure.unused_class`` the exclusion is the subordinate clause of the sentence that
+    names the list -- "if a registry, an entry point or a test collection reaches it" -- and
+    dropping the clause would drop the exclusion with it.
+    """
+    return ". ".join(_without_ignore_advice(part) for part in hint.strip().split(". "))
+
+
+def _without_ignore_advice(sentence: str) -> str:
+    """One sentence without any ``; ...`` clause naming an ignore list; never emptied."""
+    kept = [clause for clause in sentence.split("; ") if _IGNORE_KEY not in clause]
+    return "; ".join(kept) if kept else sentence
+
+
+def _wrapped(line: str) -> str:
+    """One bullet folded to the width the rest of the snippet is written at.
+
+    The other structural bullets are short statements about a number; these carry a sentence
+    of a hint and run to twice the width of any prose in the document, which is what makes a
+    generated block read as machine output. Hyphens and long words are left alone, so the
+    ``--`` of a hint and a backticked rule name are never broken across lines. The caller
+    always passes a bullet, so there is no empty-input case to guard: ``textwrap.wrap``
+    returns a list of one for anything shorter than the width.
+    """
+    return "\n".join(
+        textwrap.wrap(
+            line,
+            width=_WIDTH,
+            subsequent_indent="  ",
+            break_on_hyphens=False,
+            break_long_words=False,
+        )
+    )
+
+
+def _tag_of(hint: str) -> str:
+    """The ponytail tag a hint opens with, or ``""`` when it opens with prose (req 8.1).
+
+    Read off the hint rather than kept in a table beside it, so an operator who retags a rule
+    through ``[hints]`` retags it here too. A hint that carries no tag -- which only an
+    override can produce -- prints no tag rather than the first word of a sentence.
+    """
+    word = hint.split(" ", 1)[0]
+    return word if word.endswith(":") else ""
 
 
 def _ratchet_section(settings: Settings, effective: Iterable[EffectiveThreshold]) -> str:

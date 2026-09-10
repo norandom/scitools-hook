@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from typing import Final
@@ -33,6 +34,7 @@ from scitools_hook.config.models import (
     CodeCheckSettings,
     CouplingRule,
     LayerRule,
+    LeanRules,
     Limit,
     RatchetSettings,
     Settings,
@@ -41,13 +43,20 @@ from scitools_hook.config.models import (
     ThresholdSpec,
 )
 from scitools_hook.errors import ConfigError
-from scitools_hook.models.findings import EffectiveThreshold
+from scitools_hook.models.findings import (
+    STRUCTURE_RULES,
+    EffectiveThreshold,
+    StructureRuleName,
+    structure_rule,
+)
 from scitools_hook.report.agent_rules import (
     BEGIN_MARKER,
     END_MARKER,
     insert_between_markers,
     render_rules,
 )
+from scitools_hook.report.hints import DEFAULT_CATALOGUE
+from scitools_hook.report.lean_examples import LEAN_RULES
 
 CORE: Final = "Directory Structure/src/core"
 UI: Final = "Directory Structure/src/ui"
@@ -109,7 +118,28 @@ FULL_STRUCTURE: Final = StructureRules(
         CouplingRule(from_node=UI, to_node=CORE, max_refs=40, severity="warning"),
         CouplingRule(from_node=CORE, to_node=UI, max_refs=0, severity="error"),
     ],
+    duplicate_definitions=3,
+    duplicate_definitions_severity="warning",
+    reachable_complexity=Limit(max=200),
+    reachable_complexity_severity="warning",
+    call_cycles="error",
+    unused_routines="warning",
 )
+"""Every structural rule switched on, including the four the snippet omitted until task 2.4."""
+
+ALL_LEAN: Final = LeanRules(
+    unused_parameters="error",
+    unused_classes="warning",
+    unused_variables="warning",
+    pass_through="warning",
+    single_implementation="warning",
+    over_export="warning",
+    duplicates="error",
+    similar_routines="warning",
+    max_net_growth=40,
+    net_growth_severity="error",
+)
+"""The whole lean family on, with mixed severities so a constant in the renderer is caught."""
 
 BARE_STRUCTURE: Final = StructureRules(
     file_cycles="error",
@@ -127,12 +157,14 @@ def settings_with(
     *,
     strict: bool = False,
     codecheck_config: str | None = None,
+    lean: LeanRules | None = None,
 ) -> Settings:
     """A ``Settings`` built from the parts this module renders and nothing else."""
     return Settings(
         structure=structure,
         ratchet=RatchetSettings(strict=strict),
         codecheck=CodeCheckSettings(config=codecheck_config),
+        lean=lean or LeanRules(),
     )
 
 
@@ -140,6 +172,18 @@ def settings_with(
 def snippet() -> str:
     """The fixture configuration rendered once."""
     return render_rules(settings_with(FULL_STRUCTURE), list(SCRAMBLED))
+
+
+@pytest.fixture
+def lean_snippet() -> str:
+    """The same configuration with every lean-code rule switched on as well."""
+    return render_rules(settings_with(FULL_STRUCTURE, lean=ALL_LEAN), list(SCRAMBLED))
+
+
+def line_holding(text: str, needle: str) -> str:
+    """The one line of ``text`` containing ``needle``; ``""`` when no line does."""
+    found = [line for line in text.splitlines() if needle in line]
+    return found[0] if len(found) == 1 else ""
 
 
 # --- requirement 10.1: what the snippet must say --------------------------------
@@ -171,9 +215,13 @@ def test_limits_are_grouped_by_scope_in_a_fixed_order(snippet: str) -> None:
     """Scope groups follow the canonical scope order, not the order of the input list.
 
     The fixture list starts with a ``project`` threshold and ends with one, so a renderer
-    that groups by first appearance produces a different document from this one.
+    that groups by first appearance produces a different document from this one. The
+    headings are read out of the limits section rather than the whole snippet: the lean-code
+    section has third-level headings of its own, and counting those here would make this test
+    fail for a reason that has nothing to do with the order of the scopes.
     """
-    headings = [line for line in snippet.splitlines() if line.startswith("### ")]
+    limits = section(snippet, "Limits")
+    headings = [line for line in limits.splitlines() if line.startswith("### ")]
     assert len(headings) == 4
     assert "Routine" in headings[0]
     assert "Class" in headings[1]
@@ -273,6 +321,267 @@ def test_codecheck_is_mentioned_only_when_configured() -> None:
     assert "CodeCheck" in with_check
 
 
+# --- lean-code requirement 8.5: the four rules the snippet used to omit ----------
+
+STRUCTURAL_PROSE: Final[dict[StructureRuleName, str]] = {
+    "file_cycle": "cycles between files",
+    "arch_cycle": "architecture nodes of",
+    "call_cycle": "call one another",
+    "layer": "Layer rule",
+    "fan_in": "Fan-in",
+    "fan_out": "Fan-out",
+    "reachable_complexity": "Reachable complexity",
+    "new_dependencies": "new dependencies",
+    "coupling": "Coupling",
+    "duplicate_definition": "bound to the same value",
+    "unused_routine": "calls or uses",
+}
+"""Every structural rule outside the lean family, and the words that describe it (8.5).
+
+Keyed by the rule name ``models.findings`` owns, so a rule added to the grammar without a
+line in the snippet fails :func:`test_every_structural_rule_outside_the_lean_family_is_stated`
+rather than shipping as a rule an agent is judged by and never told about -- which is what
+``unused_routine``, ``duplicate_definition``, ``call_cycle`` and ``reachable_complexity`` did
+from the day each was added until this task.
+"""
+
+
+def test_every_structural_rule_outside_the_lean_family_is_stated(snippet: str) -> None:
+    """With every structural rule configured, all eleven are described (8.5)."""
+    assert set(STRUCTURAL_PROSE) == set(STRUCTURE_RULES) - set(LEAN_RULES)
+    rules = section(snippet, "Structural rules")
+    for name, prose in STRUCTURAL_PROSE.items():
+        assert prose in rules, name
+
+
+def test_the_four_call_graph_and_reference_rules_carry_their_numbers(snippet: str) -> None:
+    """Each of the four says what it reports, with its own severity and limit."""
+    rules = section(snippet, "Structural rules")
+    assert "Reachable complexity" in line_holding(rules, "at most 200 (warning)")
+    assert "call one another are reported (error)" in rules
+    assert "nothing in the whole project calls or uses is reported (warning)" in rules
+    assert "bound to the same value in more than 3 files is reported (warning)" in rules
+
+
+def test_the_four_rules_are_absent_when_they_are_off() -> None:
+    """All four ship off, and a rules document that lists them anyway is a lie (10.1).
+
+    The intro's sentence about what a call-graph rule is measured over goes with them: a
+    document that says what a rule nobody enabled applies to has listed the rule.
+    """
+    bare = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for prose in ("call one another", "Reachable complexity", "calls or uses", "same value"):
+        assert prose not in bare
+    assert "call-graph" not in bare
+
+
+def test_the_call_graph_sentence_appears_with_the_call_graph_rules(snippet: str) -> None:
+    """With one of the two on, the intro says what those rules are measured over."""
+    assert "The call-graph ones apply to every routine your change touches." in snippet
+
+
+def test_reachable_complexity_without_a_maximum_is_not_described() -> None:
+    """A limit with no ``max`` switches the rule off in the evaluator, so it says nothing."""
+    structure = BARE_STRUCTURE.model_copy(update={"reachable_complexity": Limit(min=5)})
+    text = render_rules(settings_with(structure), list(SCRAMBLED))
+    assert "Reachable complexity" not in text
+
+
+# --- lean-code requirements 8.3 and 8.4: the lean section ------------------------
+
+
+@pytest.mark.parametrize("name", LEAN_RULES)
+def test_every_enabled_lean_rule_is_named_with_its_severity_and_tag(
+    lean_snippet: str, name: StructureRuleName
+) -> None:
+    """8.4: one line per enabled rule, carrying the severity and the tag its findings use."""
+    rule = structure_rule(name)
+    line = line_holding(section(lean_snippet, "Lean code"), f"`{rule}`")
+    assert line.startswith(f"- `{rule}` (")
+    assert "(error)" in line or "(warning)" in line or "(error, " in line
+    tag = DEFAULT_CATALOGUE[rule].split(" ", 1)[0]
+    assert tag in ("delete:", "yagni:", "shrink:")
+    assert f"`{tag}`" in line
+
+
+def test_each_lean_rule_shows_the_severity_it_was_configured_with(lean_snippet: str) -> None:
+    """The fixture mixes the two severities; a renderer printing a constant fails here."""
+    lean = section(lean_snippet, "Lean code")
+    assert "- `structure.unused_parameter` (error)" in lean
+    assert "- `structure.unused_class` (warning)" in lean
+    assert "- `structure.duplicate_block` (error)" in lean
+
+
+def test_lean_rules_are_listed_in_the_family_order(lean_snippet: str) -> None:
+    """The order is :data:`LEAN_RULES`, not the order the settings model declares them in."""
+    lean = section(lean_snippet, "Lean code")
+    places = [lean.index(f"`{structure_rule(name)}`") for name in LEAN_RULES]
+    assert places == sorted(places)
+
+
+def test_a_lean_rule_that_is_off_is_not_described() -> None:
+    """The whole family ships off; naming one anyway teaches distrust of the document."""
+    text = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for name in LEAN_RULES:
+        assert structure_rule(name) not in text
+    assert "in force" not in text
+
+
+def test_the_ladder_is_stated_whether_or_not_a_rule_is_on(lean_snippet: str) -> None:
+    """8.4: the seven rungs, one line each -- the part of the family the agent applies."""
+    off = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for text in (lean_snippet, off):
+        lean = section(text, "Lean code")
+        rungs = [line for line in lean.splitlines() if re.match(r"^\d\. ", line)]
+        assert len(rungs) == 7
+        assert "exist at all" in rungs[0]
+        assert "already exist in this codebase" in rungs[1]
+        assert "standard library" in rungs[2]
+        assert "native platform feature" in rungs[3]
+        assert "already-installed dependency" in rungs[4]
+        assert "one line" in rungs[5]
+        assert "minimum that works" in rungs[6]
+
+
+def test_the_two_tags_the_gate_never_emits_are_handed_back(lean_snippet: str) -> None:
+    """8.3: say the Gate never emits them, and that their absence is not a clearance."""
+    off = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for text in (lean_snippet, off):
+        lean = section(text, "Lean code")
+        assert "`stdlib:`" in lean
+        assert "`native:`" in lean
+        assert "No finding will ever carry either" in lean
+        assert "not a clearance" in lean
+
+
+def test_the_gate_never_claims_to_emit_a_tag_no_rule_can_produce() -> None:
+    """With the family off no finding carries any tag, so the three are not advertised."""
+    off = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for tag in ("`delete:`", "`yagni:`", "`shrink:`"):
+        assert tag not in off
+
+
+def test_the_net_line_is_explained_whether_or_not_a_rule_is_on(lean_snippet: str) -> None:
+    """8.4 with 7.1: the delta is computed for any check with a before side.
+
+    Requirement 7.1 attaches no condition about this family to the delta, and 7.6 scopes
+    itself explicitly with "when lean-code rules are enabled" where the author meant to
+    scope by enablement. So the line prints in the shipped default, and a snippet that
+    explained it only where a rule happens to be on would leave it unexplained exactly where
+    an agent meets it first.
+    """
+    off = render_rules(settings_with(BARE_STRUCTURE), list(SCRAMBLED))
+    for text in (lean_snippet, off):
+        lean = section(text, "Lean code")
+        assert "`net: +12 lloc (+30 lines) over 7 routines`" in lean
+        assert "logical lines" in lean
+        assert "`--all`" in lean
+
+
+def test_the_net_growth_rule_appears_only_with_a_configured_maximum() -> None:
+    """A severity alone does not switch it on; ``max_net_growth = 0`` does, and means zero."""
+    with_max = LeanRules(max_net_growth=0, net_growth_severity="error")
+    on = render_rules(settings_with(BARE_STRUCTURE, lean=with_max), list(SCRAMBLED))
+    assert "- `structure.net_growth` (error, at most +0 lloc per change)" in on
+    without = LeanRules(net_growth_severity="error")
+    off = render_rules(settings_with(BARE_STRUCTURE, lean=without), list(SCRAMBLED))
+    assert "structure.net_growth" not in off
+
+
+def rendered_with_hint(text: str) -> str:
+    """The snippet for a pass-through-only configuration whose hint the operator replaced."""
+    settings = settings_with(BARE_STRUCTURE, lean=LeanRules(pass_through="warning"))
+    overridden = settings.model_copy(update={"hints": {"structure.pass_through": text}})
+    return render_rules(overridden, list(SCRAMBLED))
+
+
+def test_the_tag_comes_from_the_hint_the_finding_will_carry() -> None:
+    """8.6 lets an operator retag a rule; the snippet must not disagree with the finding."""
+    text = rendered_with_hint("shrink: merge the two routines into one")
+    assert "- `structure.pass_through` (warning), `shrink:` -- merge the two routines" in text
+    assert "`yagni:` -- delete the routine" not in text
+
+
+def test_an_emptied_hint_leaves_the_rule_named_and_says_nothing_else() -> None:
+    """Emptying a key in ``[hints]`` silences the text; the rule is still in force (8.6)."""
+    text = rendered_with_hint("")
+    assert "- `structure.pass_through` (warning)\n" in text
+    assert "`structure.pass_through` (warning) --" not in text
+
+
+def test_a_hint_with_no_tag_leaves_the_line_without_one() -> None:
+    """An overridden hint that carries no tag must not be mined for a bogus one."""
+    text = rendered_with_hint("rewrite the routine and its caller together")
+    assert "- `structure.pass_through` (warning) -- rewrite the routine" in text
+
+
+def folded(text: str, heading: str) -> str:
+    """One section with its newlines folded away.
+
+    A rule line is wrapped to the width of the document, so a sentence a test looks for is
+    routinely broken across two lines. Asserting on the folded text is what lets these tests
+    ask what the line *says* rather than how it happens to have been laid out.
+    """
+    return " ".join(section(text, heading).split())
+
+
+def test_the_three_dead_code_rules_carry_their_behavioural_exclusions(
+    lean_snippet: str,
+) -> None:
+    """The sentence that stops an agent deleting working code travels with the rule.
+
+    Each of these exists because task 2.3's review caught the hint without it: an overriding
+    signature keeps a parameter nothing in the body reads, a constant an importer outside the
+    project reads is not dead, and a class a registry or a test collection reaches has no
+    reference to find. Quoting only the first sentence of each hint -- which an earlier draft
+    of this task did -- restores exactly the meaning that review rejected, in the one document
+    an agent reads before it writes rather than after.
+    """
+    lean = folded(lean_snippet, "Lean code")
+    assert "A parameter a signature this routine overrides declares stays in the" in lean
+    assert "signature and is not this finding" in lean
+    assert "A constant kept for an importer outside the project stays where it is" in lean
+    assert "If a registry, an entry point or a test collection reaches it in a way" in lean
+    assert "references cannot show" in lean
+
+
+def test_the_rest_of_every_hint_is_quoted_as_it_stands(lean_snippet: str) -> None:
+    """Nothing but ignore-list advice is dropped, for any rule in the family.
+
+    Walks the shipped hints rather than a list written here, so a hint that grows a sentence
+    later is held to the same rule without this test being edited.
+    """
+    lean = folded(lean_snippet, "Lean code")
+    for name in LEAN_RULES:
+        hint = DEFAULT_CATALOGUE[structure_rule(name)]
+        tag = hint.split(" ", 1)[0]
+        for clause in hint.removeprefix(tag).split("; "):
+            if "_ignore" in clause:
+                continue
+            assert clause.strip() in lean, name
+
+
+def test_ignore_list_advice_is_left_out_where_it_is_a_clause_of_its_own(
+    lean_snippet: str,
+) -> None:
+    """Which list silences a false positive is a configuration decision, not what to write.
+
+    ``unused_classes_ignore`` is the exception and stays: its sentence has no other clause,
+    and the blind spot it names -- a registry, an entry point, a test collection -- is that
+    sentence's subordinate clause, so cutting the advice would cut the exclusion with it.
+    """
+    lean = folded(lean_snippet, "Lean code")
+    assert "lean.unused_parameters_ignore" not in lean
+    assert "lean.unused_variables_ignore" not in lean
+    assert "lean.unused_classes_ignore" in lean
+
+
+def test_no_rendered_line_runs_past_the_width_of_the_document(lean_snippet: str) -> None:
+    """A rule line quotes a sentence, so it is folded rather than left twice as wide."""
+    lean = section(lean_snippet, "Lean code")
+    assert [line for line in lean.splitlines() if len(line) > 100] == []
+
+
 def test_ratchet_is_explained_in_plain_words(snippet: str) -> None:
     """Requirement 4.4 in a sentence an agent can act on."""
     lowered = snippet.lower()
@@ -363,7 +672,8 @@ def test_every_scope_can_be_rendered() -> None:
     for scope in SCOPES:
         item = effective(threshold(scope, "CountLineCode", Limit(max=1)))
         text = render_rules(settings_with(BARE_STRUCTURE), [item])
-        headings = [line for line in text.splitlines() if line.startswith("### ")]
+        limits = section(text, "Limits")
+        headings = [line for line in limits.splitlines() if line.startswith("### ")]
         assert len(headings) == 1
         assert "- `CountLineCode`: at most 1 (error)" in text
 
