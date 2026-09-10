@@ -136,18 +136,53 @@ CountClassDerived = false
 
 [scope.api_fakes]
 # tests/understand/api_fakes.py is a stand-in for the `understand` module: one class per API
-# type the worker reads (Ent, Ref, Kind, Arch, Db, the module itself, its exception, and
-# `Metric` in its 7.x and 8.0 shapes), each with the methods the worker calls and no others.
-# Its counts are the API's counts. `FakeEnt` has 16 methods because `understand.Ent` has
-# those 16 the worker uses; a split would put half an entity in each file. The classes lived
-# in test_worker.py until 0.1.0a7, where the ratchet carried them; moving them made every
-# one "new" to the gate, since an entity's key includes its file.
+# type the worker reads (Ent, Ref, Kind, Arch, Db, Lexer, Lexeme, the module itself, its
+# exception, and `Metric` in its 7.x and 8.0 shapes), each with the methods the worker calls
+# and no others. Its counts are the API's counts. `FakeEnt` has as many methods as
+# `understand.Ent` has members the worker uses; a split would put half an entity in each
+# file. The classes lived in test_worker.py until 0.1.0a7, where the ratchet carried them;
+# moving them made every one "new" to the gate, since an entity's key includes its file.
 # Measured 2026-09-05: 11 classes, 477 lines; FakeEnt 16 methods, FakeArch 7, FakeDb 7.
+# Re-measured 2026-09-10, after task 1.5 added the lexer fakes: 13 classes, 303 code lines;
+# FakeEnt 17 methods.
+#
+# `CountClassCoupled` joins them on 2026-09-10, for the same reason as `[scope.schemas]`
+# above -- the metric is counting something other than coupling here -- and with the
+# enumeration behind it. Measured on this database, `FakeEnt` has 13 forward `Couple` edges,
+# which is exactly what the metric reports:
+#
+#   FakeKind, FakeLexer, FakeRef, FakeUnderstandError   -- 4, the API types it collaborates with
+#   bool, dict, int, list, object, str, tuple           -- 7, named ONLY in type annotations
+#   range, pathlib.Path                                 -- 2, one expression each (`ents`, `draw`)
+#
+# **`CountClassCoupled` charges annotation types on Python**, so a wide, shallow dataclass
+# reaches the limit on the types of its fields rather than on anything it talks to. The
+# counterfactual is exact and was measured on both sides on 2026-09-10: `lexer()`'s three
+# ignored switches annotated `object` give 12, the same three annotated `bool` give 13, and
+# not one line of behaviour differs between them. The figure is therefore not a count of design collaborators; the number
+# of those is 4, and 4 is what a reader should judge this class on.
+#
+# The ceiling is 16 rather than `false` so growth past it still blocks. Three above the
+# measured 13: tasks 3.1 and 5.1 each have to extend this fake -- routine and class facts,
+# and a token index over a routine's line range -- and each may name one type it does not
+# already name, with one left over. That is the same 15-20% headroom the `[scope.worker]`
+# ceilings above carry over what they measured (1056 -> 1200, 117 -> 130, 38 -> 45).
+#
+# `CountDeclMethodNonStub`, not `CountDeclMethod`, is the key doing the work here, and the
+# deviation this file carried until 2026-09-10 named both at 25. Measured by removing the
+# block and re-running: `CountDeclMethod` 17 against its default of 20 raises nothing, while
+# `CountDeclMethodNonStub` 17 against its default of 15 is an ERROR. The two carry the SAME
+# number on Python and always will -- the non-stub figure is this project's own synthetic,
+# `CountDeclMethod - 2 * CountDeclPropertyAuto`, and Understand leaves
+# `CountDeclPropertyAuto` unset for Python, so there are no trivial accessors to subtract --
+# and only their limits differ, 15 against 20. So only the key that can fire is kept; 20
+# leaves the same three-member margin as the coupling ceiling, for the same two tasks.
 paths = ["tests/understand/api_fakes.py"]
 
 [scope.api_fakes.thresholds.file]
+# 13 classes against a limit of 6: one class per API type is what the file is for.
 CountDeclClass = false
 
 [scope.api_fakes.thresholds.class]
-CountDeclMethod = { max = 25 }
-CountDeclMethodNonStub = { max = 25 }
+CountClassCoupled = { max = 16 }
+CountDeclMethodNonStub = { max = 20 }

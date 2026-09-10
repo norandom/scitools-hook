@@ -196,12 +196,9 @@ class FakeEnt:
     raises for it the way the API does.
 
     Triples rather than :class:`FakeLexeme` objects because building lexemes is the lexer's
-    work rather than the entity's, and because this class has no room to pay for it: measured
-    on 2026-09-09 it sits at ``CountClassCoupled`` **12 of 12**, the limit exactly. That limit
-    is an absolute error with no ratchet, so the next member coupling a NEW class to this fake
-    blocks the gate rather than warning about it. Scalar and tuple-shaped members are free,
-    and so are ``object``-annotated parameters -- that escape is already spent, on ``lexer()``.
-    Task 1.9 gives this class room before the tasks that need it.
+    work rather than the entity's: a test describes a file's tokens without having to know
+    what a lexeme object is, and :class:`FakeLexer` is the one place that turns them into
+    lexemes.
     """
     refs_error: str | None = None
     drawable: tuple[str, ...] = ("Butterfly", "Calls", "Called By")
@@ -262,22 +259,20 @@ class FakeEnt:
 
     def lexer(
         self,
-        lookup_ents: object = True,
-        show_inactive: object = False,
-        expand_macros: object = False,
+        lookup_ents: bool = True,
+        show_inactive: bool = False,
+        expand_macros: bool = False,
     ) -> FakeLexer:
         """The file's lexical stream, raising when the source cannot be read.
 
         The three parameters are the API's own, accepted and ignored: ``lookup_ents`` is a
         construction-speed switch over entity and reference lookup, which is not modelled
         here at all, so there is nothing for the fake to vary. They are declared rather than
-        dropped because ``lexer(False)`` is the spelling the callers use.
-
-        They are annotated ``object`` rather than ``bool`` because the fake never reads them.
-        That is not a stylistic preference: measured on this database, a ``bool`` here is one
-        more class coupled to :class:`FakeEnt`, which sits at 11 of the 12 the gate allows it,
-        and the lexer it now returns takes the twelfth. Spending the last one on the type of
-        an argument nothing looks at would leave none for the next member the API needs.
+        dropped because ``lexer(False)`` is the spelling the callers use, and they are
+        annotated ``bool`` because ``bool`` is what the documented API takes. Task 1.5 had
+        annotated them ``object`` to keep this class under a class-coupling limit that counts
+        annotation types; task 1.9 recorded that limit as a scope deviation instead, and the
+        first thing it bought back was these three annotations.
 
         The raise is the part with behaviour behind it. ``Ent.lexer`` documents
         ``UnderstandError`` "if unable to construct the lexer", and says the source file must

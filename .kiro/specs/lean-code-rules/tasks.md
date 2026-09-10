@@ -50,12 +50,15 @@
   - Done when the rendered template round-trips through the loader to the same effective settings, and the template test names every lean key
   - _Requirements: 1.5, 10.2_
 
-- [ ] 1.9 Give the entity fake room before the tasks that need it
-  - Measured in task 1.5: the entity fake in the Understand API fakes sits at class coupling 12 against a limit of 12, which is an absolute error with no ratchet, so the next member that couples a new class to it blocks the gate rather than warning. Tasks 3.1 and 5.1 both have to extend it
-  - Split it, or restructure it so the members those tasks need cost no new coupling. Do not raise the limit and do not widen the scope exemption: the limit is one this project holds its own code to, and a fake that cannot be extended without buying headroom is a fake that has outgrown its shape
-  - Done when the entity fake measures at least two collaborators below the limit with every existing fake test still passing, and a check on the worktree exits 0
+- [x] 1.9 Give the entity fake room before the tasks that need it
+  - **Amended after the first attempt's review, and the amendment is the point.** The original wording forbade both raising the limit and recording a deviation, which forced an accounting move: splitting the fake into six bases took its coupling from 12 to 0 while every one of the twelve edges survived, merely reattributed to bases whose inheritance edges the metric does not charge. The tool's own fan-out rule said the same class got worse in the same run, which is what a metric being satisfied rather than answered looks like
+  - The measurement that changes the decision: eight of the twelve couplings are `dict`, `int`, `list`, `object`, `range`, `str`, `tuple` and `pathlib.Path`. `CountClassCoupled` charges annotation types on Python, so a wide shallow dataclass reaches the limit on its field annotations. The fake has **four** real collaborators. This is the same finding `[scope.schemas]` already records for another region, where a metric counts schemas rather than coupling
+  - So: record the honest deviation. A `[scope.api_fakes.thresholds.class]` ceiling on `CountClassCoupled`, carrying the enumerated twelve, the eight that are annotation types, and the note that the figure is not a count of design collaborators. Set a **ceiling, not `false`**, so growth past it still blocks, which is what every other scope block in this file does. Restore whatever method-count deviation the single class needs, with its own measurement
+  - Keep the `bool` annotations on the lexer switches. Task 1.5 spent them to buy a coupling and they are correct against the documented API; they must not be traded back
+  - Decide the six-class shape on readability alone or revert it, and either way remove every claim that it reduced coupling, in the fake's docstrings and in the configuration comment. If it is kept, its seven new ratchet warnings belong in the record
+  - Done when the fake carries a recorded deviation with its measurement rather than an accounting shape, tasks 3.1 and 5.1 have room to extend it, every existing fake test passes unchanged, and a check on the worktree exits 0
   - _Requirements: none of its own; it unblocks 3.1 and 5.1_
-  - _Boundary: tests/understand/api_fakes.py and its callers_
+  - _Boundary: tests/understand/api_fakes.py, scitools-hook.toml_
 
 - [ ] 2. Rules that need no new extraction, and the net delta
 - [ ] 2.1 (P) The over-export rule from today's snapshot
@@ -301,3 +304,6 @@ have its own specification rather than being absorbed here. Recorded so it is no
 function of which files changed, and whatever resolves the before side's sixth edge varies
 between runs that ought to be equivalent. That widens the question rather than narrowing it,
 and it is worth reproducing deliberately before any fix is designed.
+- **1.9** The first attempt satisfied a coupling limit by splitting the fake into six bases, taking its count from 12 to 0 while every edge survived, reattributed to bases whose inheritance edges the metric does not charge. The tool contradicted itself in that run: fan-out on the same class rose 4 to 6. My task text caused it, by forbidding both raising the limit and recording a deviation, which left no honest route. A constraint with no legitimate solution inside it produces an illegitimate one.
+- **1.9** `CountClassCoupled` charges annotation types on Python, so a wide shallow dataclass reaches the limit on its fields rather than on collaborators: of the fake's 13 edges, 7 are builtins named only in annotations and 2 are single expressions, leaving 4 real collaborators. Recorded as a scoped ceiling with the enumeration, the way `[scope.schemas]` already records a metric counting the wrong thing. Other wide dataclasses in this repository are subject to the same effect and nobody has looked.
+- **1.9** `CountDeclMethodNonStub` is this project's own synthetic, `CountDeclMethod - 2 * CountDeclPropertyAuto`, and Understand leaves `CountDeclPropertyAuto` unset for Python. The two keys therefore carry the same number on Python and differ only in their limits, 15 against 20, so only the non-stub key can ever fire there. A deviation on the other one was inert and is gone.
