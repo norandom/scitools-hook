@@ -286,6 +286,28 @@ Cross-cutting findings recorded as they were learned, so a later task does not r
 
 ## Found while dogfooding, and NOT part of this feature
 
+**A package initialiser holding only a docstring is charged as a real dependency.** Found
+during task 2.6 and confirmed by its review, measured twice on Understand 8.0 Build 1262.
+
+`analysis/structure/coupling.namespace_targets` excuses a dependency on a package initialiser
+that holds no code, and it decides "holds no code" by testing `CountLineCode == 0`. Understand
+counts a multi-line module docstring as **code lines**, so an initialiser carrying only prose
+is charged as a genuine dependency. Measured: restoring a long docstring to
+`analysis/lean/__init__.py` took `runner/lean.py` from 7 new dependencies to 8 against a limit
+of 7, blocking the commit, and shortening it to one line dropped that file out of the list with
+no other change.
+
+The same underlying fact was recorded earlier from the other direction, in task 1.5: a file that
+is a docstring and nothing else reports `RatioCommentToCode` 0 and is called under-documented,
+because the ratio is comment lines over code lines and the docstring lands on the wrong side of
+that division.
+
+The consequence is that a project is penalised for documenting a package, which is the opposite
+of what every other rule here asks for. The emptiness test needs a measure that is not
+`CountLineCode`, or the rule needs to know that a docstring is not code. Like the finding below,
+this belongs to the base maintainability gate rather than to the lean-code family, and it
+should have its own specification rather than being absorbed here.
+
 **The structural ratchet can report that an untouched file's coupling grew.** Found during
 task 1.8 and characterised by its review, on Understand 8.0 Build 1262 with this repository's
 own configuration.
@@ -351,3 +373,4 @@ carries them under "The resolution gate".
 - **2.4** A defect fixed in one task returned in the next through a different mechanism. Task 2.3's review added behavioural exclusions to three hints so an agent would not delete an interface-required parameter or an externally-read constant; task 2.4 then quoted only each hint's first sentence into the agent-rules snippet and dropped all three. Both tasks were green everywhere. A fix recorded in one artefact is not a fix in the artefact that quotes it, and the only test that catches this reads the rendered text for meaning.
 - **2.4** Requirement 7.1 prints the net delta whenever a check has a before side, with no condition on the lean rules being enabled. Task 2.6's acceptance line said an all-off configuration must produce a run result identical to today's, which contradicts it. Requirement wins; 2.6's line is amended.
 - **2.5** Requirement 8.2 had a half nobody owned: the worked example renders at a verbosity the command line cannot produce, and task 7.1 listed the requirement while its acceptance text covered only the JSON half. A requirement id in a task's `_Requirements:` line is not coverage; the acceptance text is what gets built.
+- **2.6** Two artefacts that must agree, with nothing binding them, is now this feature's most frequent defect: the hints and the snippet quoting them, the promised net line and the printed one, and the definitions predicate written out in the fingerprint and the extractor. The third instance was the recurrence guard for the defect the task was closing. Where two places must answer the same question, one of them should ask the other.
