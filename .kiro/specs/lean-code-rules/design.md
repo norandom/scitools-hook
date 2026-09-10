@@ -282,7 +282,10 @@ flowchart TD
 | 4.2 | exclusions | layering, `DEFAULT_LEAN_OVER_EXPORT_IGNORE` | | |
 | 4.3 | off, warning | `LeanRules.over_export` | | |
 | 5.1 | duplicate blocks with other locations | worker_lean.token_index, analysis/lean/duplicates | `TokenIndex.files`, `duplicates_min_lines`, `NAMED_LOCATIONS` | |
-| 5.2 | similar routines with measured similarity | worker_lean.token_index, analysis/lean/similar | `TokenIndex.routines`, `similar_threshold`, `similar_min_statements` | |
+| 5.2 | families by transitive similarity, one finding per family | worker_lean.token_index, analysis/lean/similar | `TokenIndex.routines`, `similar_threshold`, `similar_min_statements` | |
+| 5.9 | configurable family size and threshold | `LeanRules.similar_min_family`, `similar_threshold` | | |
+| 5.10 | idiom families excluded by routine name | `LeanRules.similar_ignore` over names | | |
+| 5.11 | one finding per family per run, not per member | analysis/lean/similar | | |
 | 5.3 | whole project, affected report | duplicates, similar | affected keys as the only query set | |
 | 5.4 | normalisation | worker_lean.token_index | token class map | |
 | 5.5 | configurable, off, warning, path ignore | `LeanRules` | `duplicates_ignore`, `similar_ignore` | |
@@ -378,6 +381,7 @@ class LeanRules(StrictModel):
     duplicates_ignore: list[str]             # path patterns; default []
     similar_routines: Severity | None = None
     similar_min_statements: int = Field(default=6, ge=2)
+    similar_min_family: int = Field(default=2, ge=2)   # 2 = a plain twin still reports
     similar_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     similar_ignore: list[str]                # path patterns; default []
     max_net_growth: int | None = Field(default=None, ge=0)
@@ -728,7 +732,12 @@ def find_similar_routines(after: ProjectSnapshot, affected: Collection[EntityKey
                           threshold: float, min_statements: int, ignore: Sequence[str]) -> LeanOutcome
 ```
 - `duplicate_block`: builds a map from each `min_lines`-window of line hashes to its locations over every indexed file; for every affected file, each maximal run of windows occurring elsewhere becomes one finding with the file's line range and up to `NAMED_LOCATIONS` other locations in `details["also_at"]`; ignored paths contribute neither side. Hint `delete:`.
-- `similar_routine`: 4-gram shingles over `shape` indexed for the whole project; for each affected routine with at least `min_statements` (`CountStmt`) a candidate list from the index; `difflib.SequenceMatcher(None, a.shape, b.shape, autojunk=False).ratio() >= threshold` decides; the finding names the twin and `details["similarity"]`, and sets `details["construct"] = "same_file"` when the twin is in the same file. Only affected routines are queried, so the cost is linear in the change. Hint `delete:`, or `shrink:` through the same-file variant.
+- `similar_routine` reports **families, not pairs**, and that was the amendment measurement forced. 4-gram shingles over `shape` index the whole project; candidate pairs are scored with `difflib.SequenceMatcher(None, a.shape, b.shape, autojunk=False).ratio()`; every pair at or above `similar_threshold` is a union, and the connected components of those unions are the families. One finding per family that an affected routine belongs to, **once per run rather than once per member**, naming the other members with their locations, the family's size, and the lowest similarity holding it together. `details["similarity"]` carries that lowest ratio; `details["construct"] = "same_file"` when every member shares a file, which selects the `shrink:` hint, and otherwise the finding takes `delete:`, because the remedy differs: one is a local rewrite, the other is a module that does not exist yet.
+
+  Measured on a 417-file, ~101 800-line codebase: 69 pairs at 0.9 become 44 families over 98 routines; at 0.8 there are 81 families over 224 routines, about 2144 lines, more than double what pairs at 0.9 reach. The largest is twelve `normalize` methods, one per data provider, 180 lines between them. Sixty-six pairwise findings about twelve routines is noise; one finding naming twelve is a task, and it is the only shape that says the useful thing, which is that they are one routine with a parameter.
+
+  `similar_min_family` defaults to 2, so a plain twin is a family of two and nothing is lost. `similar_ignore` takes routine-name patterns as well as paths and ships covering the shapes where a family is idiom rather than duplication: of those 224 routines, thirty are `__post_init__` validators across unrelated data shapes, one per class on purpose. A rule that told an agent to merge them would be wrong, and would be wrong twelve members at a time.
+
 - Both: `tokens is None` yields the unavailable message; `tokens.unreadable` is reported once per run as a note (5.8).
 
 #### analysis/lean/net

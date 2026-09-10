@@ -114,7 +114,8 @@
 - [ ] 3.2 Class facts and module-variable use
   - For a class: whether anything in the project references it, the long names of its derived classes across the inheritance kinds of every language, and the count of project entities referencing it other than itself, its members, its derived classes and their members; for a module-level variable: whether any project reference uses it, including a use as a type
   - Done when unit tests show a class used only in an annotation counted as referenced, a base with one derived class and no other referrer, and a variable read from another module counted as used
-  - _Requirements: 1.1, 1.3, 3.1, 9.7_
+  - Also record, per method name, how many project classes declare it. A name declared on two or more classes is an interface method under structural typing, which is the only way to see one when no inheritance edge exists (requirement 1.9). Measured on a 417-file codebase: of 830 naive dead-code candidates exactly one carried an override reference, so inheritance alone detects nothing there
+  - _Requirements: 1.1, 1.3, 1.9, 3.1, 9.7_
   - _Boundary: worker_lean_
 
 - [ ] 3.3 Load the sibling from the worker and record the facts in the snapshot
@@ -128,14 +129,16 @@
 - [ ] 4.1 (P) Dead parameters, classes and module variables
   - Three rules over the after side: a parameter of an affected routine that the routine never references, located at the routine and naming the parameter, unless the routine overrides or the name matches the ignore list; an affected class nothing references unless ignored; an affected file's module variable nothing references unless ignored; a missing fact on any affected record yields the rule's unavailable message and nothing else; a deleted entity cannot appear
   - Done when unit tests cover each finding, the override exclusion, the receiver exclusion by default ignore, the unavailable message, and an unreferenced class in an unaffected file not reported
-  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
+  - Apply the resolution floor before reporting anything: below it the rules report nothing and say why once, because a caller count from a partly resolved graph cannot tell "nothing uses this" from "the analyser could not see what uses this" (requirement 1.8). Apply the interface-method exclusion from task 3.2's declaring-class count, which is what catches structural typing where the override exclusion catches nothing (requirement 1.9)
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9_
   - _Boundary: analysis/lean/dead_
 
 - [ ] 4.2 (P) Pass-through routines and single-implementation abstractions
   - A routine with exactly one project caller, exactly one callee and a statement count within the budget, not overriding and not ignored, reported naming caller and callee; a class with exactly one derived class and no other referrer, evaluated when it or its derived class is affected, reported naming the derived class; classes with no or several derived classes never reported
   - Done when unit tests show one caller with two callees not reported, a budget of two accepting a call-and-return body, the base reported on the commit that adds the only derived class, and a base with an outside referrer not reported
   - _Depends: 2.1_
-  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4_
+  - The pass-through rule takes the same resolution floor: an understated caller count is exactly what it reports on (requirement 2.6)
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.2, 3.3, 3.4_
   - _Boundary: analysis/lean/layering_
 
 - [ ] 4.3 Wire the reference rules into the lean step and refuse them where the build cannot answer
@@ -163,10 +166,12 @@
   - _Requirements: 5.1, 5.3, 5.5, 5.8_
   - _Boundary: analysis/lean/duplicates_
 
-- [ ] 5.4 (P) The similar-routine rule
-  - Shingles over routine shapes indexed for the whole project; for each affected routine at or above the statement minimum, candidates from the index and a sequence ratio against each; a ratio at or above the threshold is one finding naming the twin and the ratio, marked with the same-file variant when the twin is in the same file so the catalogue picks the `shrink:` hint; only affected routines are ever queried
-  - Done when unit tests show a renamed twin at 0.95 reported, a 0.7 pair not, a routine below the statement minimum skipped, and a project of a thousand fake routines with one affected routine answering in well under a second
-  - _Requirements: 5.2, 5.3, 5.4, 5.5_
+- [ ] 5.4 (P) The similar-routine rule, reporting families rather than pairs
+  - **Amended 2026-09-10 from measurement, see requirement 5's note.** Pairs were the wrong shape: 69 pairs at 0.9 on a real codebase are 44 families over 98 routines, and at 0.8 they are 81 families over 224 routines and about 2144 lines. One finding naming twelve members is a task; sixty-six pairwise findings about the same twelve are noise
+  - Union every scored pair at or above the threshold and report the connected components. One finding per family an affected routine belongs to, once per run and never once per member. Name the other members, their locations, the family size, and the lowest similarity holding the family together
+  - A family size minimum defaulting to 2, so a plain twin still reports and nothing is lost. A name-pattern ignore list beside the path one, shipped covering idiom families: of those 224 routines, thirty are `__post_init__` validators across unrelated shapes, one per class on purpose
+  - Done when a family of twelve produces one finding naming eleven others, a change touching three members of one family produces one finding rather than three, a family of two still reports, an idiom family is silent, and the whole-project scan over a thousand fake routines with one affected routine answers in well under a second
+  - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.9, 5.10, 5.11_
   - _Boundary: analysis/lean/similar_
 
 - [ ] 5.5 Wire the token rules into the lean step, probe the lexer and the duplicate-lines metric
@@ -207,8 +212,9 @@
   - A whole-project run of this repository with every lean rule on, printing the count each rule produces at its shipped numbers and the first ten findings of each so they can be read; a warm check with one changed line, timed with every rule on and with every rule off
   - The counts and timings go into the research log as a dated table
   - Done when the research log carries the table and the cost test asserts the with-everything time within one half of today's warm check on this repository
+  - Run the same measurement on a second, larger repository as well as this one. Requirement 1.10 asks for two of different size before any dead-code rule ships enabled, because a rule dominated by the analyser's resolution rather than by the code only shows up when the resolutions differ. facdrone resolves at 26% against this repository's 19% and is already measured read-only, so the comparison exists to build on
   - _Depends: 4.3, 5.5_
-  - _Requirements: 5.7, 6.5, 9.1, 9.5_
+  - _Requirements: 5.7, 6.5, 9.1, 9.5, 1.10_
 
 - [ ] 6.4 Adjust the shipped defaults from the measurement
   - **Evidence already gathered, 2026-09-10, see research.md:** `routine.LinesPerStatement = 3.0` fits this repository (1.8% outside, `keep`) and does NOT fit facdrone (8.7% outside, `recommend` proposes 4, where 4.0% would be outside). `routine.CountLineComment = 20` fits both. Decide the verbosity default with both repositories in hand rather than one
