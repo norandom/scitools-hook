@@ -698,8 +698,18 @@ inheritance and misses duck typing entirely.
 Two consequences this design must carry, or the rules ship as a machine for deleting working
 code:
 
-1. **A resolution gate.** No reference-based rule may report while the call resolution for
-   that language is below a floor. The snapshot already carries `CallResolution` per language.
+1. **Two gates, not one, because two different measurements failed in two different ways.**
+   No reference-based rule may report while the call resolution for that language is below a
+   floor, AND none may report while the analysis accuracy is below its own floor. The
+   quantities are not interchangeable and neither covers the other's evidence: call
+   resolution bounds whether the Gate knows what calls what, which is the 830-routine failure
+   on a structurally typed codebase; accuracy bounds whether a file was read at all, which is
+   the failure behind all sixteen module bindings this repository calls unreferenced while
+   they are read, their use sites sitting in regions the analysis errored on. The two figures
+   were conflated throughout the earlier drafts of this design: 19% and 26% were quoted as
+   call resolution and are accuracy, while this repository's call resolution measures 43%.
+   The snapshot carries `CallResolution` per language and the run carries the accuracy figure
+   the Understand 8.0 work already records. The snapshot already carries `CallResolution` per language.
    Below the floor the rules report **nothing** and say so once per run, exactly as the gate
    already refuses to evaluate a metric Understand has no value for. "Nothing references this"
    is a measurement only when references were mostly resolved; otherwise it is a statement

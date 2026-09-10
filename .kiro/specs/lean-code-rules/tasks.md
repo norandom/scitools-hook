@@ -146,7 +146,8 @@
   - _Boundary: analysis/lean/layering_
 
 - [ ] 4.3 Wire the reference rules into the lean step and refuse them where the build cannot answer
-  - The lean step runs the five reference rules; the reference feature is recorded as available on every build, the five configuration keys map to it, and the doctor row prints
+  - The lean step runs the five reference rules; the reference feature is recorded as available on every build, the five severity keys map to it, and the doctor row prints
+  - **Requirement 1.8's floors are configurable and nothing owns them yet.** Add `lean.resolution_floor` and `lean.accuracy_floor` to the settings, each with its template line, since the template test is driven off the model's own field list. Task 4.1 could only take them as call-site arguments, so without this the requirement ships configurable in Python and nowhere else
   - Done when a pipeline test with a fixture snapshot carrying facts shows the five rules' findings and their notes, and the doctor output lists the row
   - _Depends: 2.6, 3.3, 4.1, 4.2_
   - _Requirements: 1.6, 2.5, 9.2, 9.3_
@@ -226,6 +227,7 @@
 
 - [ ] 6.4 Adjust the shipped defaults from the measurement
   - **Evidence already gathered, 2026-09-10, see research.md:** `routine.LinesPerStatement = 3.0` fits this repository (1.8% outside, `keep`) and does NOT fit facdrone (8.7% outside, `recommend` proposes 4, where 4.0% would be outside). `routine.CountLineComment = 20` fits both. Decide the verbosity default with both repositories in hand rather than one
+  - **From task 4.1's review:** report how many dead-code candidates the interface-method tally excuses and how many of those are free functions rather than methods. The exclusion matches by short name, so a free function sharing a name with two classes' methods is excused too; that is the safe direction but its size is asserted rather than measured, and names like `run`, `close` and `write` are declared by two or more classes in almost any project
   - Any lean number or threshold whose measured count on this repository is mostly noise is changed, with the measurement written beside it, in its own commit; a default the measurement confirms is left alone and the confirmation recorded
   - Done when every shipped lean default has a recorded count behind it and the unit tests pin the final values
   - _Depends: 6.3_
@@ -385,3 +387,4 @@ carries them under "The resolution gate".
 - **3.2** `derive` is not one direction across languages. It is the inverse kind on the base for Basic, C and C#, and the forward kind on the derived type for Ada and Pascal, so a set that treats it as inverse makes those two languages list a class's own base as its derived class. Recorded because the same trap applies to any kind name reused across language parsers.
 - **3.3** The digest binding was verified by replacing the path with a second spelling that resolves to the same file today; both tests still failed. That is the first time this feature's most frequent defect, two artefacts that must agree, was closed by binding rather than by the two happening to agree.
 - **3.3** On this repository 4448 of 6211 routines answer zero callers, but 4106 of those are test functions that genuinely have no project caller because pytest collects them by reflection. The `src/` figure is 342 of 1399. A rule reading these facts without the resolution floor would report most of a working codebase.
+- **4.1** I conflated two Understand figures from task 1.6 onward: 19% and 26% are analysis ACCURACY, the share of files parsed cleanly, while this repository's CALL RESOLUTION measures 43%. The conflation reached the requirement, the design, three task briefings and then the code's own justification. They bound different failures, so requirement 1.8 now names both floors: accuracy bounds whether a file was read, resolution bounds whether its references were understood, and a dead-code claim needs both.
