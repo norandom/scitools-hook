@@ -119,7 +119,7 @@
   - _Requirements: 1.1, 1.3, 1.9, 3.1, 9.7_
   - _Boundary: worker_lean_
 
-- [ ] 3.3 Load the sibling from the worker and record the facts in the snapshot
+- [x] 3.3 Load the sibling from the worker and record the facts in the snapshot
   - The plan carries the two request keys; the sibling is loaded by path once per process and only when a key is set; every routine and class record carries its facts when references are asked, module definitions carry their referenced flag, and nothing is loaded or recorded otherwise; the snapshot cache digest covers both files
   - The extractor asks for references when any reference rule is on, extending the request plan task 2.6 introduced
   - **From task 3.2, and it needs a name nothing has given it yet:** the declaring-class tally that requirement 1.9 depends on is a project-wide fact, not a per-entity one — two classes declaring one method name is a fact about the pair, and neither class can see it. It does not fit the per-entity lean facts and needs ONE project-wide snapshot field of its own, beside the token index. Name it here, record it in the design's model block, and task 4.1 reads it to apply the interface-method exclusion
@@ -131,6 +131,7 @@
 - [ ] 4.1 (P) Dead parameters, classes and module variables
   - Three rules over the after side: a parameter of an affected routine that the routine never references, located at the routine and naming the parameter, unless the routine overrides or the name matches the ignore list; an affected class nothing references unless ignored; an affected file's module variable nothing references unless ignored; a missing fact on any affected record yields the rule's unavailable message and nothing else; a deleted entity cannot appear
   - Done when unit tests cover each finding, the override exclusion, the receiver exclusion by default ignore, the unavailable message, and an unreferenced class in an unaffected file not reported
+  - **Measured on this repository during task 3.3's review, and it is the strongest evidence the floor exists for:** every one of the 16 module bindings in `src/` that the snapshot answers `referenced: false` for is in fact read. Understand recorded no use reference for them because the use sites sit inside regions its analysis errored on, and a controlled two-file probe shows the same constants resolve correctly in a clean parse. That is a **100 per cent false-positive rate** for the unused-variable rule on this repository at this resolution. Requirement 10.5's blind-spot documentation needs it too
   - Apply the resolution floor before reporting anything: below it the rules report nothing and say why once, because a caller count from a partly resolved graph cannot tell "nothing uses this" from "the analyser could not see what uses this" (requirement 1.8). Apply the interface-method exclusion from task 3.2's declaring-class count, which is what catches structural typing where the override exclusion catches nothing (requirement 1.9)
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9_
   - _Boundary: analysis/lean/dead_
@@ -158,6 +159,7 @@
   - _Boundary: worker_lean_
 
 - [ ] 5.2 Record the index in the snapshot when a token rule is on
+  - **Hard constraint, measured twice in task 3.3 and confirmed by its review:** `understand/worker.py` now stands at `CountDeclFunction` **130 against its ceiling of 130**. This task may add NO function to that file. Putting the index on the document is a statement inside the existing build routine and fits; anything needing a new function belongs in the sibling. Raising the ceiling is not available: it would be this tool adapting its own limits to a feature that measures limits
   - The extractor asks for tokens when either token rule is on, extending the request plan task 2.6 introduced; the worker runs the token pass after the entity walk and puts the index on the document; nothing runs otherwise
   - Done when a worker test with tokens off shows no index and with tokens on shows every recorded routine with an end reference in it
   - _Depends: 3.3, 5.1_
@@ -381,3 +383,5 @@ carries them under "The resolution gate".
 - **3.1** The worker sibling may not contain a dataclass. Loaded by path without being registered in `sys.modules`, the decorator raises inside the standard library. Nothing in the type checker or the ordinary suite sees it; the isolated-interpreter test written in task 1.5 to prove a rule fires is what catches it. Tasks 3.3 and 5.1 both add to that file.
 - **3.2** The guard task 3.1's review added, pinning which file decides a caller, did not survive being refactored: task 3.2 generalised that helper, gave it two new consumers, and the reading became swappable again with the whole suite green. Where a helper is generalised, its guards have to be generalised with it, and the discriminating case has to differ per consumer or every reading agrees by construction.
 - **3.2** `derive` is not one direction across languages. It is the inverse kind on the base for Basic, C and C#, and the forward kind on the derived type for Ada and Pascal, so a set that treats it as inverse makes those two languages list a class's own base as its derived class. Recorded because the same trap applies to any kind name reused across language parsers.
+- **3.3** The digest binding was verified by replacing the path with a second spelling that resolves to the same file today; both tests still failed. That is the first time this feature's most frequent defect, two artefacts that must agree, was closed by binding rather than by the two happening to agree.
+- **3.3** On this repository 4448 of 6211 routines answer zero callers, but 4106 of those are test functions that genuinely have no project caller because pytest collects them by reflection. The `src/` figure is 342 of 1399. A rule reading these facts without the resolution floor would report most of a working codebase.

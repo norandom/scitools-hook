@@ -754,5 +754,6 @@
   },
   "parse_errors": [],
   "definitions": [],
+  "method_declarations": null,
   "tokens": null
 }

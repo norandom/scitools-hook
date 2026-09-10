@@ -41,8 +41,9 @@ off the snapshot. A measurement that decided whether a number was too large woul
 policy in the one process that cannot be unit-tested without a licence.
 
 **One more consequence.** `snapshot_cache.worker_digest()` hashes the worker's source so that
-a changed measurement cannot be answered out of the before-side cache. It has to hash this
-file too, or a change confined to the sibling would be served stale.
+a changed measurement cannot be answered out of the before-side cache. It hashes this file too
+-- reading its path from `worker.LEAN_PATH`, so the file hashed is the file the loader runs --
+because a change confined to the sibling would otherwise be served stale.
 """
 
 from __future__ import annotations

@@ -22,7 +22,10 @@ import time
 from pathlib import Path
 from typing import Final
 
+import pytest
+
 from scitools_hook.models.snapshot import EntityKey, EntityRecord, EntityRef, ProjectSnapshot
+from scitools_hook.understand import worker
 from scitools_hook.understand.snapshot_cache import (
     KEEP,
     SnapshotCache,
@@ -119,6 +122,40 @@ def test_the_workers_own_source_is_part_of_the_key(tmp_path: Path) -> None:
     """
     assert a_key().worker == worker_digest()
     assert len(worker_digest()) == 16
+
+
+def test_the_measurement_siblings_source_is_part_of_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A change confined to ``worker_lean.py`` must not be served yesterday's document.
+
+    The sibling holds every lean-code measurement and ``worker.py`` reaches it by path, so a
+    rewritten reference set leaves ``worker.py`` byte-for-byte identical while changing the
+    facts on every record. A digest over the worker alone would answer the same value and the
+    before side would come back out of the cache measured by the code that was replaced --
+    stale with no symptom at all.
+
+    Asserted by pointing the worker's own path constant at a copy and editing the copy, which
+    is the one way to prove the *sibling* is in the digest: the two readings below differ only
+    in that file's text.
+    """
+    copy = tmp_path / "worker_lean.py"
+    copy.write_text(Path(worker.LEAN_PATH).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(worker, "LEAN_PATH", str(copy))
+    before = worker_digest()
+
+    copy.write_text(f"{copy.read_text(encoding='utf-8')}\n# one more measurement\n", "utf-8")
+
+    assert worker_digest() != before
+
+
+def test_an_unreadable_source_misses_rather_than_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The safe direction: a digest nobody can compute must not serve a stored document."""
+    monkeypatch.setattr(worker, "LEAN_PATH", "/nowhere/worker_lean.py")
+
+    assert worker_digest() == "unreadable"
 
 
 def test_the_document_schema_is_part_of_the_key(tmp_path: Path) -> None:

@@ -257,6 +257,16 @@ class FakeEnt:
         """The entity's kind object."""
         return FakeKind(self.kind_path)
 
+    def kindname(self) -> str:
+        """The kind's long name as a string, which is what ``Ent.kindname()`` answers with.
+
+        The API offers both this and ``kind().longname()``, and the worker reads each in one
+        place: the definitions walk asks whether a binding's owner is a *file* by looking for
+        the word ``File`` in this string, because Understand spells the containing kind
+        differently per language.
+        """
+        return self.kind_path
+
     def name(self) -> str:
         """The short name."""
         return self.simple

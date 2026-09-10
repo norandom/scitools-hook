@@ -241,6 +241,32 @@ def test_a_snapshot_carries_its_token_index_through_json() -> None:
     assert again.tokens.vocabulary == ["def"]
 
 
+# --- the declaring-class tally, the family's other project-wide fact (req 1.9) ---------
+
+
+def test_a_snapshot_without_the_declaring_class_tally_says_nothing_about_it() -> None:
+    """``None`` is "the worker was not asked", and the dead-code rules read it as unavailable.
+
+    An empty mapping would be a measurement -- "no class in this project declares any method"
+    -- and a rule meeting it would take every method for a non-interface and report the
+    implementations of every protocol as dead code.
+    """
+    snapshot = ProjectSnapshot(side="after")
+
+    assert snapshot.method_declarations is None
+    assert _round_trip(snapshot) == snapshot
+
+
+def test_a_snapshot_carries_the_declaring_class_tally_through_json() -> None:
+    """A name two classes declare and a name one declares, which is the threshold's shape."""
+    snapshot = ProjectSnapshot(side="after", method_declarations={"run": 2, "only": 1})
+
+    again = _round_trip(snapshot)
+
+    assert again == snapshot
+    assert again.method_declarations == {"run": 2, "only": 1}
+
+
 # --- a document written before this task (req 9.6) ----------------------------------
 
 
@@ -271,6 +297,7 @@ def test_a_snapshot_document_written_before_this_task_still_validates() -> None:
     snapshot = ProjectSnapshot.model_validate(document)
 
     assert snapshot.tokens is None
+    assert snapshot.method_declarations is None
     assert snapshot.entities[KEY].lean is None
     assert snapshot.definitions[0].referenced is None
 

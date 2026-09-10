@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -658,7 +659,14 @@ class _Key:
 
 @dataclass(frozen=True, slots=True)
 class _Plan:
-    """A validated ``snapshot`` request: everything the extraction needs, already checked."""
+    """A validated ``snapshot`` request: everything the extraction needs, already checked.
+
+    The last two fields are the exception to "a request": :attr:`lean` and :attr:`lean_ctx`
+    are *derived* from the two lean keys by :func:`_op_snapshot`, which is the only place
+    that holds both the request and the ``understand`` module the measurements need. They
+    travel here rather than on :class:`_Extractor` because the extraction is one object per
+    run and the plan is what every part of it already reads.
+    """
 
     db: str
     side: str
@@ -677,6 +685,25 @@ class _Plan:
     referenced: bool
     rings: int
     parse_errors: list[dict[str, object]]
+    lean_references: bool = False
+    lean_tokens: bool = False
+    lean: Any = None
+    lean_ctx: Any = None
+
+
+LEAN_FACTS: Final[dict[str, str]] = {"routine": "routine_facts", "class": "class_facts"}
+"""Which sibling measurement answers each scope's facts; a scope absent from it carries none.
+
+A file has neither: no rule of the family asks a question about a file entity, and a record
+without the key reads back as ``LeanFacts`` of ``None``, which is "not asked" (requirement
+1.6). Named here rather than tested for inline so that the question "does this scope have
+lean facts" is asked in exactly one place.
+
+**Function names rather than the functions**, unlike :data:`SYNTHETICS` next door, because the
+sibling is not loaded when this module is imported and may not be: it is executed by path,
+once, and only for a run that asked (requirement 9.4). The name is resolved against the
+loaded module at the one call site, in :meth:`_Extractor._record`.
+"""
 
 
 def _require_bool(request: Mapping[str, object], key: str, default: bool) -> bool:
@@ -804,6 +831,8 @@ def _plan(request: Mapping[str, object]) -> _Plan:
         referenced=_require_bool(request, "record_referenced", False),
         rings=_require_rings(request),
         parse_errors=_require_objects(request, "parse_errors"),
+        lean_references=_require_bool(request, "lean_references", False),
+        lean_tokens=_require_bool(request, "lean_tokens", False),
     )
 
 
@@ -1014,6 +1043,47 @@ def _metric_values(ent: Any, names: Sequence[str]) -> dict[str, float]:
     return values
 
 
+LEAN_PATH: Final = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker_lean.py")
+"""The measurement sibling, addressed as a path because it may not be imported.
+
+``worker_lean.py`` holds every lean-code measurement (design.md, *understand* ->
+*worker_lean*): measured on Build 1262 on 2026-09-10, with the load below in place, this file
+stands at 1 174 of the 1 200 code lines and **130 of the 130 functions** its scope block
+allows, so the next thing that needs a name here does not fit and the measurements never
+would have. A second ``snapshot`` op was the alternative and is worse: it would open the
+database and walk every entity again against a 6.5 s budget. The sibling is reached by path
+rather than by an import statement for the
+reason its own docstring records -- under ``upython`` this package is not on ``sys.path`` at
+all -- and this constant is the single place that path is spelled, so that
+``snapshot_cache.worker_digest`` hashes exactly the file this loader executes.
+"""
+
+_LEAN: dict[str, Any] = {}
+"""The executed sibling, kept for the life of the process rather than per extraction."""
+
+
+def _lean_module() -> Any:
+    """The measurement sibling, executed once per process and answered from a cache after.
+
+    ``spec_from_file_location`` without registering the module in ``sys.modules``, which is
+    the load ``tests/test_import_direction.py`` performs under ``python -I -S`` to prove the
+    file reaches nothing of this package. One consequence is load-bearing and recorded on
+    ``worker_lean.LeanContext``: ``@dataclass`` reads ``sys.modules[cls.__module__].__dict__``
+    and raises under exactly this load, so the sibling holds none.
+
+    Called only when :attr:`_Plan.lean_references` or :attr:`_Plan.lean_tokens` is set, so a
+    run with every lean rule off never reads the file (requirement 9.4).
+    """
+    module = _LEAN.get("module")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("worker_lean", LEAN_PATH)
+        assert spec is not None and spec.loader is not None  # noqa: S101 - a .py path has both
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LEAN["module"] = module
+    return module
+
+
 class _Extractor:
     """One pass over one database, producing the ``ProjectSnapshot`` document (task 6.2).
 
@@ -1063,6 +1133,12 @@ class _Extractor:
             "parse_errors": self.plan.parse_errors,
             "definitions": self._definitions(),
         }
+        # Project-wide and so not a fact any record could hold: two classes declaring one
+        # method name is a fact about the pair, and requirement 1.9 reads it to tell an
+        # interface method from dead code where structural typing leaves no inheritance edge
+        # to detect one by. Written only when asked, beside where task 5.2 writes `tokens`.
+        if self.plan.lean_references:
+            document["method_declarations"] = self.plan.lean.method_declarations(self.class_ents)
         document.update(self._edges())
         return document
 
@@ -1079,6 +1155,12 @@ class _Extractor:
         rather than the entity kind, because Understand gives a class attribute the same kind
         as a module variable in several of the languages it parses, and a field initialised
         in one class is not a scattered definition.
+
+        ``referenced`` carries the same three states :attr:`EntityRecord.referenced` does and
+        is written here even when nothing measured it: ``None`` is what the unused-variable
+        rule reports as unavailable rather than as a project of dead constants (requirement
+        1.6). It is a scalar beside ``value`` rather than an object of its own, which is why
+        it is spelled out where a record's ``lean`` key is left absent.
         """
         if not self.plan.include_definitions:
             return []
@@ -1094,6 +1176,11 @@ class _Extractor:
                         "path": path,
                         "line": ref.line(),
                         "value": _initialiser(ref.file(), ref.line()),
+                        "referenced": (
+                            self.plan.lean.variable_referenced(ent, self.plan.lean_ctx)
+                            if self.plan.lean_references
+                            else None
+                        ),
                     }
                 )
         return sorted(found, key=lambda row: (row["path"], row["line"], row["name"]))
@@ -1391,8 +1478,12 @@ class _Extractor:
         The architectures are those of the container file: ``Db.archs()`` answers with nothing
         for routines and classes (verified), so a routine is located by the file it lives in
         (requirement 9.7).
+
+        The ``lean`` key is **absent** rather than null when no reference rule is on, so a run
+        with the family off produces the document it produced before the family existed (req
+        9.4); the model reads an absent key as the ``None`` of requirement 1.6.
         """
-        return {
+        record: dict[str, object] = {
             "ref": {
                 "key": key.document(),
                 "kind": str(ent.kind().longname()),
@@ -1404,6 +1495,10 @@ class _Extractor:
             "archs": self._nodes_of(key.path),
             "referenced": self._referenced(ent, key.scope),
         }
+        measure = LEAN_FACTS.get(key.scope)
+        if self.plan.lean_references and measure is not None:
+            record["lean"] = getattr(self.plan.lean, measure)(ent, self.plan.lean_ctx)
+        return record
 
     def _populations(self) -> dict[str, dict[str, list[float]]]:
         """The population vectors the request asked for, already ignore-filtered (req 3.4)."""
@@ -1760,8 +1855,16 @@ def _op_snapshot(api: Any, request: Mapping[str, object]) -> dict[str, object]:
     kind string of every scope, the metrics and synthetic metric ids to compute, the ignore
     regexes, the population metrics, and the architecture and depth. Everything is validated
     before the database is opened, and the database is closed before the answer leaves.
+
+    The measurement sibling is loaded here, before the database is opened and only when a
+    lean key asked for it (requirement 9.4), because this is the one place that holds both
+    the validated plan and the ``understand`` module its measurements need to be handed.
     """
     plan = _plan(request)
+    if plan.lean_references or plan.lean_tokens:
+        lean = _lean_module()
+        context = lean.LeanContext(api, _project_path, plan.root)
+        plan = replace(plan, lean=lean, lean_ctx=context)
     db = api.open(plan.db)
     try:
         return _Extractor(db, plan).build()

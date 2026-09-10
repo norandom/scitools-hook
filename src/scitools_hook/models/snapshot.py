@@ -589,6 +589,23 @@ class ProjectSnapshot(DataModel):
     unavailable: dict[str, list[str]] = Field(default_factory=dict)
     parse_errors: list[ParseError] = Field(default_factory=list)
     definitions: list[Definition] = Field(default_factory=list)
+    method_declarations: dict[str, int] | None = None
+    """How many project classes declare each method name, or ``None`` for "not asked".
+
+    **A project-wide fact rather than a per-entity one, which is why it sits here and not on
+    :class:`LeanFacts`**: two classes declaring ``run`` is a fact about the pair, and neither
+    class can see it. Requirement 1.9 reads it as the interface-method exclusion -- a name
+    declared by two or more classes is an interface method under structural typing, which is
+    the only way to see one where no inheritance edge exists. Measured on a 417-file
+    codebase: of 830 naive dead-code candidates exactly one carried an override reference,
+    so the exclusion requirement 1.4 already has detects nothing there.
+
+    Every count is recorded, not only the counts of two and above: the threshold is the
+    rule's, as every other threshold in this document's values is. ``None`` is "not asked",
+    exactly as it is for :attr:`tokens`, and the dead-code rules report themselves
+    unavailable on it rather than reporting every implementation of an interface.
+    """
+
     tokens: TokenIndex | None = None
     """The project's line hashes and routine shapes, or ``None`` for "not asked".
 

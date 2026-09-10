@@ -574,3 +574,67 @@ def test_the_fingerprint_reads_the_same_property_the_request_does(settings: Sett
 
     assert analysis_fingerprint(settings) != analysis_fingerprint(Settings())
     assert asked[0] == asked[1]
+
+
+# --- the reference walk, asked for by five rules (lean-code requirement 9.4) ------
+
+
+REFERENCES_ASKED_BY: Final[tuple[Settings, ...]] = (
+    Settings(lean=LeanRules(unused_parameters="warning")),
+    Settings(lean=LeanRules(unused_classes="warning")),
+    Settings(lean=LeanRules(unused_variables="warning")),
+    Settings(lean=LeanRules(pass_through="warning")),
+    Settings(lean=LeanRules(single_implementation="warning")),
+)
+"""One configuration per rule that needs the per-entity reference walk, each on **alone**.
+
+Alone is the point, as it is for the definitions walk above: it is the configuration where
+one site can disagree with the other and still look right from either end. Five rules and
+not six -- `over_export` is answered from file metrics, `file_edges` and the definitions
+walk, and paying for a `refs` call on every recorded entity to read none of the answers is
+exactly the cost requirement 9.4 forbids.
+"""
+
+
+@pytest.mark.parametrize("settings", REFERENCES_ASKED_BY)
+def test_each_reference_rule_alone_asks_the_worker_for_the_reference_walk(
+    settings: Settings,
+) -> None:
+    assert an_extractor({}, settings).request().lean_references is True
+
+
+def test_an_over_export_only_configuration_asks_for_no_reference_walk() -> None:
+    """The sixth lean rule, and the one that must not turn the walk on."""
+    settings = Settings(lean=LeanRules(over_export="warning"))
+
+    assert an_extractor({}, settings).request().lean_references is False
+
+
+@pytest.mark.parametrize("settings", [Settings(), *REFERENCES_ASKED_BY])
+def test_the_request_asks_for_references_exactly_when_the_settings_want_them(
+    settings: Settings,
+) -> None:
+    """The extractor reads ``LeanRules.wants_references`` rather than spelling it again.
+
+    The fingerprint reads the same property (``config/fingerprint.py``), so a request built
+    from a second reading of the five rules could serve a cached snapshot with no facts in it
+    to a run whose configuration asks for them -- and every affected record would answer
+    ``None``, which the rules report as unavailable. One property, asked twice, cannot drift.
+    """
+    request = an_extractor({}, settings).request()
+
+    assert request.lean_references is settings.lean.wants_references
+    assert request.lean_tokens is False
+
+
+def test_the_token_index_is_not_asked_for_yet() -> None:
+    """Task 5.2 owns the token half of the request; until it lands nothing may ask for it.
+
+    Recorded as an assertion rather than left implicit because the worker's load condition
+    already reads the key: a request that turned it on here would load the sibling for a pass
+    that does not exist and pay for it on every extraction.
+    """
+    settings = Settings(lean=LeanRules(duplicates="warning", similar_routines="warning"))
+
+    assert settings.lean.wants_tokens is True
+    assert an_extractor({}, settings).request().lean_tokens is False

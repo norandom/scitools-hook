@@ -158,15 +158,24 @@ class SnapshotCache:
 
 
 def worker_digest() -> str:
-    """A digest of the worker's own source, so editing it invalidates every document.
+    """A digest of the worker's own source **and its measurement sibling's**.
 
-    Read from the module rather than recorded by hand: a version constant is a thing to forget
-    to bump, and the failure it produces -- yesterday's document served for today's code -- is
-    invisible. A source that cannot be read answers with a value of its own, which misses
-    every time and is the safe direction.
+    Read from the modules rather than recorded by hand: a version constant is a thing to
+    forget to bump, and the failure it produces -- yesterday's document served for today's
+    code -- is invisible. A source that cannot be read answers with a value of its own, which
+    misses every time and is the safe direction.
+
+    **Both files, because both decide what the document says.** ``worker_lean.py`` holds every
+    lean-code measurement and ``worker.py`` reaches it by path, so a change confined to the
+    sibling changes the facts on every record while leaving ``worker.py`` byte-for-byte the
+    same. Hashing the worker alone would serve a cached before-side snapshot built by the
+    measurement that was replaced, which is a stale answer with no symptom. The sibling's
+    path is asked of ``worker`` rather than spelled again here, so that the file hashed is
+    the file ``worker._lean_module`` executes.
     """
     try:
-        return _digest(Path(str(worker.__file__)).read_text(encoding="utf-8"))
+        sources = (Path(str(worker.__file__)), Path(worker.LEAN_PATH))
+        return _digest("\n".join(path.read_text(encoding="utf-8") for path in sources))
     except OSError:
         return "unreadable"
 

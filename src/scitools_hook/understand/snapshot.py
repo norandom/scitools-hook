@@ -106,6 +106,13 @@ class SnapshotExtractor:
             include_definitions=self.settings.wants_definitions,
             record_referenced=self.settings.structure.unused_routines is not None,
             neighbourhood_rings=rings,
+            # Read from `LeanRules.wants_references` for the same reason
+            # `include_definitions` is read from `Settings.wants_definitions`: the
+            # fingerprint decides from that property whether a cached snapshot still
+            # describes this configuration, and the two disagreeing is the defect the
+            # property exists to make unrepeatable. Five rules turn it on and `over_export`
+            # is deliberately not one of them; the property records why.
+            lean_references=self.settings.lean.wants_references,
         )
 
     def wire_request(self, target: SnapshotTarget) -> dict[str, object]:
