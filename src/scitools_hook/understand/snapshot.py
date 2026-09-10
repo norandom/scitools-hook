@@ -98,7 +98,12 @@ class SnapshotExtractor:
             architecture=self.settings.structure.architecture,
             depth=self.settings.structure.depth,
             include_edges=self.include_edges,
-            include_definitions=self.settings.structure.duplicate_definitions is not None,
+            # Which rules need the definitions walk, and what it cost to write the answer out
+            # twice, are recorded on `Settings.wants_definitions`. Read from there and not
+            # spelled again here: `config.fingerprint` decides from the same property whether
+            # a cached snapshot still describes the project, and the two disagreeing is the
+            # defect that property exists to make unrepeatable.
+            include_definitions=self.settings.wants_definitions,
             record_referenced=self.settings.structure.unused_routines is not None,
             neighbourhood_rings=rings,
         )

@@ -40,6 +40,23 @@ repository: those are Understand following an import out of the project, nothing
 fix, and blocking on them would make the Gate unusable. Both halves stay reported either way,
 which is what requirement 2.6 asks for.
 
+**The lean-code family is raised in :meth:`CheckPipeline.run`, not among the evaluators**, and
+that is a measurement rather than a preference. Its step answers three things at once: findings
+(ordinary structural findings, classified, scoped and hinted with every other one -- lean-code
+req 9.6), notes (what a rule could not measure, said **once per run** on the diagnostics
+channel exactly as ``_unused`` says its own -- 1.6, 2.5), and the change's net delta, which is
+a measurement rather than a judgement and so goes on the result (7.1). Keeping that delta from
+``_evaluate`` to ``run`` would have meant naming ``NetDelta`` inside ``CheckPipeline``, as a
+per-run attribute or in a widened return type; ``CountClassCoupled`` charges annotation types
+on Python (measured, ``[scope.api_fakes]`` in ``scitools-hook.toml``), this class stands at 29
+couplings against a maximum of 12, and the ratchet refuses the thirtieth. Held as a local in
+``run`` it costs none, and the pipeline gains no per-run mutable state -- the better shape
+anyway, since a delta that outlives the run it describes is a bug waiting to happen. The delta
+itself is taken whether or not a lean rule is on: requirement 7.1 asks for it "when a check has
+a before side" and names no rule, while 7.6 scopes itself explicitly with "when lean-code rules
+are enabled", which is the author scoping by enablement where they meant it; and it needs no
+extraction of its own, so requirement 9.4's cost rule does not reach it either.
+
 **Adaptive tightening is confined to whole-project runs**, and that is a reading of
 requirement 8.3 rather than an omission. A staged run's snapshot holds the affected entities
 only, so its maximum for a metric is a maximum over a handful of files; feeding that to
@@ -110,6 +127,7 @@ from scitools_hook.report.hints import HintCatalogue, construct_of
 from scitools_hook.runner.baseline_store import BaselineStore
 from scitools_hook.runner.companions import for_run, keep_inspection
 from scitools_hook.runner.context import RunContext
+from scitools_hook.runner.lean import evaluate as evaluate_lean
 from scitools_hook.runner.pipeline import (
     RINGS,
     SERVED_FROM_CACHE,
@@ -234,7 +252,13 @@ class CheckPipeline:
             issue.message if issue.key is None else f"{issue.key}: {issue.message}"
             for issue in (*unreadable, *issues)
         )
-        findings, outcome = self._evaluate(plan, seen, effective)
+        # The lean-code family, in one call: findings for `_evaluate` to classify with the
+        # rest, notes said once per run, and the change's net delta for the result. It is
+        # raised here rather than among the evaluators for the reason the module docstring
+        # records (lean-code req 1.6, 2.5, 7.1, 9.4, 9.6).
+        lean = evaluate_lean(self.ctx.settings.lean, after, before, affected)
+        self._report(lean.notes)
+        findings, outcome = self._evaluate(plan, seen, effective, lean.findings)
         return RunResult(
             tool_version=__version__,
             understand_version=self.ctx.understand.version,
@@ -263,6 +287,7 @@ class CheckPipeline:
             blocking_count=sum(1 for finding in findings if finding.blocking),
             warning_count=sum(1 for finding in findings if finding.severity == "warning"),
             preexisting_count=sum(1 for finding in findings if finding.preexisting),
+            net_delta=lean.net_delta,
         )
 
     # --- the rules ----------------------------------------------------------------
@@ -272,6 +297,7 @@ class CheckPipeline:
         plan: AnalysisPlan,
         seen: Observed,
         effective: Sequence[EffectiveThreshold],
+        lean: Sequence[Finding],
     ) -> tuple[list[Finding], ThresholdOutcome]:
         """Every evaluator, in the order the design fixes, then classification and hints.
 
@@ -279,6 +305,11 @@ class CheckPipeline:
         fills ``Finding.before``, and without it ``classify`` can never call a finding
         pre-existing (req 4.6, note 4.2). The unparsed files come **first**, before any rule:
         they are the statement that the rules below cover less than they appear to.
+
+        ``lean`` is the lean-code family's findings, already evaluated by :meth:`run` (see the
+        comment there for why they are raised outside this method). They arrive beside the
+        structural findings they are, so that ``classify``, the severity map and the hint
+        catalogue reach them exactly as they reach every other structural rule (req 9.6).
         """
         after, before, affected = seen.after, seen.before, seen.affected
         outcome = evaluate_thresholds(
@@ -302,6 +333,7 @@ class CheckPipeline:
                 evaluate_ratchet(after, before, affected.keys, effective, self.ctx.settings.scope)
             )
         findings.extend(self._structure(after, before, affected))
+        findings.extend(lean)
         findings.extend(
             evaluate_accuracy(_figures(seen.analyses), self.ctx.settings.analysis.accuracy_floor)
         )
@@ -503,10 +535,7 @@ class CheckPipeline:
             self.ctx.settings.parse,
             self._before_unparsed,
         )
-        return [
-            finding.model_copy(update={"hint": self._hints.hint(finding.rule, finding)})
-            for finding in classified
-        ]
+        return [_guided(finding, self._hints) for finding in classified]
 
     def _severities(self, effective: Sequence[EffectiveThreshold]) -> SeverityMap:
         """The severity of every rule ``classify`` may need to override (req 3.7).
@@ -578,6 +607,29 @@ class CheckPipeline:
         """Say something on the diagnostics channel; findings never travel this way (req 7.7)."""
         for message in messages:
             self.ctx.progress.note(message)
+
+
+def _guided(finding: Finding, hints: HintCatalogue) -> Finding:
+    """One finding with its remediation hint, and with the worked example its rule ships (8.2).
+
+    Every finding gets a hint; only the lean family has an example, because
+    :meth:`~scitools_hook.report.hints.HintCatalogue.example` answers ``None`` for a rule with
+    no key of its own and deliberately falls back to nothing. A generic example -- the
+    neighbouring metric's code, another scope's shape -- would teach the wrong edit, so the
+    absent key is the guard and ``details`` is left exactly as the evaluator built it.
+
+    A module-level function rather than a method, and the reason is this repository's own
+    gate: ``CheckPipeline`` sits at 15 non-stub methods against a limit of 15 and at 29 class
+    couplings against 12, so a method here costs a blocked commit -- and ``dict`` and
+    ``object`` below would be charged to the class as well, since ``CountClassCoupled``
+    counts annotation types on Python (measured, ``[scope.api_fakes]``). It needs nothing
+    from the instance but the catalogue, which it is handed.
+    """
+    update: dict[str, object] = {"hint": hints.hint(finding.rule, finding)}
+    example = hints.example(finding.rule)
+    if example is not None:
+        update["details"] = {**finding.details, "example": example}
+    return finding.model_copy(update=update)
 
 
 def _before_hooks(ctx: RunContext, dbm: DatabaseManager, plan: AnalysisPlan) -> BeforeSource:

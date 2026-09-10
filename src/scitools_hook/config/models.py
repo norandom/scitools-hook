@@ -952,6 +952,29 @@ class Settings(StrictModel):
             return threshold_entries(value)
         return value
 
+    @property
+    def wants_definitions(self) -> bool:
+        """Whether any rule needs the worker's module-level definitions walk.
+
+        Two rules do, and they live in different sections, which is why this sits on
+        ``Settings`` rather than beside ``LeanRules.wants_references`` and ``wants_tokens``:
+        ``structure.duplicate_definitions`` compares one value written out in many files, and
+        ``lean.over_export`` needs the same walk to tell "one routine and nothing else" from
+        "one routine beside a module constant".
+
+        **It is a property rather than an expression at each site because the two sites
+        disagreeing is a defect this project has already shipped.** The extractor builds the
+        request and the fingerprint decides whether a cached snapshot still describes the
+        project; with the fingerprint keyed on the disjunction and the request keyed on the
+        duplicate rule alone, an over-export-only configuration got a *fresh* snapshot with no
+        definitions in it, the rule's module-level-binding guard saw nothing, and every
+        candidate file with a constant beside its one routine became a finding. Written out
+        twice, the two agreed on the day they were written and nothing afterwards; a seventh
+        rule needing the walk would have to be remembered in both places. Read from here, it
+        cannot be remembered in only one.
+        """
+        return self.structure.duplicate_definitions is not None or self.lean.over_export is not None
+
 
 class Provenance(StrictModel):
     """Dotted key -> source: ``default``, ``user:<path>``, ``repo:<path>``, ``env:<VAR>``, ``cli``.

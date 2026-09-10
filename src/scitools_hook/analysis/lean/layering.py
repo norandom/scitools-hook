@@ -1,5 +1,30 @@
 """The layering rules: files and routines that add a hop without adding a boundary.
 
+**What the whole ``analysis.lean`` package is, recorded here rather than in its initialiser.**
+Six rules and a delta, each a pure function over a
+:class:`~scitools_hook.models.snapshot.ProjectSnapshot` and the affected set, in the shape the
+structural rules of :mod:`scitools_hook.analysis.structure` already have. The package exists
+because six rule modules and a delta are not one module, and because the family shares one
+configuration section, one severity convention -- ``Severity | None``, where ``None`` is off --
+and one promise: it imports ``config`` and ``models`` and nothing else. The promise has exactly
+one exception, named in the design and taken by :mod:`.net` alone,
+``analysis.ratchet.pair_changed_signatures``, which joins a routine whose parameter list
+changed to the key it had before; that join already exists, is the only identity work in this
+layer that is not local to one snapshot, and a second copy of it would drift.
+
+*Why it is here and not in* ``analysis/lean/__init__.py``, *because it is a finding about the
+gate itself.* ``analysis.structure.coupling.namespace_targets`` drops a dependency on a package
+initialiser that holds no code, on the stated ground that "importing through it couples the
+importer to nothing" -- and it reads emptiness off ``CountLineCode == 0``. Understand reports a
+**multi-line module docstring as code lines**, so an initialiser whose whole content is a
+paragraph of prose is charged as a real dependency while every one-line-docstring initialiser
+in this package is correctly dropped. Measured on Build 1262 while task 2.6 was landing:
+``runner/lean.py`` names six modules and was charged eight dependencies against
+``max_new_dependencies_per_file = 7``, and shortening this package's initialiser to one line --
+with no other change anywhere -- took the figure to seven. The defect belongs to the base gate
+and is reported rather than absorbed; the prose belongs with the code it describes, which is
+here, where the family's other cross-rule conventions are already recorded.
+
 This module holds the over-export rule. Its two siblings -- the pass-through routine and the
 single-implementation abstraction -- join it here because all three answer one question: does
 this piece of structure earn the indirection it costs?

@@ -29,8 +29,16 @@ from pydantic import ValidationError
 from test_api_runner import real_env
 
 from scitools_hook.config.defaults import default_settings
+from scitools_hook.config.fingerprint import analysis_fingerprint
 from scitools_hook.config.metric_names import SCOPE_KINDS, Scope
-from scitools_hook.config.models import IgnoreRules, Limit, Settings, StructureRules, ThresholdSpec
+from scitools_hook.config.models import (
+    IgnoreRules,
+    LeanRules,
+    Limit,
+    Settings,
+    StructureRules,
+    ThresholdSpec,
+)
 from scitools_hook.errors import AnalysisFailedError, ArchitectureNotFoundError, ConfigError
 from scitools_hook.models.progress import NullCommandLog
 from scitools_hook.models.snapshot import ParseError
@@ -494,3 +502,75 @@ def test_a_root_that_names_no_file_of_the_database_is_a_configuration_error(
 
     with pytest.raises(ConfigError):
         real_extractor().extract(wrong)
+
+
+# --- the definitions walk, asked for by two rules ---------------------------------
+
+
+def test_the_definitions_walk_is_asked_for_by_the_duplicate_definition_rule() -> None:
+    settings = Settings(structure=StructureRules(duplicate_definitions=3))
+
+    assert an_extractor({}, settings).request().include_definitions is True
+
+
+def test_the_over_export_rule_alone_asks_for_the_definitions_walk() -> None:
+    # The live gap task 2.1's review found. `structure.over_export` reads
+    # `snapshot.definitions` to tell "one routine and nothing else" from "one routine beside
+    # a module constant", and the fingerprint already treats the rule as a cache key -- so a
+    # request built from `duplicate_definitions` alone serves the rule a FRESH snapshot with
+    # no definitions in it, its module-level-binding guard sees nothing, and every candidate
+    # file with a constant beside its one routine becomes a finding.
+    settings = Settings(lean=LeanRules(over_export="warning"))
+
+    assert settings.structure.duplicate_definitions is None
+    assert an_extractor({}, settings).request().include_definitions is True
+
+
+def test_a_configuration_that_needs_no_definitions_does_not_walk_them() -> None:
+    settings = Settings()
+
+    assert settings.structure.duplicate_definitions is None
+    assert settings.lean.over_export is None
+    assert an_extractor({}, settings).request().include_definitions is False
+
+
+DEFINITIONS_ASKED_BY: Final[tuple[Settings, ...]] = (
+    Settings(structure=StructureRules(duplicate_definitions=3)),
+    Settings(lean=LeanRules(over_export="warning")),
+)
+"""One configuration per rule that needs the definitions walk, each on **alone**.
+
+Alone is the point: it is the configuration where one site can disagree with the other and
+still look right from either end.
+"""
+
+
+@pytest.mark.parametrize("settings", [Settings(), *DEFINITIONS_ASKED_BY])
+def test_the_request_asks_for_the_definitions_walk_exactly_when_the_settings_want_it(
+    settings: Settings,
+) -> None:
+    """The extractor reads ``Settings.wants_definitions`` rather than spelling it again.
+
+    Without this the request and the property can drift apart silently: the two tests above
+    pin the answer for the two rules that exist today, and a seventh rule added to the
+    property alone would leave both of them green.
+    """
+    assert an_extractor({}, settings).request().include_definitions is settings.wants_definitions
+
+
+@pytest.mark.parametrize("settings", DEFINITIONS_ASKED_BY)
+def test_the_fingerprint_reads_the_same_property_the_request_does(settings: Settings) -> None:
+    """Either rule alone changes the analysis fingerprint, and both change it identically.
+
+    The fingerprint hashes its payload, so the ``definitions`` key cannot be read back; what
+    can be read is that these two configurations differ from the default in *nothing else* --
+    neither rule appears in the payload under its own name, and ``over_export`` is not one of
+    the rules ``wants_references`` covers -- so equal fingerprints here mean both rules turned
+    the same key on, and a fingerprint equal to the default's would mean one of them turned
+    nothing on and a snapshot recorded without the walk would be served to a rule that needs
+    it. That is the cache half of the defect the property exists to prevent.
+    """
+    asked = [analysis_fingerprint(each) for each in DEFINITIONS_ASKED_BY]
+
+    assert analysis_fingerprint(settings) != analysis_fingerprint(Settings())
+    assert asked[0] == asked[1]

@@ -63,10 +63,7 @@ def analysis_fingerprint(settings: Settings) -> str:
         "architecture_file": _text(settings.structure.architecture_file),
         "architecture_options": dict(sorted(settings.structure.architecture_options.items())),
         "depth": settings.structure.depth,
-        "definitions": (
-            settings.structure.duplicate_definitions is not None
-            or settings.lean.over_export is not None
-        ),
+        "definitions": settings.wants_definitions,
         "lean_references": settings.lean.wants_references,
         "lean_tokens": settings.lean.wants_tokens,
         "ignore": {
