@@ -80,6 +80,22 @@ def a_routine(name: str, container: FakeEnt, **fields: object) -> FakeEnt:
     )
 
 
+def a_parameter(name: str, container: FakeEnt) -> FakeEnt:
+    """One declared parameter, as ``Ent.ents("Define", "Parameter ~Catch")`` answers with.
+
+    Written in the file the routine is written in, which is what Understand records: a
+    parameter's ``definein`` names the file rather than the routine.
+    """
+    return FakeEnt(
+        qualified=name,
+        kind_path=f"{container.lang.lower()} Parameter",
+        simple=name.rsplit(".", 1)[-1],
+        lang=container.lang,
+        container=container,
+        line_no=9,
+    )
+
+
 def a_class(name: str, container: FakeEnt, **fields: object) -> FakeEnt:
     """A class defined in ``container``."""
     return FakeEnt(
@@ -204,19 +220,19 @@ def _fake_routines(
         "app.build_parser",
         app,
         values={"CyclomaticStrict": 7, "MaxNesting": 4, "CountLineCode": 17, "CountParams": None},
-        declared_params=1,
+        param_ents=[a_parameter("build_parser.argv", app)],
     )
     wrap_lines = a_routine(
         "text.wrap_lines",
         text,
         values={"CyclomaticStrict": 1, "MaxNesting": 0, "CountLineCode": 2, "CountParams": None},
-        declared_params=2,
+        param_ents=[a_parameter(f"wrap_lines.{name}", text) for name in ("text", "width")],
     )
     clamp = a_routine(
         "clamp",
         native,
         values={"CyclomaticStrict": 3, "MaxNesting": 1, "CountLineCode": 9, "CountParams": None},
-        declared_params=3,
+        param_ents=[a_parameter(f"clamp.{name}", native) for name in ("value", "low", "high")],
     )
     stub = a_routine("builtins.abs", injected, lib="Standard")
     # An out-of-root header Understand parses without marking it a library: the entity is

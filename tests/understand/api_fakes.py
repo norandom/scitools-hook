@@ -49,10 +49,20 @@ class FakeKind:
         the part of Understand's filter grammar the worker uses; verified against the real
         API for the strings it passes (``'definein'`` matches ``'Python Definein'`` and not
         ``'Python Callby Possible'``).
+
+        **A word prefixed with ``~`` must be absent**, which is the other half of that
+        grammar and the half every kind string in this project's configuration uses --
+        ``SCOPE_KINDS`` asks for ``function ~unknown ~unresolved`` so that an unresolved call
+        target is not counted as a routine. A fake that read ``~unresolved`` as an ordinary
+        word would answer *no match* for every kind, since no kind has a word beginning with
+        a tilde, and a caller filtering call targets would silently measure nothing at all.
         """
         words = self.path.lower().split()
         return any(
-            all(word in words for word in alternative.lower().split())
+            all(
+                (word[1:] not in words) if word.startswith("~") else (word in words)
+                for word in alternative.lower().split()
+            )
             for alternative in kindstring.split(",")
         )
 
@@ -64,16 +74,23 @@ class FakeRef:
     ``forward`` is Understand's ``isforward``: false for the second half of every pair
     (``use`` versus ``useby``), which is how the impact walk tells a referencer from a
     reference this entity makes.
+
+    ``in_file`` is the file the reference is *written in*, which is a different question from
+    the entity at its other end and is the one a "project reference" is decided by. It
+    defaults to that entity, because the reference tests that came first hand ``refs_by`` the
+    referencing **file** and read ``file()`` back; a reference whose far end is a routine has
+    to say where the call site is, and that is what this field is for.
     """
 
     target: FakeEnt
     line_no: int | None = None
     kind_path: str = "python Definein"
     forward: bool = False
+    in_file: FakeEnt | None = None
 
     def file(self) -> FakeEnt:
-        """The file entity this reference names."""
-        return self.target
+        """The file the reference is written in, defaulting to the entity at its far end."""
+        return self.target if self.in_file is None else self.in_file
 
     def line(self) -> int | None:
         """The line the reference sits on."""
@@ -179,12 +196,28 @@ class FakeEnt:
     lib: str = ""
     container: FakeEnt | None = None
     line_no: int | None = None
-    declared_params: int = 0
+    param_ents: list[FakeEnt] = field(default_factory=list)
+    """The parameters ``Ent.ents("Define", "Parameter ~Catch")`` answers with, in order.
+
+    Entities rather than a count, because two callers ask two questions of the same list:
+    ``worker._count_params`` wants how many there are and ``worker_lean.routine_facts`` wants
+    each one's name and its own references. A count field beside them would be a second
+    answer to the first question with nothing keeping the two in step.
+    """
     deps: dict[FakeEnt, list[object]] = field(default_factory=dict)
     deps_by: dict[FakeEnt, list[object]] = field(default_factory=dict)
     refs_by: list[FakeEnt] = field(default_factory=list)
     refs_by_kind: str = "python Callby"
     refs_to: list[FakeEnt] = field(default_factory=list)
+    refs_extra: list[FakeRef] = field(default_factory=list)
+    """References spelled out in full, added to the ones the shorthand fields above build.
+
+    The shorthands each fix a kind and let ``file()`` fall back to the entity at the far end,
+    which is all a walk over files needs. A reference between two *routines* has three
+    independent parts -- the routine at the other end, the kind, and the file the call site
+    is written in -- and a fake that could not vary them separately would let a measurement
+    read the callee where it meant the call site's file and pass.
+    """
     members: list[FakeEnt] = field(default_factory=list)
     source: str | None = None
     tokens: Sequence[tuple[str, str, int]] | None = None
@@ -290,8 +323,9 @@ class FakeEnt:
         return None if self.container is None else FakeRef(self.container, self.line_no)
 
     def ents(self, refkinds: str, entkinds: str) -> list[FakeEnt]:
-        """The entities reached by ``refkinds``; only the count of parameters is read."""
-        return [FakeEnt() for _ in range(self.declared_params)]
+        """The entities reached by ``refkinds``; the only query made of it is a routine's
+        parameters, so both filters are accepted and :attr:`param_ents` is the answer."""
+        return list(self.param_ents)
 
     def refs(self, refkinds: str = "") -> list[FakeRef]:
         """The references of ``refkinds``, both directions, as ``Ent.refs()`` returns them.
@@ -313,6 +347,7 @@ class FakeEnt:
         found.extend(FakeRef(ent, None, "python Define", True) for ent in self.members)
         found.extend(FakeRef(ent, None, "python Call", True) for ent in self.refs_to)
         found.extend(FakeRef(ent, None, self.refs_by_kind, False) for ent in self.refs_by)
+        found.extend(self.refs_extra)
         return [ref for ref in found if not refkinds or ref.kind().check(refkinds)]
 
     def id(self) -> int:

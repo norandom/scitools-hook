@@ -106,7 +106,7 @@
   - _Boundary: runner/lean, CheckPipeline, Snapshot request and feature probes_
 
 - [ ] 3. Reference-based measurement in the worker sibling
-- [ ] 3.1 Routine facts: callers, callees, forwarding target, overrides and unused parameters
+- [x] 3.1 Routine facts: callers, callees, forwarding target, overrides and unused parameters
   - Distinct project routines calling and called by a routine, the callee's long name when there is exactly one, whether the routine overrides, and the names of parameters no project reference uses, sets or modifies
   - Done when unit tests over the API fakes show a parameter used only through a set counted as used, a receiver counted as unused by the worker (the exclusion is the rule's), a caller in an excluded path not counted, and an overriding routine flagged
   - _Requirements: 1.2, 1.3, 1.4, 2.1, 2.3, 9.7_
@@ -376,3 +376,5 @@ carries them under "The resolution gate".
 - **2.4** Requirement 7.1 prints the net delta whenever a check has a before side, with no condition on the lean rules being enabled. Task 2.6's acceptance line said an all-off configuration must produce a run result identical to today's, which contradicts it. Requirement wins; 2.6's line is amended.
 - **2.5** Requirement 8.2 had a half nobody owned: the worked example renders at a verbosity the command line cannot produce, and task 7.1 listed the requirement while its acceptance text covered only the JSON half. A requirement id in a task's `_Requirements:` line is not coverage; the acceptance text is what gets built.
 - **2.6** Two artefacts that must agree, with nothing binding them, is now this feature's most frequent defect: the hints and the snippet quoting them, the promised net line and the printed one, and the definitions predicate written out in the fingerprint and the extractor. The third instance was the recurrence guard for the defect the task was closing. Where two places must answer the same question, one of them should ask the other.
+- **3.1** An accepted error, recorded so task 4.2 inherits it rather than rediscovering it: a routine called once from another routine and once from module scope measures ONE caller, because a file is not a routine, and so satisfies the pass-through predicate exactly. The rule will report a routine that two places call. Carrying the callers themselves instead of a count fixes it, and is the same change requirement 2.1's "naming the caller" already needs, so 4.2 can settle both at once.
+- **3.1** The worker sibling may not contain a dataclass. Loaded by path without being registered in `sys.modules`, the decorator raises inside the standard library. Nothing in the type checker or the ordinary suite sees it; the isolated-interpreter test written in task 1.5 to prove a rule fires is what catches it. Tasks 3.3 and 5.1 both add to that file.
