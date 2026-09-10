@@ -112,7 +112,7 @@
   - _Requirements: 1.2, 1.3, 1.4, 2.1, 2.3, 9.7_
   - _Boundary: worker_lean_
 
-- [ ] 3.2 Class facts and module-variable use
+- [x] 3.2 Class facts and module-variable use
   - For a class: whether anything in the project references it, the long names of its derived classes across the inheritance kinds of every language, and the count of project entities referencing it other than itself, its members, its derived classes and their members; for a module-level variable: whether any project reference uses it, including a use as a type
   - Done when unit tests show a class used only in an annotation counted as referenced, a base with one derived class and no other referrer, and a variable read from another module counted as used
   - Also record, per method name, how many project classes declare it. A name declared on two or more classes is an interface method under structural typing, which is the only way to see one when no inheritance edge exists (requirement 1.9). Measured on a 417-file codebase: of 830 naive dead-code candidates exactly one carried an override reference, so inheritance alone detects nothing there

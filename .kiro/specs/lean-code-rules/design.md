@@ -266,7 +266,7 @@ flowchart TD
 | 1.6 | not measured reported once | runner/lean | `LeanOutcome.unavailable` | check flow |
 | 1.7 | deleted entities never reported | dead (after-side records only) | | |
 | 1.8 | resolution floor before any dead-code finding | runner/lean, `CallResolution` | `lean.resolution_floor` | check flow |
-| 1.9 | interface methods excluded without an inheritance edge | worker_lean.class_facts, dead | declaring-class count per method name | |
+| 1.9 | interface methods excluded without an inheritance edge | worker_lean.method_declarations, dead | declaring-class count per method name | |
 | 1.10 | each dead-code rule measured on two repositories before shipping enabled | tasks 6.3, 6.4 | | |
 | 2.6 | pass-through gated on the same floor | runner/lean | `CallResolution` | |
 | 2.1 | pass-through with caller and callee named | layering | `LeanFacts.callers/callees/forwards_to`, `pass_through_max_statements` | layering flow |
@@ -473,7 +473,7 @@ REFERENCE_KINDS = (                                              # what counts a
 CALLER_KINDS = "callby"
 CALLEE_KINDS = "call"
 OVERRIDE_KINDS = "overrides"
-DERIVED_KINDS = "derive, inheritby, extendby, implementby"        # contract test decides Java's couple kinds
+DERIVED_KINDS = "derive, inheritby, extendby, implementby"        # 6.1 decides Java, Ada, Pascal
 PARAMETER_KINDS = "parameter ~catch"
 PARAMETER_USE = "useby, setby, modifyby, callby"                 # a called parameter is used
 
@@ -517,6 +517,23 @@ def routine_facts(ent, ctx: LeanContext) -> dict[str, object]:
 # And the fix has a cost: `unused_class` can now never reach a base class that has any
 # subclass, including an abstract base whose whole subtree is dead. That is accepted as the
 # cheaper error than two rules contradicting each other on one class.
+#
+# **`derive` is not one direction, and for two languages these sets read inverted** (task
+# 3.2's review, read off the installed kind documentation rather than measured). The kind
+# list carries `Derive` in two different pairs: `Base (Derive)` for Basic, C/C++ and C#,
+# where `Derive` is the inverse recorded ON THE BASE and naming the derived type -- the
+# reading above, measured on C++ by task 1.7 -- and `Derive (Derivefrom)` for ADA and PASCAL,
+# where `Derive` is the FORWARD reference a derived type carries to its base. For those two
+# languages `derived` therefore lists a class's own base, which is the effect excluding
+# `base` prevents elsewhere, and `single_implementation` would name the wrong end; Pascal is
+# affected twice, since it also carries `Inherit (Inheritby)`. Neither language is in the
+# contract project, so nothing can measure the correction here and the candidates --
+# qualifying the string by language, or reading `derivefrom` where the pair is inverted --
+# are spellings this machine cannot verify. Task 6.1 owns the decision with the rest of the
+# per-language kind table. Two counts corrected in the same reading: `Extendby` is offered
+# for Fortran and Web only and `Implementby` for Basic, C#, Pascal, Rust, VHDL and Web, with
+# Objective-C carrying its own `ObjC Extendby` / `ObjC Implementby` pairs under the C
+# section -- NEITHER is offered for C or C++ itself.
 
 def class_facts(ent, ctx: LeanContext) -> dict[str, object]:
     """{'referenced': bool, 'derived': list[str], 'referrers': int} -- derived are the
@@ -539,6 +556,30 @@ def variable_referenced(ent, ctx: LeanContext) -> bool:
     decision. A variable that something assigns and nothing reads is dead too, and this is
     also how Understand defines its own `CountUnusedVariable` -- declare, initialise and
     assign all count as writes, so a write-only variable counts as unused there as well.
+    """
+
+MEMBER_KINDS = "define, declare"                 # == worker.MEMBER_REFS, bound by a test
+
+def method_declarations(classes: Mapping[str, tuple[Any, str]]) -> dict[str, int]:
+    """{method name: how many project classes declare it} -- the whole project, one entry per
+    distinct name, counted once per class however many times that class declares it.
+
+    **A function of its own over the extractor's `class_ents` map rather than a key in
+    `class_facts`, and task 3.2 chose that shape deliberately.** Two classes declaring `run`
+    is a fact about the pair: neither class can see it, and a per-entity document carrying
+    half of it would have to be re-joined by every reader. It takes the extractor's map for
+    the same reason `token_index` does -- the walk has already collected every project class,
+    and `_remember` keeps them for the whole project rather than for the requested files, so
+    the tally is whole-project without a second query. It needs no `LeanContext`: every entity
+    in that map is already a located project class, so a second project test would be a guard
+    no case can make fail.
+
+    Every count is recorded, not only the counts of two and above: requirement 1.9's threshold
+    belongs to the rule that applies it, as every other threshold over this file's output does.
+
+    **This does not fit `LeanFacts`**, which is per entity: it lives on the snapshot as
+    `ProjectSnapshot.method_declarations`, filled in `_Extractor.build` beside `tokens`. Task
+    3.3 adds the field and the call; task 4.1 applies the threshold of two.
     """
 
 def token_index(file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, str]],
@@ -568,7 +609,7 @@ def token_index(file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, 
 - Idempotency: pure over the database.
 
 **Implementation Notes**
-- Integration: `worker._record` adds `"lean": lean.routine_facts(...)` for routines and `class_facts` for classes when `plan.lean_references`, else `None`; `_definitions` adds `"referenced"`; `build` adds `"tokens"` when `plan.lean_tokens`. `snapshot_cache.worker_digest()` hashes both files.
+- Integration: `worker._record` adds `"lean": lean.routine_facts(...)` for routines and `class_facts` for classes when `plan.lean_references`, else `None`; `_definitions` adds `"referenced"`; `build` adds `"method_declarations": lean.method_declarations(self.class_ents)` when `plan.lean_references` and `"tokens"` when `plan.lean_tokens`. `snapshot_cache.worker_digest()` hashes both files.
 - Validation: `tests/understand/test_worker_lean.py` with `FakeLexer`/`FakeLexeme` added to `api_fakes.py`; `tests/test_import_direction.py` gains the sibling with an empty allowance, the parse test, and an isolated-interpreter load test.
 - Risks: caller undercount under unresolved calls (recorded in `research.md`); Java inheritance kinds unverified; the token pass cost is measured by the contract cost test against the 6.5 s bound.
 
@@ -626,6 +667,7 @@ class TokenIndex(DataModel):
 class ProjectSnapshot(DataModel):
     ...
     tokens: TokenIndex | None = None       # None: not asked
+    method_declarations: dict[str, int] | None = None   # None: not asked (req 1.9)
 
 class NetDelta(DataModel):                 # models/change.py
     statements: int
@@ -636,6 +678,7 @@ class RunResult(DataModel):
     ...
     net_delta: NetDelta | None = None      # None: no before side
 ```
+- `method_declarations` is project-wide and NOT a `LeanFacts` field: the count is a fact about a pair of classes, so no per-entity record can hold it (task 3.2). It is filled from `worker_lean.method_declarations(self.class_ents)` in `_Extractor.build` whenever `plan.lean_references` is set, beside `tokens`, and `analysis/lean/dead` reads it for requirement 1.9's interface-method exclusion. Task 3.3 adds the field and the call; task 4.1 applies the threshold of two.
 - `StructureRuleName` gains `unused_parameter`, `unused_class`, `unused_variable`, `pass_through`, `single_implementation`, `over_export`, `duplicate_block`, `similar_routine`, `net_growth`.
 - `schema_version` stays 2: additive fields, per the policy in `report/json_out.py`.
 
@@ -664,8 +707,11 @@ code:
 
 2. **An interface-method exclusion that does not need an inheritance edge.** A method name
    declared on two or more project classes is an interface method under structural typing,
-   whether or not any `Overrides` or inheritance reference exists. `class_facts` must record
-   the declaring-class count per method name so `dead` can apply it.
+   whether or not any `Overrides` or inheritance reference exists. `worker_lean` must record
+   the declaring-class count per method name so `dead` can apply it. It is `method_declarations`
+   that records it and not `class_facts`: the count is a fact about a *pair* of classes, so it
+   is a project-wide tally carried once on the snapshot rather than a per-entity field (task
+   3.2).
 
 The same evidence reorders the family's value. **Duplication needs no reference resolution at
 all**: on the same codebase, token-based detection finds 76 exact 12-line windows and 51
