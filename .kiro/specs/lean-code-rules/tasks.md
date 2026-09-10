@@ -99,6 +99,7 @@
   - One step that runs each lean rule whose severity is set, gathers their unavailable messages, computes the delta, and hands findings, notes and delta to the pipeline; findings go through scopes, ignores, the severity map and hints like any structural finding; notes are printed once per run; the delta lands on the run result; a rule that is off adds nothing
   - The extractor asks for module-level definitions whenever the over-export rule is on, so the rule has them without a second request. **Found in task 2.1's review and it is a live gap, not tidiness:** the fingerprint already keys on the disjunction, so a stale snapshot cannot be served, but the extractor still sets `include_definitions` from the duplicate-definitions setting alone. With over-export on and duplicate definitions off, a FRESH snapshot carries no definitions, the rule's module-level-binding guard sees nothing, and every candidate file with a constant beside its one routine becomes a false positive. Land it with a test that an over-export-only configuration produces a request with definitions on
   - The pipeline's finishing step attaches the catalogue's example to every lean finding's details, beside the hint it already attaches
+  - **From task 2.2's review:** the net-growth finding carries a project scope with an EMPTY path, matching how the accuracy finding is built. Confirm with a test that an empty path survives the `[ignore]` patterns and the scope overrides in the finishing step: a path matcher meeting an empty string is exactly where a rule silently disappears or matches everything
   - Done when a pipeline test with a fixture snapshot shows over-export and the delta in the run result, the example in the finding's details, and an all-off configuration producing a run result identical to today's
   - _Depends: 2.1, 2.2, 2.3, 2.5_
   - _Requirements: 1.6, 2.5, 7.1, 9.4, 9.6_
@@ -241,6 +242,7 @@
 - [ ] 8. Documentation (Requirement 10 mandates it; the code-only rule yields to the requirement, as the previous specification's plan did)
 - [ ] 8.1 (P) The rules reference, the feature list and the CLI reference
   - Every lean rule with what it reports, what it does not, its default and the measurement behind it; the per-language blind spots of reference-based detection beside the routine rule's; the feature-list rows; the doctor rows and the net line in the CLI page
+  - **From task 2.2's review:** requirement 7.2 says deleted files count as negative contributions, and the delta measures routines only, so a deleted file that held no routines reads as a net of zero. That follows the design exactly and is broader than the requirement's wording, so the documentation must say it rather than let an agent meet it and conclude the number is broken
   - Done when the docs build and every lean rule name in the code appears in the rules reference
   - _Depends: 6.4_
   - _Requirements: 10.1, 10.3, 10.5_
@@ -339,3 +341,4 @@ carries them under "The resolution gate".
    requirements do not ask for.
 - **2.1** Branch coverage does not protect a guard fused into a boolean expression: coverage records no arc for an `and` short-circuit, so `None not in counts and ...` could be deleted with the module still reporting 100%. All 21 tests stayed green under that mutation. Every rule in this family should assume the coverage number says nothing about its guards, and mutate them.
 - **2.1** `details` keys are a shared namespace across the whole `structure.` category, not per rule. The first draft published `depended_on_by` as a string where `structure.fan_in` already publishes it as a list, in the same JSON object and the same SARIF properties. The convention the five remaining rules follow is recorded in the layering module's docstring.
+- **2.2** A review packet must include the implementer's status report. Task 2.2's did not, so the reviewer had no RED-phase evidence to inspect and substituted a 23-mutant run. That produced stronger evidence than the report would have, but by accident rather than design, and the omission was the controller's.
