@@ -211,6 +211,7 @@
   - _Requirements: 5.7, 6.5, 9.1, 9.5_
 
 - [ ] 6.4 Adjust the shipped defaults from the measurement
+  - **Evidence already gathered, 2026-09-10, see research.md:** `routine.LinesPerStatement = 3.0` fits this repository (1.8% outside, `keep`) and does NOT fit facdrone (8.7% outside, `recommend` proposes 4, where 4.0% would be outside). `routine.CountLineComment = 20` fits both. Decide the verbosity default with both repositories in hand rather than one
   - Any lean number or threshold whose measured count on this repository is mostly noise is changed, with the measurement written beside it, in its own commit; a default the measurement confirms is left alone and the confirmation recorded
   - Done when every shipped lean default has a recorded count behind it and the unit tests pin the final values
   - _Depends: 6.3_

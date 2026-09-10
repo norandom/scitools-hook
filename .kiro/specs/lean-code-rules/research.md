@@ -285,3 +285,37 @@ what the design phase found on top of it, and the decisions the design took.
 - **Inheritance kind strings on languages the contract project does not build (Java, C#)**: unverified; documented as such per language until measured.
 - **Token pass cost**: unmeasured until the worker exists; the design gates it behind two rules that ship off and the cost task has the 6.5 s ceiling.
 - **Fixture churn**: `tests/contract/contract_project.py` grows by the cases the new rules need; tests that assert its counts move with it.
+
+---
+
+# A second repository, measured 2026-09-10
+
+Run read-only against `facdrone` (945 files, 9449 routines, 1809 classes, Python and Web,
+its own `scitools-hook.toml`, no hook installed) with the working-tree tool, to ask whether
+the defaults tasks 1.3 and 1.4 shipped from this repository's numbers generalise.
+
+| Metric | scitools-hook | facdrone | Verdict |
+| --- | --- | --- | --- |
+| `routine.LinesPerStatement = 3.0` | 2963 judged, p50 1.20, p95 2.33, **53 outside (1.8%)**, `keep 3` | 5084 judged, p50 1.33, p95 3.78, max 19.6, **442 outside (8.7%)**, `raise 3 -> 4` (204 outside, 4.0%) | **does not generalise** |
+| `routine.CountLineComment = 20` | 5916 routines, p95 8, 20 outside (0.3%), `keep 20` | absent from the deviation list, i.e. `keep` | **generalises** |
+
+The tool's own bar is that a ceiling fits when it contains 95% of its population, so 91.3%
+inside misses it. The floor is working on both -- facdrone judges 5084 of 9449 routines, so
+4365 are below five statements and correctly not judged.
+
+**Not acted on here.** Task 6.4 owns adjusting shipped defaults from measurement and now has
+two repositories rather than one. The options it should weigh, with these numbers:
+
+- **4.0 fits both** (facdrone 4.0% outside; this repository would be further inside still),
+  at the cost of only reporting routines that are more than four lines per statement.
+- **3.0 stays** and a verbose repository uses `recommend`, which is what `recommend` is for.
+  The rule ships as a warning, so 8.7% is noise rather than a blocked commit -- but this
+  project's own guidance is that a ceiling most of a repository fails is not a limit, and 8.7%
+  is a lot of warnings to teach an operator to ignore.
+
+Two other things this run established. The `NO_PROBE` row task 1.2 added renders correctly on
+a repository that is not this one ("feature lean references: not measured (this build was
+probed before the feature existed)"). And facdrone's analysis resolves at 26% against this
+repository's 19%, which matters for the false structural finding recorded in `tasks.md`: that
+artefact was attributed to an under-resolved before side, and a second repository at a
+different resolution is where to reproduce it deliberately.
