@@ -48,14 +48,19 @@ Terminology used throughout, in addition to the base specification's:
 ### Requirement 1: Dead Code Beyond Routines
 **Objective:** As a reviewer of agent-written code, I want a change that leaves a parameter, a class or a module-level variable that nothing in the project uses to be reported, so that dead code an agent forgot to delete is visible in every shape it takes, not only as a routine.
 
+**Amended 2026-09-10, from measurement.** On a 417-file, ~101 800-line codebase whose analysis resolves at 26%, the predicate as originally specified answers 830 routines and about 6160 lines, and is wrong nearly every time: that codebase uses structural typing, so an implementation holds no reference to the interface it satisfies, and exactly one of the 830 carried an override reference. Criteria 8, 9 and 10 exist because of that measurement. A rule that cannot tell "nothing uses this" from "the analyser could not see what uses this" is a machine for deleting working code.
+
 #### Acceptance Criteria
 1. When a lean-code dead-code rule is enabled and a check runs, the Gate shall report each affected class and each affected module-level variable that has no project reference, as a structural finding with the entity's location and a remediation hint.
 2. When the unused-parameter rule is enabled and a check runs, the Gate shall report each parameter of an affected routine that the routine's body never references, as a structural finding located at the routine, naming the parameter.
 3. The Gate shall decide "unused" for each of these over the whole project, never over the affected neighbourhood alone, so that an entity used from an unchanged file is not reported.
-4. The Gate shall not report a parameter that a routine declares because a signature it overrides or implements declares it, and shall not report a language's implicit receiver parameter, so that conformance to an interface is never reported as dead code.
+4. The Gate shall not report a parameter that a routine declares because a signature it overrides or implements declares it, and shall not report a language's implicit receiver parameter, so that conformance to an interface is never reported as dead code. The Gate shall apply this whether the interface is declared by inheritance or satisfied structurally, and shall not require an inheritance or override reference to exist, because a structurally typed implementation holds no reference at all to the interface it satisfies.
 5. The Gate shall ship each of these rules off, and when enabled as a warning by default, and shall accept an ignore list of name patterns per rule applied the way `structure.unused_ignore` is, with a shipped list covering the shapes a reference cannot see (dunder members, test collection, entry points, decorator-registered handlers, unused-by-convention parameter names such as a leading underscore).
 6. If a run cannot measure references for one of these rules, the Gate shall report that rule once per run as unavailable and shall evaluate nothing for it, so that an analysis recorded before the rule was enabled never reports a project full of dead code.
 7. When an entity is deleted by the change, the Gate shall not report it under any of these rules.
+8. While the measured call resolution for a language is below a configurable floor, the Gate shall report no dead-code finding for entities of that language, and shall say once per run that the rule was not evaluated and why, so that an analysis which resolved too little to know is never reported as a project full of dead code.
+9. Where a method name is declared by two or more classes in the project, the Gate shall treat it as an interface method and shall not report it, or any parameter it declares, as unused, so that a structurally typed implementation is excluded without an inheritance edge to detect it by.
+10. The Gate shall record, for each shipped dead-code rule, the count it produces on at least two real repositories of different size before that rule ships enabled by default, so that a rule whose findings are dominated by the analyser's resolution rather than by the code is identified before an operator meets it.
 
 ### Requirement 2: Pass-Through Routines
 **Objective:** As a reviewer, I want a routine whose only job is to forward one call to one caller to be reported, so that layering that adds a name and a file without adding behaviour is visible.
@@ -66,6 +71,7 @@ Terminology used throughout, in addition to the base specification's:
 3. The Gate shall not report a routine whose single caller is outside the project's included set, a routine that is an override or an interface implementation, or a routine matching the rule's ignore list, and the shipped ignore list shall cover entry points and test functions.
 4. The Gate shall ship the rule off, and when enabled as a warning by default.
 5. If the call references needed to count callers were not recorded in the snapshot, the Gate shall report the rule once per run as unavailable and shall evaluate nothing for it.
+6. While the measured call resolution for a language is below the same floor requirement 1.8 names, the Gate shall report no pass-through finding for routines of that language and shall say so once per run, because a caller count taken from a partly resolved call graph understates callers and an understated count is what this rule reports on.
 
 ### Requirement 3: Single-Implementation Abstractions
 **Objective:** As a reviewer, I want a base class or interface that exists for exactly one implementation to be reported, so that an abstraction introduced for a second implementation that never came is visible.

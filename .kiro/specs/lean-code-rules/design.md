@@ -265,6 +265,10 @@ flowchart TD
 | 1.5 | off, warning, ignore lists | `LeanRules`, template | `unused_*`, `*_ignore` | |
 | 1.6 | not measured reported once | runner/lean | `LeanOutcome.unavailable` | check flow |
 | 1.7 | deleted entities never reported | dead (after-side records only) | | |
+| 1.8 | resolution floor before any dead-code finding | runner/lean, `CallResolution` | `lean.resolution_floor` | check flow |
+| 1.9 | interface methods excluded without an inheritance edge | worker_lean.class_facts, dead | declaring-class count per method name | |
+| 1.10 | each dead-code rule measured on two repositories before shipping enabled | tasks 6.3, 6.4 | | |
+| 2.6 | pass-through gated on the same floor | runner/lean | `CallResolution` | |
 | 2.1 | pass-through with caller and callee named | layering | `LeanFacts.callers/callees/forwards_to`, `pass_through_max_statements` | layering flow |
 | 2.2 | one caller alone is not a finding | layering | `callees == 1` and statement budget | layering flow |
 | 2.3 | external caller, overrides, ignore | worker_lean, layering | `overrides`, `pass_through_ignore` | |
