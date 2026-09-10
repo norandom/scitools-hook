@@ -24,7 +24,12 @@ those two measurements, and this module builds both guards before it builds a fi
 **Two floors, because two quantities bound two different failures** (requirement 1.8, as
 amended). Neither covers the other's evidence, so :class:`Trust` carries both and the gate
 refuses when *either* is below its own, saying which one stopped it and at what measured
-value.
+value. Both are configurable, as ``[lean] resolution_floor`` and ``[lean] accuracy_floor``,
+and the two numbers are declared in :mod:`scitools_hook.config.models` -- imported here for
+:class:`Trust`'s defaults, so a unit test and a run cannot judge one snapshot by two floors.
+``[lean] accuracy_floor`` is **not** ``[analysis] accuracy_floor``; that key reads the same
+measurement to report on it and never silences a rule, and the field's own docstring argues
+why the pair is two keys.
 
 * **Call resolution** -- :attr:`~scitools_hook.models.snapshot.CallResolution.internal`, the
   share of a language's call sites that became an edge of this project's call graph -- bounds
@@ -98,7 +103,11 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from typing import Final, NamedTuple
 
-from scitools_hook.config.models import Severity
+from scitools_hook.config.models import (
+    DEFAULT_ACCURACY_FLOOR,
+    DEFAULT_RESOLUTION_FLOOR,
+    Severity,
+)
 from scitools_hook.models.findings import Finding, structure_rule
 from scitools_hook.models.snapshot import (
     CallResolution,
@@ -111,29 +120,6 @@ from scitools_hook.models.snapshot import (
 PARAMETER_RULE: Final = structure_rule("unused_parameter")
 CLASS_RULE: Final = structure_rule("unused_class")
 VARIABLE_RULE: Final = structure_rule("unused_variable")
-
-DEFAULT_RESOLUTION_FLOOR: Final = 0.75
-"""Placeholder. **No rate at which these rules become sound has been measured.**
-
-It is deliberately set where nothing yet measured can reach it, and it is not a calibration:
-the two corpora where the predicate was measured wrong were measured by *accuracy*, not by
-call resolution, and the one call-resolution figure that exists (43% here) has never been
-paired with a false-positive count. Requirement 1.10's two-repository measurement, which task
-6.4 owns, is what re-derives this number; until then a rule that reaches its floor would be a
-rule whose floor was chosen to make it speak rather than to make it right.
-
-Silence is not absence: below the floor the rules say what stopped them and at what measured
-value, which is a different product from a rule that is simply off.
-"""
-
-DEFAULT_ACCURACY_FLOOR: Final = 0.75
-"""Placeholder, on the same terms as :data:`DEFAULT_RESOLUTION_FLOOR` and for the same reason.
-
-Both corpora that produced a false-positive count report an accuracy far below it -- 19% here
-and 26% on facdrone -- so this floor is silent on both, but no corpus has been measured where
-these rules are right, and no rate has been shown to be the rate at which they become so.
-Task 6.4 re-derives it from two repositories.
-"""
 
 INTERFACE_DECLARERS: Final = 2
 """Declaring classes at which a method name is an interface method (requirement 1.9)."""
@@ -164,8 +150,12 @@ class Trust(NamedTuple):
     nobody produced is not a licence. That is also why the default is ``None``: a rule wired
     up but not given its measurement must fall silent and say so, not report.
 
-    The two floors default to the placeholders this module documents. Task 4.3 owns making
-    both configurable and passing the measured figure in.
+    The two floors default to the placeholders :mod:`scitools_hook.config.models` documents,
+    and are the same two numbers ``[lean] resolution_floor`` and ``[lean] accuracy_floor``
+    ship -- **the same constants, not two copies of one value**, because a unit test and a
+    run judging one snapshot by different floors would make this suite evidence about
+    nothing. ``runner.lean`` builds the ``Trust`` a check uses from those settings; a caller
+    that builds none gets :data:`UNMEASURED`, which refuses.
     """
 
     accuracy: float | None = None

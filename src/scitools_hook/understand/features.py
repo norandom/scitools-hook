@@ -30,7 +30,7 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-from scitools_hook.config.models import Settings
+from scitools_hook.config.models import REFERENCE_RULES, Settings
 from scitools_hook.errors import ConfigError, GateError
 from scitools_hook.models.cache import CachePaths
 from scitools_hook.models.understand import Availability, Feature, FeatureReport
@@ -76,6 +76,10 @@ def probe_features(cli: UndCli, api: ApiRunner | None, scratch: Path, build: str
             Feature.UNUSED_RULE: Availability(
                 state="available",
                 detail="reference-based; every build reports what calls what",
+            ),
+            Feature.LEAN_REFERENCES: Availability(
+                state="available",
+                detail="reference-based; every build reports what uses what",
             ),
         },
     )
@@ -220,12 +224,21 @@ ASKED_BY: Final[dict[str, Feature]] = {
     "understand.before_side": Feature.COMMIT_BEFORE,
     "analysis.accuracy_floor": Feature.ACCURACY,
     "structure.unused_routines": Feature.UNUSED_RULE,
+    **{f"lean.{rule}": Feature.LEAN_REFERENCES for rule in REFERENCE_RULES},
 }
 """Configuration key -> the feature it needs the build to offer (requirement 1.2).
 
 ``understand.before_side`` is here for ``"commit"`` only: ``"auto"`` asks for the route
 *if the build has it* and falls back to the shadow tree otherwise, which is the whole point
 of the value and must not be refused (requirement 3.3).
+
+The five ``lean.`` keys are read from ``config.models.REFERENCE_RULES`` rather than listed,
+because ``LeanRules.wants_references`` decides from the same list whether the extractor pays
+for the reference walk. Written out here as well, the two would agree on the day they were
+written and never again -- and the disagreement is silent: a rule this map forgets is one an
+operator can enable on a build that was never asked whether it answers references.
+``lean.over_export`` is deliberately not among them (see that constant), and neither are the
+two token rules, whose feature is probed by a later task.
 """
 
 RUN_DOCTOR: Final = (
@@ -242,6 +255,7 @@ def asked_features(settings: Settings) -> dict[str, Feature]:
         "understand.before_side": settings.understand.before_side == "commit",
         "analysis.accuracy_floor": settings.analysis.accuracy_floor is not None,
         "structure.unused_routines": settings.structure.unused_routines is not None,
+        **{f"lean.{rule}": getattr(settings.lean, rule) is not None for rule in REFERENCE_RULES},
     }
     return {key: ASKED_BY[key] for key, on in enabled.items() if on}
 

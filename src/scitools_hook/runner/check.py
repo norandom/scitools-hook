@@ -256,7 +256,10 @@ class CheckPipeline:
         # rest, notes said once per run, and the change's net delta for the result. It is
         # raised here rather than among the evaluators for the reason the module docstring
         # records (lean-code req 1.6, 2.5, 7.1, 9.4, 9.6).
-        lean = evaluate_lean(self.ctx.settings.lean, after, before, affected)
+        # The after side's accuracy travels with it: the snapshot carries none, and the
+        # dead-code rules refuse a run that parsed too little to know (`runner.lean.evaluate`).
+        figures = _figures(analyses)
+        lean = evaluate_lean(self.ctx.settings.lean, after, before, affected, figures.get("after"))
         self._report(lean.notes)
         findings, outcome = self._evaluate(plan, seen, effective, lean.findings)
         return RunResult(
@@ -275,7 +278,7 @@ class CheckPipeline:
             parse_errors=_merge_parse_errors(analyses),
             tightened=self._adapt(plan.mode, after, specs, stored),
             highest=outcome.highest,
-            accuracy=_figures(analyses),
+            accuracy=figures,
             understand_sarif=for_run(
                 self.ctx.settings,
                 self._dbm.paths(),

@@ -33,8 +33,15 @@ LEAN_REFERENCE_RULES: Final[tuple[str, ...]] = (
 
 ``over_export`` is not here: it reads file metrics, ``file_edges`` and the definitions walk,
 so it turns on the fingerprint's ``definitions`` key and no reference call. Written once and
-shared because the settings tests and the fingerprint tests each parametrise over this list,
-and a draft in which the two disagreed is exactly the defect this feature's review caught.
+shared because the settings tests, the fingerprint tests, the feature-refusal tests and the
+lean pipeline tests each parametrise over this list, and a draft in which two of them
+disagreed is exactly the defect this feature's review caught.
+
+**Written out here rather than imported from** ``config.models.REFERENCE_RULES``, which the
+production code reads for the same question. Imported, a rule dropped from that constant
+would silently drop every case that parametrises over it, and the suite would go green over
+four rules while claiming five. So this is an independent statement of the same list, and
+``test_the_suite_and_the_settings_name_the_same_reference_rules`` is what binds the two.
 """
 
 LEAN_TOKEN_RULES: Final[tuple[str, ...]] = ("duplicates", "similar_routines")

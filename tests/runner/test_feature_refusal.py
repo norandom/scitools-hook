@@ -17,6 +17,7 @@ which is the whole point of the value and must never be refused (requirement 3.3
 from __future__ import annotations
 
 import pytest
+from fixtures.constants import LEAN_REFERENCE_RULES
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.errors import ConfigError
@@ -64,14 +65,21 @@ def test_a_configuration_that_asks_for_nothing_new_needs_no_record() -> None:
         ({"understand__before_side": "commit"}, Feature.COMMIT_BEFORE),
         ({"analysis__accuracy_floor": 0.8}, Feature.ACCURACY),
         ({"structure__unused_routines": "warning"}, Feature.UNUSED_RULE),
+        *(({f"lean__{rule}": "warning"}, Feature.LEAN_REFERENCES) for rule in LEAN_REFERENCE_RULES),
     ],
-    ids=["sarif", "commit", "accuracy", "unused"],
+    ids=["sarif", "commit", "accuracy", "unused", *LEAN_REFERENCE_RULES],
 )
 def test_each_key_asks_for_the_feature_it_needs(
     overrides: dict[str, object], feature: Feature
 ) -> None:
     """One key, one feature; the mapping is what the refusal message is built from."""
     assert set(asked_features(asking(**overrides)).values()) == {feature}
+
+
+def test_the_over_export_rule_asks_the_build_for_nothing_new() -> None:
+    """It reads file metrics, the file edges and the definitions walk, all of which every
+    build already answers -- so refusing it would refuse a rule the build can run (9.3)."""
+    assert asked_features(asking(lean__over_export="warning")) == {}
 
 
 def test_the_automatic_before_route_asks_for_nothing() -> None:

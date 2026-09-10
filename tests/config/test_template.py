@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import tomllib
 from pathlib import Path
+from types import ModuleType
 from typing import Final
 
 import pytest
@@ -11,6 +13,7 @@ from fixtures.constants import LEAN_RULE_SWITCHES
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.detect import PARSE_REASONS, Detection, detect
+from scitools_hook.config.metric_names import declared_floor
 from scitools_hook.config.models import (
     CouplingRule,
     LayerRule,
@@ -28,6 +31,7 @@ from scitools_hook.config.template import (
 )
 from scitools_hook.errors import ConfigError
 from scitools_hook.exit_codes import ExitCode
+from scitools_hook.runner import check, lean
 
 EXPECTED_SECTIONS = [
     "[understand]",
@@ -456,6 +460,8 @@ def test_the_lean_numbers_and_ignore_lists_are_written_as_the_values_in_force() 
     assert lean["similar_threshold"] == shipped.similar_threshold
     assert lean["similar_min_statements"] == shipped.similar_min_statements
     assert lean["pass_through_max_statements"] == shipped.pass_through_max_statements
+    assert lean["resolution_floor"] == shipped.resolution_floor
+    assert lean["accuracy_floor"] == shipped.accuracy_floor
     assert lean["verbosity_min_statements"] == shipped.verbosity_min_statements
     assert lean["net_growth_severity"] == shipped.net_growth_severity
     assert lean["unused_parameters_ignore"] == shipped.unused_parameters_ignore
@@ -522,6 +528,8 @@ def test_every_lean_number_an_operator_cannot_read_off_its_name_carries_a_note()
     assert "  # " in lean_line("verbosity_min_statements")
     assert "  # " in lean_line("net_growth_severity")
     assert "  # " in lean_line("similar_threshold")
+    assert "  # " in lean_line("resolution_floor")
+    assert "  # " in lean_line("accuracy_floor")
 
 
 def test_the_net_growth_line_promises_a_report_and_never_a_refusal() -> None:
@@ -537,3 +545,313 @@ def test_the_net_growth_line_promises_a_report_and_never_a_refusal() -> None:
     assert "refus" not in line
     assert "block" not in line
     assert default_settings().lean.net_growth_severity == "warning"
+
+
+# --- the claim the block's help text makes about its two floors ----------------------
+#
+# `_LEAN_HELP` tells an operator why the two `*_floor` keys ship SET while every rule in the
+# block ships off: no rule owns them, `runner.lean.evaluate` reads them on every run whatever
+# the switches say, and every *other* set key belongs to one rule -- that rule's limit, its
+# exception list or its severity -- and does nothing until the rule is on, with one named
+# exception, `verbosity_min_statements`, whose rule `[thresholds.routine] LinesPerStatement`
+# does ship on.
+#
+# That is a claim about the rendered block, and two earlier drafts of it were false on the
+# screen they were printed on. The first ("the only lines below that ship SET") was refuted by
+# every ignore list under it. The second reserved "set and in force while every rule here is
+# off" for the floors, which `verbosity_min_statements` has too, and enumerated "limit or
+# exception list" four lines above `net_growth_severity`. Both survived a test that asserted a
+# paraphrase. So the sentence is asserted here key by key against the text `init` writes -- by
+# kind, and by whether the rule that reads the key ships on -- and the owner names are bound to
+# the code that reads them rather than left as free text a reviewer can rewrite unnoticed.
+
+LEAN_FLOOR_KEYS: Final[frozenset[str]] = frozenset(
+    name for name in LeanRules.model_fields if name.endswith("_floor")
+)
+"""The keys the help text calls "the two *_floor keys", read off the model rather than typed."""
+
+LEAN_KEY_OWNERS: Final[dict[str, str]] = {
+    "unused_parameters_ignore": "unused_parameters",
+    "unused_classes_ignore": "unused_classes",
+    "unused_variables_ignore": "unused_variables",
+    "pass_through_max_statements": "pass_through",
+    "pass_through_ignore": "pass_through",
+    "single_implementation_ignore": "single_implementation",
+    "over_export_ignore": "over_export",
+    "duplicates_min_lines": "duplicates",
+    "duplicates_ignore": "duplicates",
+    "similar_min_statements": "similar_routines",
+    "similar_threshold": "similar_routines",
+    "similar_ignore": "similar_routines",
+    "verbosity_min_statements": "LinesPerStatement",
+    "net_growth_severity": "max_net_growth",
+}
+"""The rule that reads each ``[lean]`` key that ships set, floors excepted.
+
+Hand-written on purpose: naming the rule is the work the claim asks of whoever adds a key,
+and a mapping derived from the key names could not have caught the three keys whose name
+does not carry their rule's -- ``similar_min_statements``, ``verbosity_min_statements`` and
+``net_growth_severity``. The test below refuses to pass while a set key is missing from here.
+
+The names are not free text either. Eight of them are checked against the switch that guards
+the key's only read in ``runner.lean``, ``verbosity_min_statements``'s against the metric
+catalogue and the unguarded read in ``runner.check``, and the five token keys against the
+stem they share with their rule -- because a plausible wrong name here is exactly where the
+defect this comment describes hid through two rounds of review.
+"""
+
+LEAN_KEY_KINDS: Final[dict[str, str]] = {
+    "unused_parameters_ignore": "exception list",
+    "unused_classes_ignore": "exception list",
+    "unused_variables_ignore": "exception list",
+    "pass_through_max_statements": "limit",
+    "pass_through_ignore": "exception list",
+    "single_implementation_ignore": "exception list",
+    "over_export_ignore": "exception list",
+    "duplicates_min_lines": "limit",
+    "duplicates_ignore": "exception list",
+    "similar_min_statements": "limit",
+    "similar_threshold": "limit",
+    "similar_ignore": "exception list",
+    "verbosity_min_statements": "limit",
+    "net_growth_severity": "severity",
+}
+"""What each owned key *is*, in the words the help text enumerates.
+
+Hand-written for the same reason as the owners: ``net_growth_severity`` is a severity and
+not a limit, and the draft that called every owned key "a limit or an exception list" was
+wrong about a key printed four lines below it. A key of a fourth kind fails the test below
+until the help text learns to say that kind.
+"""
+
+HELP_KINDS: Final[frozenset[str]] = frozenset(LEAN_KEY_KINDS.values())
+"""The kinds the help text has to enumerate, read off the table rather than typed twice."""
+
+
+def lean_set_keys(text: str | None = None) -> set[str]:
+    """Every key the rendered block ships *set*: an uncommented ``name = value`` line."""
+    return _set_keys(lean_block(text))
+
+
+def routine_metrics(text: str | None = None) -> set[str]:
+    """Every metric ``[thresholds.routine]`` ships live, which is every rule that block sets."""
+    rendered = render_template() if text is None else text
+    return _set_keys(rendered.split("\n[thresholds.routine]\n")[1].split("\n\n")[0])
+
+
+def _set_keys(block: str) -> set[str]:
+    return {
+        line.split(" = ", 1)[0]
+        for line in block.splitlines()
+        if not line.startswith("#") and " = " in line
+    }
+
+
+def lean_help(text: str | None = None) -> str:
+    """The help paragraph ``_LEAN_HELP`` renders above the header, as one line of prose."""
+    rendered = render_template() if text is None else text
+    comments = rendered.split("\n[lean]\n")[0].split("\n\n")[-1]
+    return " ".join(line.removeprefix("# ") for line in comments.splitlines())
+
+
+def test_every_set_lean_key_is_one_of_the_three_kinds_the_help_text_enumerates() -> None:
+    """The enumeration, asserted over the rendered block rather than over a paraphrase.
+
+    Three kinds and no fourth: a key that is neither a limit, an exception list nor a
+    severity fails here, and so does a key nobody classified. One sentence of the help text
+    has to name all three, so a kind dropped from the enumeration -- or a fourth kind added
+    to the block and left out of it -- fails here rather than on the operator's screen.
+    """
+    enumerating = [
+        sentence
+        for sentence in lean_help().split(". ")
+        if all(kind in sentence for kind in HELP_KINDS)
+    ]
+
+    assert lean_set_keys() == set(LEAN_KEY_OWNERS) | LEAN_FLOOR_KEYS
+    assert set(LEAN_KEY_KINDS) == set(LEAN_KEY_OWNERS)
+    assert HELP_KINDS == {"limit", "exception list", "severity"}
+    assert len(enumerating) == 1, "no one sentence of the help text names all three kinds"
+
+
+def test_the_one_set_lean_key_whose_rule_ships_on_is_the_exception_the_help_text_names() -> None:
+    """Requirement 1.8: the floors are not the only set keys in force, and the block says so.
+
+    ``verbosity_min_statements`` is read by ``[thresholds.routine] LinesPerStatement``, which
+    ships on, so it does something the moment `init` writes it while every rule in this block
+    is off. That is the property an earlier draft reserved for the floors. It is counted here
+    -- exactly one such key -- and the operator has to meet it on the same screen, so the
+    help text is required to name both the key and the rule. Every other owned key waits on a
+    ``[lean]`` switch that ships commented off.
+    """
+    live = {key: owner for key, owner in LEAN_KEY_OWNERS.items() if owner in routine_metrics()}
+
+    assert live == {"verbosity_min_statements": "LinesPerStatement"}
+    for key in sorted(set(LEAN_KEY_OWNERS) - set(live)):
+        owner = LEAN_KEY_OWNERS[key]
+        assert owner in LEAN_UNSET_KEYS, f"{key}'s rule {owner} is no switch this block ships"
+        assert lean_line(owner).startswith("# "), f"{key}'s rule {owner} does not ship off"
+    for named in ("verbosity_min_statements", "LinesPerStatement", "[thresholds.routine]"):
+        assert named in lean_help(), f"the help text does not name {named}"
+
+
+def test_the_key_whose_rule_ships_on_is_read_with_no_lean_switch_between() -> None:
+    """The exception, as the code states it: ``LinesPerStatement`` is the floored metric, and
+    ``runner.check.run`` stamps the operator's number on the thresholds unconditionally.
+
+    Both halves matter. The catalogue half binds the owner name -- a plausible wrong rule
+    typed into ``LEAN_KEY_OWNERS`` names no metric that declares a floor. The unguarded-read
+    half is why the key is in force at all: the call is a statement of ``run``'s own body, so
+    no ``[lean]`` switch stands above it, and ``run`` reads no switch anywhere.
+    """
+    floored = {metric for metric in routine_metrics() if declared_floor(metric) is not None}
+    run = _function(check, "run")
+    stamps = [line for line in _statements(run) if "with_floor(" in line]
+
+    assert floored == {LEAN_KEY_OWNERS["verbosity_min_statements"]}
+    assert stamps == [
+        "effective = with_floor(effective, self.ctx.settings.lean.verbosity_min_statements)"
+    ]
+    assert [switch for switch in LEAN_RULE_SWITCHES if f"lean.{switch}" in ast.unparse(run)] == []
+
+
+def test_the_floors_are_the_only_set_lean_keys_no_rule_owns() -> None:
+    """The other half of the sentence: two floors, owned by nothing, read on every run.
+
+    ``runner.lean.evaluate`` builds the run's ``Trust`` from both of them in a statement of
+    its own body -- no switch above it, and nothing in the section can suppress it -- which is
+    why they can ship set without turning a rule on.
+    """
+    built = [line for line in _statements(_function(lean, "evaluate")) if "Trust(" in line]
+
+    assert len(LEAN_FLOOR_KEYS) == 2
+    assert LEAN_FLOOR_KEYS.isdisjoint(LEAN_KEY_OWNERS)
+    assert built == ["trust = Trust(accuracy, rules.resolution_floor, rules.accuracy_floor)"]
+
+
+def test_every_owner_a_wired_rule_names_is_the_switch_its_key_s_read_is_guarded_by() -> None:
+    """``LEAN_KEY_OWNERS`` bound to the code, so a plausible wrong name fails here.
+
+    ``runner.lean`` reads a rule's own keys only where that rule's switch has been found set,
+    either inside ``if rules.<switch> is not None:`` or after ``if rules.<switch> is None:
+    return``. That guard *is* the ownership the help text claims, so it is read out of the
+    module and compared, name by name.
+
+    Six keys have no such read yet. ``verbosity_min_statements`` never will -- the test above
+    owns it -- and the five token keys wait on tasks 5.1-5.5, which wire ``duplicates`` and
+    ``similar_routines`` into this step; until then their owner is checked against the stem
+    the key shares with its rule, and this list has to shrink when those tasks land.
+    """
+    guarded = _guarded_reads(_source(lean))
+    unwired = set(LEAN_KEY_OWNERS) - set(guarded)
+
+    assert {key: LEAN_KEY_OWNERS[key] for key in guarded} == guarded
+    assert unwired == {"verbosity_min_statements", *_TOKEN_RULE_KEYS}
+    for key in sorted(_TOKEN_RULE_KEYS):
+        owner = LEAN_KEY_OWNERS[key]
+        assert owner in LEAN_RULE_SWITCHES, f"{key}'s rule {owner} is no rule of this block"
+        assert owner.split("_")[0] == key.split("_")[0], f"{key} is not {owner}'s key"
+
+
+_TOKEN_RULE_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "duplicates_min_lines",
+        "duplicates_ignore",
+        "similar_min_statements",
+        "similar_threshold",
+        "similar_ignore",
+    }
+)
+"""The keys of the two rules answered from token streams, which tasks 5.1-5.5 still owe."""
+
+
+def test_the_accuracy_floor_note_keeps_the_other_key_it_exists_to_be_told_apart_from() -> None:
+    """``[lean] accuracy_floor`` refuses; ``[analysis] accuracy_floor`` only reports.
+
+    The note beside the line is where an operator meets that, and the wording is the whole
+    of it: stripped back to "the parse floor" the line still parses, still carries a comment
+    marker, and quietly leaves the two keys looking like one. So the words that separate them
+    are asserted rather than the marker alone.
+    """
+    _, _, note = lean_line("accuracy_floor").partition("  # ")
+
+    assert "[analysis] accuracy_floor" in note
+    assert "only reports" in note
+    assert "REFUSES" in lean_help()
+
+
+def _source(module: ModuleType) -> ast.Module:
+    return ast.parse(Path(module.__file__ or "").read_text(encoding="utf-8"))
+
+
+def _function(module: ModuleType, name: str) -> ast.FunctionDef:
+    """The one routine ``name`` in ``module``, found wherever it sits in the file."""
+    found = [
+        node
+        for node in ast.walk(_source(module))
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    assert len(found) == 1, f"{name} is not the only {name} in {module.__name__}"
+    return found[0]
+
+
+def _statements(function: ast.FunctionDef) -> list[str]:
+    """``function``'s own statements, unparsed. A branch's body is not one of them."""
+    return [ast.unparse(statement) for statement in function.body]
+
+
+def _guarded_reads(tree: ast.Module) -> dict[str, str]:
+    """Each ``rules.<key>`` read only reachable once a switch was found set, and the switch."""
+    owners: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            owners.update(_reads_in(node))
+    return owners
+
+
+def _reads_in(function: ast.FunctionDef) -> dict[str, str]:
+    owners: dict[str, str] = {}
+    after: str | None = None
+    for statement in function.body:
+        switch, on = _switch_guard(statement)
+        if switch is not None and on:
+            owners.update(dict.fromkeys(_keys_read(statement), switch))
+        elif switch is not None:
+            after = switch
+        elif after is not None:
+            owners.update(dict.fromkeys(_keys_read(statement), after))
+    return owners
+
+
+def _switch_guard(statement: ast.stmt) -> tuple[str | None, bool]:
+    """The switch an ``if rules.<switch> is [not] None`` tests, and whether it tests it set."""
+    if not isinstance(statement, ast.If):
+        return None, False
+    return _guard_test(statement.test)
+
+
+def _guard_test(test: ast.expr) -> tuple[str | None, bool]:
+    if not isinstance(test, ast.Compare) or not _is_none(test.comparators):
+        return None, False
+    named = _rules_attribute(test.left)
+    if named not in LEAN_UNSET_KEYS:
+        return None, False
+    return named, isinstance(test.ops[0], ast.IsNot)
+
+
+def _is_none(comparators: list[ast.expr]) -> bool:
+    against = comparators[0] if len(comparators) == 1 else None
+    return isinstance(against, ast.Constant) and against.value is None
+
+
+def _rules_attribute(node: ast.expr) -> str | None:
+    if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+        return None
+    return node.attr if node.value.id == "rules" else None
+
+
+def _keys_read(statement: ast.stmt) -> set[str]:
+    """The ``rules.<key>`` names ``statement`` reads, switches excluded: those are the guards."""
+    read = [node for node in ast.walk(statement) if isinstance(node, ast.Attribute)]
+    named = {_rules_attribute(node) for node in read}
+    return {name for name in named if name is not None} - set(LEAN_UNSET_KEYS)

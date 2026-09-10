@@ -265,7 +265,7 @@ flowchart TD
 | 1.5 | off, warning, ignore lists | `LeanRules`, template | `unused_*`, `*_ignore` | |
 | 1.6 | not measured reported once | runner/lean | `LeanOutcome.unavailable` | check flow |
 | 1.7 | deleted entities never reported | dead (after-side records only) | | |
-| 1.8 | resolution floor before any dead-code finding | runner/lean, `CallResolution` | `lean.resolution_floor` | check flow |
+| 1.8 | both floors before any dead-code finding | `dead.Trust`/`TrustGate`, built in runner/lean from the settings, `CallResolution`, `AnalyzeResult.accuracy` | `lean.resolution_floor`, `lean.accuracy_floor` | check flow |
 | 1.9 | interface methods excluded without an inheritance edge | worker_lean.method_declarations, dead | declaring-class count per method name | |
 | 1.10 | each dead-code rule measured on two repositories before shipping enabled | tasks 6.3, 6.4 | | |
 | 2.6 | pass-through gated on the same two floors, applied in the rule as the dead-code rules apply them | layering (`dead.TrustGate`), runner/lean | `CallResolution`, `Trust` | |
@@ -369,6 +369,14 @@ class LeanRules(StrictModel):
     unused_classes_ignore: list[str]         # default: r"(^|\.)Test", r"Error$", r"Exception$"
     unused_variables: Severity | None = None
     unused_variables_ignore: list[str]       # default: r"^__\w+__$", r"^(log|logger|pytestmark)$"
+    # requirement 1.8's two floors: the only [lean] keys no rule owns, which is why they ship
+    # set while every rule in the block ships off -- runner.lean.evaluate reads them on every
+    # run whatever the switches say. Every other set key below belongs to one rule (that
+    # rule's limit, its exception list or its severity) and does nothing until that rule is
+    # on, with one exception: verbosity_min_statements is read by [thresholds.routine]
+    # LinesPerStatement, which does ship on.
+    resolution_floor: float = Field(default=0.75, ge=0.0, le=1.0)
+    accuracy_floor: float = Field(default=0.75, ge=0.0, le=1.0)
     pass_through: Severity | None = None
     pass_through_max_statements: int = Field(default=2, ge=1)
     pass_through_ignore: list[str]           # default: DEFAULT_UNUSED_IGNORE (entry points, tests, dunders)
@@ -393,6 +401,22 @@ class LeanRules(StrictModel):
     def wants_tokens(self) -> bool: ...
 ```
 - Invariants: every default severity is `None`; the numbers above are the design's starting values and are re-measured with Understand's lexer before the docs record them (5.7, 9.1).
+- The five names `wants_references` reads are `config.models.REFERENCE_RULES`, a module constant, and `understand.features.ASKED_BY` builds its five `lean.*` keys from the same tuple. An earlier draft of this document said six in one place and five in another; three written-out copies would agree on the day they were written and never again, and the failure is silent — a rule missing from the extractor's list reads its facts as "not asked" and reports itself unavailable on every run.
+
+##### The two accuracy floors, and why they are two
+
+`analysis.accuracy_floor` already exists (`AnalysisSettings`, read by `analysis/accuracy.py::evaluate_accuracy` at `runner/check.py`), and it reads **the same measurement** `lean.accuracy_floor` reads: the share of files `und analyze -accuracy` parsed without an error or a warning. They are not redundant, because they do opposite jobs, and the decision is to **keep them separate**:
+
+| | `analysis.accuracy_floor` | `lean.accuracy_floor` |
+| --- | --- | --- |
+| ships | unset | 0.75 |
+| effect | **raises** one non-blocking finding per side saying the run is less trustworthy (understand-8-features 7.3) | **suppresses** the three dead-code rules and the pass-through rule, which say which floor stopped them at what measured value (1.8) |
+| blocks | never | n/a — it produces no finding at all |
+
+- **Sharing one key would make the safety floor a side effect of tuning a report.** An operator whose third-party headers do not resolve lowers the reporting floor to stop the warning nagging, and would thereby unlock the dead-code rules at that accuracy — which is exactly the configuration this repository's own measurement was taken in: at 19% accuracy, all sixteen module bindings the snapshot answers `referenced: false` for are in fact read, a hundred per cent false-positive rate. A number whose job is to refuse must not be movable by someone who believes they are silencing a report.
+- **Merging the other way is no better.** Giving `analysis.accuracy_floor` the default 0.75 would start a new warning on every repository below it, changing the shipped behaviour of a deliberately-unset feature this family does not own.
+- **What binds them.** This family's recurring defect is two artefacts that must agree with nothing binding them. These two must *differ*, so the binding artefact is a pair of tests that fail if either ever starts reading the other: `test_lowering_the_analysis_floor_does_not_license_a_dead_code_claim` (a run at 10% accuracy with the reporting floor at 0.05 still reports no dead code) and `test_moving_the_lean_floor_raises_no_analysis_accuracy_finding`. Both were shown to fail against a shared-floor implementation. Each field's docstring names the other and says which job it does, each lives in the section that names its subject, and the generated `[lean]` block's own line says `NOT [analysis] accuracy_floor`.
+- The same reasoning gives `lean.resolution_floor` its own key rather than a constant: requirement 1.8 asks for *configurable* floors, and the one number is owned by `config.models.DEFAULT_RESOLUTION_FLOOR`, which `analysis.lean.dead.Trust` imports for its default so a unit test and a run cannot judge one snapshot by two floors.
 - `analysis_fingerprint` gains `"lean_references": settings.lean.wants_references` and `"lean_tokens": settings.lean.wants_tokens`. Its existing `definitions` key becomes `structure.duplicate_definitions is not None or lean.over_export is not None`, because over-export reads the definitions walk.
 - `config/template.py` gains `_lean_body`, one commented line per off rule, in the style of `_unused`.
 
@@ -834,9 +858,11 @@ class LeanResult(NamedTuple):
     net_delta: NetDelta | None
 
 def evaluate(rules: LeanRules, after: ProjectSnapshot, before: ProjectSnapshot | None,
-             affected: AffectedSet) -> LeanResult
+             affected: AffectedSet, accuracy: float | None = None) -> LeanResult
 ```
 - Calls each rule only when its severity is set; concatenates unavailable messages into `notes`, which `CheckPipeline._report` prints once per run as it does for the unused rule. `CheckPipeline._structure` appends `findings`; `run` stores `net_delta`. Scope overrides, `[ignore]` and the severity map apply afterwards in `_finish` exactly as to any structural finding (9.6).
+- One `if` per rule, each a statement of its own rather than a clause in a boolean, because branch coverage records no arc for an `and` short circuit. Split into `_dead_rules` and `_layering_rules` so neither routine passes this project's own limits; the test that stands on them (`test_one_reference_rule_off_is_the_only_one_missing`) is parametrised over the five, one case per guard, counted from the code.
+- `accuracy` is the **after** side's `und analyze -accuracy` figure, which `runner/check.py::run` has in hand from `_figures(analyses)` two lines above the call. The snapshot carries no accuracy, so this is how it reaches the analysis layer, exactly as it reaches `evaluate_accuracy`. `None` — a 6.5 install, a build that was not asked, a caller that wired nothing through — **refuses**: the figure is the licence to say a name is unused, and a licence nobody produced is not a licence. This step is the one place `settings.lean` becomes a `dead.Trust`, so the five rules hold one opinion about what "trusted" means in a run.
 
 ### report
 

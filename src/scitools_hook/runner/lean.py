@@ -1,6 +1,6 @@
 """The lean-code family's one step in a check: the rules that are on, and the change's delta.
 
-Six rules, one number and one place they are called from. The step exists so that
+Six rules, two floors, one number and one place they are called from. The step exists so that
 :class:`~scitools_hook.runner.check.CheckPipeline` gains one call rather than six, and so that
 "which rules did this configuration ask for" is a question with a single answer rather than a
 statement per rule spread through the pipeline.
@@ -20,11 +20,18 @@ same three-state discipline ``structure.unused_routines`` already has: used, unu
 measured**. A rule that could not measure says so once per run -- ``CheckPipeline._report``,
 the diagnostics channel, the same route the unused rule's message takes -- rather than once per
 entity, and never by inventing a finding. Requirements 1.6 and 2.5 both turn on that sentence.
-No rule in the family can answer "unavailable" yet: over-export reads file metrics, the file
-edges and the definitions walk, all of which the snapshot already carries, so it has no third
-state (see :mod:`scitools_hook.analysis.lean.layering`). The list is empty until groups 4 and 5
-land the five rules that fill it, and it is here now because a step that gathered notes nobody
-printed would swallow all five silently.
+Five of the family's rules fill that list: the three dead-code rules and the pass-through rule
+refuse below either of requirement 1.8's floors and when the facts they read were never
+measured, and the single-implementation rule refuses on the facts alone. ``over_export`` is the
+one that cannot: it reads file metrics, the file edges and the definitions walk, all of which
+the snapshot already carries, so it has no third state.
+
+**The floors are the run's, not the operator's alone, so this step is where they are bound.**
+``[lean] resolution_floor`` and ``[lean] accuracy_floor`` are the numbers, the after side's
+``und analyze -accuracy`` is the figure one of them judges, and
+:class:`~scitools_hook.analysis.lean.dead.Trust` is the object the rules take. Built once here
+rather than at five call sites, because five rules disagreeing about what "trusted" means in
+one run is the shape of defect this family keeps meeting.
 
 **The delta is not one of the rules.** :func:`~scitools_hook.analysis.lean.net.net_delta` runs
 whenever there is a before side to subtract from, whatever the ``[lean]`` section says.
@@ -40,7 +47,19 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from scitools_hook.analysis.lean.layering import find_over_exports
+from scitools_hook.analysis.lean.dead import (
+    LeanOutcome,
+    Trust,
+    find_unused_classes,
+    find_unused_parameters,
+    find_unused_variables,
+)
+from scitools_hook.analysis.lean.layering import (
+    PassThroughLimits,
+    find_over_exports,
+    find_pass_through,
+    find_single_implementations,
+)
 from scitools_hook.analysis.lean.net import net_delta, net_growth_finding
 from scitools_hook.config.models import LeanRules
 from scitools_hook.models.change import AffectedSet, NetDelta
@@ -67,19 +86,95 @@ def evaluate(
     after: ProjectSnapshot,
     before: ProjectSnapshot | None,
     affected: AffectedSet,
+    accuracy: float | None = None,
 ) -> LeanResult:
     """Run every lean rule this configuration switched on, and measure the change (req 9.4).
 
     ``rules`` is ``settings.lean``. A rule whose severity is ``None`` is not called, so a
     configuration with the shipped defaults does exactly what a check did before this family
     existed, apart from the delta.
+
+    ``accuracy`` is the **after side's** ``und analyze -accuracy`` figure -- the code this
+    change proposes, which is the side every one of these rules reads its facts from. It is a
+    parameter and not a snapshot field because the snapshot carries none: the figure lives on
+    ``AnalyzeResult.accuracy``, and ``runner.check.run`` has both sides in hand from
+    ``_figures``. ``None`` is what a 6.5 install reports, what a build that was not asked
+    reports and what a caller that wired nothing through passes; all three **refuse**, because
+    the figure is the licence to say a name is unused and a licence nobody produced is not a
+    licence (requirement 1.8).
+
+    The floors it is judged against are the operator's, from ``[lean]``, so this is the one
+    place the settings become a :class:`~scitools_hook.analysis.lean.dead.Trust`. Building it
+    here rather than at each rule is what keeps the five rules holding one opinion about what
+    "trusted" means in a run.
     """
-    findings: list[Finding] = []
-    notes: list[str] = []
+    trust = Trust(accuracy, rules.resolution_floor, rules.accuracy_floor)
+    outcomes = [
+        *_dead_rules(rules, after, affected, trust),
+        *_layering_rules(rules, after, affected, trust),
+    ]
+    findings = [finding for outcome in outcomes for finding in outcome.findings]
+    notes = [note for outcome in outcomes for note in outcome.unavailable]
     findings += _over_exports(rules, after, affected)
     delta = net_delta(after, before, affected)
     findings += _growth(rules, delta)
     return LeanResult(findings=findings, notes=notes, net_delta=delta)
+
+
+def _dead_rules(
+    rules: LeanRules, after: ProjectSnapshot, affected: AffectedSet, trust: Trust
+) -> list[LeanOutcome]:
+    """The three dead-code rules that are on, in the order ``[lean]`` writes their switches.
+
+    One ``if`` per rule and each a statement of its own, because branch coverage records no
+    arc for an ``and`` short circuit: a guard fused into a boolean can be deleted with the
+    module reporting 100% and every test green, which this family has now shipped twice.
+    **Three guards here and two in** :func:`_layering_rules`, and
+    ``test_one_reference_rule_off_is_the_only_one_missing`` is parametrised over exactly those
+    five -- one case per guard, counted from the code rather than from a sentence, which is
+    what task 4.2's reviews cost three rounds. Each of the five was shown to fail with its own
+    guard removed.
+
+    The variable rule takes the change's **files** rather than its entity keys, because a
+    module-level binding is not an entity of any scope: it is a
+    :class:`~scitools_hook.models.snapshot.Definition` recorded against the file that binds it.
+    """
+    found: list[LeanOutcome] = []
+    keys, files = affected.keys, affected.files
+    if rules.unused_parameters is not None:
+        ignore = rules.unused_parameters_ignore
+        found.append(find_unused_parameters(after, keys, rules.unused_parameters, ignore, trust))
+    if rules.unused_classes is not None:
+        ignore = rules.unused_classes_ignore
+        found.append(find_unused_classes(after, keys, rules.unused_classes, ignore, trust))
+    if rules.unused_variables is not None:
+        ignore = rules.unused_variables_ignore
+        found.append(find_unused_variables(after, files, rules.unused_variables, ignore, trust))
+    return found
+
+
+def _layering_rules(
+    rules: LeanRules, after: ProjectSnapshot, affected: AffectedSet, trust: Trust
+) -> list[LeanOutcome]:
+    """The two structure rules that read the reference walk (req 2.1, 3.1).
+
+    **Only one of the two takes ``trust``, and that is the design's decision rather than an
+    omission.** Requirement 2.6 gives the pass-through rule requirement 1.8's floors in as
+    many words, because an understated caller count moves a routine *towards* that rule's
+    predicate. Requirement 3 names neither floor, and of the two only the accuracy one is even
+    arguable for it -- ``referrers`` counts use, type and inheritance references rather than
+    call edges, so a partly resolved call graph does not bound it. So the rule ships off, takes
+    no gate, and task 6.4 owns the measurement that would decide whether one belongs.
+    """
+    found: list[LeanOutcome] = []
+    keys = affected.keys
+    if rules.pass_through is not None:
+        limits = PassThroughLimits(rules.pass_through_max_statements, rules.pass_through_ignore)
+        found.append(find_pass_through(after, keys, rules.pass_through, limits, trust))
+    if rules.single_implementation is not None:
+        ignore = rules.single_implementation_ignore
+        found.append(find_single_implementations(after, keys, rules.single_implementation, ignore))
+    return found
 
 
 def _over_exports(rules: LeanRules, after: ProjectSnapshot, affected: AffectedSet) -> list[Finding]:

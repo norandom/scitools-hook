@@ -27,10 +27,13 @@ task 2.5's review asked for when a single test module reached for twelve collabo
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final, NamedTuple
 
 import pytest
 from conftest import MakeGitRepo
+from fixtures.constants import LEAN_REFERENCE_RULES
 from test_check_pipeline import (
+    SAFE_POPULATIONS,
     Harness,
     built,
     edge,
@@ -49,10 +52,13 @@ from scitools_hook.config.models import (
     Settings,
     matching_pattern,
 )
+from scitools_hook.models.findings import RunResult
+from scitools_hook.models.snapshot import ProjectSnapshot, Side
+from scitools_hook.models.understand import AnalyzeResult
 from scitools_hook.runner.lean import LeanResult
 
 OVER_EXPORT = "structure.over_export"
-"""The one lean rule that can run today; the other five need extraction groups 3 and 5."""
+"""The lean rule answered from metrics and edges alone, and the one this module started with."""
 
 NET_GROWTH = "structure.net_growth"
 """The optional maximum on the delta, and the only project-scope finding this family makes."""
@@ -318,3 +324,432 @@ def test_the_unavailable_messages_are_said_once_per_run(
 
     assert harness.notes.count("lean: the references were not recorded") == 1
     assert result.net_delta is None
+
+
+# --- the five rules that read the reference walk (task 4.3) -------------------------
+#
+# `a_lean_repository` above answers over-export from metrics and edges alone. The five rules
+# added by groups 3 and 4 read facts a snapshot only carries when the extractor was asked for
+# them, and every one of them refuses unless the run also carries an accuracy figure and a
+# call-resolution share above requirement 1.8's two floors. So they need a second fixture,
+# and the fixture's whole job is to be *believable*: facts on every record, a measured
+# declaring-class tally, a resolution share above the floor, and an accuracy figure on the
+# after side.
+
+FACT_FILE: Final = "src/lean/thing.py"
+
+REFERENCE_RULES: Final[tuple[str, ...]] = (
+    "structure.unused_parameter",
+    "structure.unused_class",
+    "structure.unused_variable",
+    "structure.pass_through",
+    "structure.single_implementation",
+)
+"""The five rules this task wires in, by the id the finding carries."""
+
+TRUSTED_RESOLUTION: Final[dict[str, object]] = {
+    "Python": {"resolved": 8, "external": 1, "unresolved": 1}
+}
+"""80% of call sites resolved: above the shipped 75% floor, and constructed rather than
+measured -- no corpus has paired a resolution share with a false-positive count."""
+
+REFUSED_RESOLUTION: Final[dict[str, object]] = {
+    "Python": {"resolved": 1, "external": 1, "unresolved": 8}
+}
+"""10% resolved: under any floor an operator could reasonably set."""
+
+TRUSTED_ACCURACY: Final = 0.9
+REFUSED_ACCURACY: Final = 0.1
+
+
+def _lean_record(
+    scope: str, longname: str, kind: str, facts: dict[str, object], **metrics: float
+) -> dict[str, object]:
+    """One entity record carrying the lean facts the reference walk records for its kind."""
+    record = (
+        routine(FACT_FILE, longname, **metrics)
+        if scope == "routine"
+        else _class_record(longname, kind)
+    )
+    return {**record, "lean": facts}
+
+
+def _class_record(longname: str, kind: str) -> dict[str, object]:
+    """One class record; `test_check_pipeline` builds files and routines but no classes."""
+    return {
+        "ref": {
+            "key": {
+                "scope": "class",
+                "path": FACT_FILE,
+                "longname": longname,
+                "parameters": None,
+            },
+            "kind": kind,
+            "name": longname.rsplit(".", 1)[-1],
+            "line": 1,
+        },
+        "language": "Python",
+        "metrics": {},
+        "archs": [],
+    }
+
+
+def _facts_routines() -> list[dict[str, object]]:
+    """The three routines: one with a spare parameter, one that forwards, one that is called.
+
+    ``thing.forward`` is the pass-through shape and the other two are what keep the rule from
+    reporting them: ``consume`` has two callers and two callees, ``target`` has four callers.
+    """
+    return [
+        _lean_record(
+            "routine",
+            "thing.consume",
+            "Python Function",
+            {"callers": 2, "callees": 2, "overrides": False, "unused_parameters": ["spare"]},
+            CountStmt=8,
+            CountLineCode=10,
+        ),
+        _lean_record(
+            "routine",
+            "thing.forward",
+            "Python Function",
+            {
+                "callers": 1,
+                "callees": 1,
+                "forwards_to": "thing.target",
+                "overrides": False,
+                "unused_parameters": [],
+            },
+            CountStmt=1,
+            CountLineCode=2,
+        ),
+        _lean_record(
+            "routine",
+            "thing.target",
+            "Python Function",
+            {"callers": 4, "callees": 0, "overrides": False, "unused_parameters": []},
+            CountStmt=5,
+            CountLineCode=6,
+        ),
+    ]
+
+
+def _facts_classes() -> list[dict[str, object]]:
+    """The three classes, and the two rules about classes are kept apart by their facts.
+
+    ``thing.Orphan`` is unreferenced with no derived class, so only the unused-class rule can
+    reach it; ``thing.Provider`` is referenced with one derived class, so only the
+    single-implementation rule can; ``thing.Sole`` is that derived class and is reported by
+    neither. A finding that moved between the two rules therefore shows as a count.
+    """
+    return [
+        _lean_record(
+            "class",
+            "thing.Orphan",
+            "Python Class",
+            {"referenced": False, "derived": [], "referrers": 0},
+        ),
+        _lean_record(
+            "class",
+            "thing.Provider",
+            "Python Class",
+            {"referenced": True, "derived": ["thing.Sole"], "referrers": 0},
+        ),
+        _lean_record(
+            "class",
+            "thing.Sole",
+            "Python Class",
+            {"referenced": True, "derived": [], "referrers": 2},
+        ),
+    ]
+
+
+def facts_snapshot(
+    side: Side, resolution: dict[str, object] = TRUSTED_RESOLUTION
+) -> ProjectSnapshot:
+    """One snapshot in which each of the five rules has exactly one thing to report.
+
+    Every record carries measured facts and ``method_declarations`` is a measured empty
+    tally, so no rule reports itself unavailable for want of them: what is left to decide the
+    run is the pair of floors, which is what the tests below move. The populations are the
+    ones ``test_check_pipeline.SAFE_POPULATIONS`` uses, because a snapshot that says nothing
+    about the project breaks the shipped project thresholds instead.
+    """
+    return ProjectSnapshot.model_validate(
+        {
+            "side": side,
+            "languages": ["Python"],
+            "entities": [
+                source_file(FACT_FILE, CountDeclFunction=3, CountDeclClass=3, CountLineCode=40),
+                *_facts_routines(),
+                *_facts_classes(),
+            ],
+            "definitions": [
+                {"name": "UNREAD", "path": FACT_FILE, "line": 3, "referenced": False},
+                {"name": "READ", "path": FACT_FILE, "line": 4, "referenced": True},
+            ],
+            "method_declarations": {},
+            "call_resolution": resolution,
+            "arch_nodes": [{"path": "Directory Structure/src", "members": []}],
+            "populations": {scope: dict(v) for scope, v in SAFE_POPULATIONS.items()},
+        }
+    )
+
+
+def every_reference_rule(**overrides: object) -> Settings:
+    """The five reference rules on as warnings, with anything else the test wants moved."""
+    return lean_settings(**{**dict.fromkeys(LEAN_REFERENCE_RULES, "warning"), **overrides})
+
+
+class Measured(NamedTuple):
+    """What a run measured about its own analysis, which is what the two floors judge.
+
+    ``accuracy`` is ``(after, before)``, and the two differ by default because the pair is
+    the only way to prove which side the step reads: a step wired to the before side passes
+    every test in which both sides carry the same figure.
+
+    One object rather than two parameters because this project's own gate said so: spelled
+    out beside ``settings`` and ``name``, ``a_facts_repository`` took six parameters against a
+    maximum of five and ``check --worktree`` exited 1 on it -- the same finding task 4.2's
+    review recorded, on the same kind of helper. They are also one decision: how far this run
+    may be trusted about itself.
+    """
+
+    accuracy: tuple[float | None, float | None] = (TRUSTED_ACCURACY, REFUSED_ACCURACY)
+    resolution: dict[str, object] = TRUSTED_RESOLUTION
+
+
+TRUSTED_RUN: Final = Measured()
+"""A run above both floors on the after side and below the accuracy floor on the before."""
+
+
+def a_facts_repository(
+    git_repo: MakeGitRepo,
+    tmp_path: Path,
+    settings: Settings,
+    measured: Measured = TRUSTED_RUN,
+    name: str = "facts",
+) -> Harness:
+    """One restaged file whose snapshot carries every fact the five rules read."""
+    builder = git_repo(name)
+    builder.write(FACT_FILE, "# x\n")
+    builder.stage(FACT_FILE)
+    builder.commit("initial")
+    builder.write(FACT_FILE, "# changed\n")
+    builder.stage(FACT_FILE)
+    sides = (facts_snapshot(side, measured.resolution) for side in ("after", "before"))
+    after, before = sides
+    return make_harness(
+        builder,
+        tmp_path / name,
+        settings,
+        answers={"after": [after, after], "before": [before, before]},
+        analyses=[AnalyzeResult(seconds=0.0, accuracy=found) for found in measured.accuracy],
+    )
+
+
+def rules_of(result: RunResult) -> list[str]:
+    """Every lean reference rule that produced a finding in this run, sorted."""
+    return sorted(f.rule for f in result.findings if f.rule in REFERENCE_RULES)
+
+
+def test_a_trusted_run_reports_all_five_reference_rules(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The wiring itself: five rules, five findings, one per subject the fixture built."""
+    result = a_facts_repository(git_repo, tmp_path, every_reference_rule()).run()
+
+    assert rules_of(result) == sorted(REFERENCE_RULES)
+
+
+def test_each_finding_names_the_subject_its_rule_is_about(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """A count of five would pass with every rule reporting the same entity."""
+    result = a_facts_repository(git_repo, tmp_path, every_reference_rule()).run()
+    found = {f.rule: f.details for f in result.findings if f.rule in REFERENCE_RULES}
+
+    assert found["structure.unused_parameter"]["parameter"] == "spare"
+    assert found["structure.unused_class"]["longname"] == "thing.Orphan"
+    assert found["structure.unused_variable"]["definition"] == "UNREAD"
+    assert found["structure.pass_through"]["forwards_to"] == "thing.target"
+    assert found["structure.single_implementation"]["derived_class"] == "thing.Sole"
+
+
+@pytest.mark.parametrize("rule", LEAN_REFERENCE_RULES)
+def test_one_reference_rule_off_is_the_only_one_missing(
+    git_repo: MakeGitRepo, tmp_path: Path, rule: str
+) -> None:
+    """One test per guard in the step, counted from the code and not from a sentence.
+
+    ``runner.lean`` holds one ``if`` per reference rule, and a guard deleted there makes its
+    rule run whatever the configuration says. Switching exactly one rule off and demanding
+    exactly one finding fewer is what fails for each of the five separately.
+    """
+    settings = every_reference_rule(**{rule: None})
+
+    result = a_facts_repository(git_repo, tmp_path, settings, name=f"off-{rule}").run()
+
+    assert len(rules_of(result)) == len(REFERENCE_RULES) - 1
+
+
+def test_every_reference_rule_off_leaves_the_run_silent_about_them(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Requirement 9.4: an off rule costs no finding and no note."""
+    harness = a_facts_repository(git_repo, tmp_path, lean_settings())
+
+    result = harness.run()
+
+    assert rules_of(result) == []
+    assert [note for note in harness.notes if "was not evaluated" in note] == []
+
+
+# --- requirement 1.8's two floors, and which side's accuracy answers them -----------
+
+
+def notes_about_floors(harness: Harness) -> list[str]:
+    """Every note this run made about a rule it refused to evaluate."""
+    return [note for note in harness.notes if "was not evaluated" in note]
+
+
+def test_a_refused_run_says_so_once_per_rule_and_reports_nothing(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Requirements 1.6 and 2.5 through the pipeline: five notes, no findings.
+
+    Four of the five rules take the floors; ``single_implementation`` ships with none, which
+    the design argues at length, so the count below is four and stating five would be a
+    docstring contradicting its own run.
+    """
+    harness = a_facts_repository(
+        git_repo, tmp_path, every_reference_rule(), Measured((REFUSED_ACCURACY, TRUSTED_ACCURACY))
+    )
+
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert len(notes_about_floors(harness)) == 4
+
+
+def test_the_after_sides_accuracy_is_the_one_the_rules_are_judged_by(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The two sides carry opposite figures, so a step reading the wrong one fails here.
+
+    ``check.run`` has both in hand from ``_figures(analyses)``. The after side is the code
+    the change proposes and the side every one of these rules reads its facts from; a rule
+    licensed by the before side's accuracy would be licensed by an analysis of code that is
+    no longer there.
+    """
+    rules, good, bad = every_reference_rule(), TRUSTED_ACCURACY, REFUSED_ACCURACY
+    trusted = a_facts_repository(git_repo, tmp_path, rules, Measured((good, bad)), "after-good")
+    refused = a_facts_repository(git_repo, tmp_path, rules, Measured((bad, good)), "after-bad")
+
+    assert len(rules_of(trusted.run())) == len(REFERENCE_RULES)
+    assert notes_about_floors(trusted) == []
+    assert len(rules_of(refused.run())) == 1
+
+
+def test_a_run_that_measured_no_accuracy_refuses_rather_than_assumes(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """An absent figure is not a good one: a 6.5 install licenses no dead-code claim (1.8)."""
+    harness = a_facts_repository(
+        git_repo, tmp_path, every_reference_rule(), Measured((None, TRUSTED_ACCURACY))
+    )
+
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert "measured no analysis accuracy" in notes_about_floors(harness)[0]
+
+
+def test_the_configured_accuracy_floor_is_the_one_the_rules_are_held_to(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """``lean.accuracy_floor`` reaches the rules, and the note quotes the operator's number."""
+    settings = every_reference_rule(accuracy_floor=0.95)
+
+    harness = a_facts_repository(git_repo, tmp_path, settings)
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert "accuracy floor of 95%" in notes_about_floors(harness)[0]
+
+
+def test_the_configured_resolution_floor_is_the_one_the_rules_are_held_to(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """``lean.resolution_floor`` reaches the rules, on a run whose accuracy is fine."""
+    settings = every_reference_rule(resolution_floor=0.9)
+
+    harness = a_facts_repository(git_repo, tmp_path, settings)
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert "call-resolution floor of 90%" in notes_about_floors(harness)[0]
+
+
+def test_a_run_below_the_resolution_floor_reports_nothing_and_names_the_language(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The second floor, moved by the measurement rather than by the configuration (1.8)."""
+    harness = a_facts_repository(
+        git_repo, tmp_path, every_reference_rule(), Measured(resolution=REFUSED_RESOLUTION)
+    )
+
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert all("Python" in note for note in notes_about_floors(harness))
+
+
+# --- the two accuracy floors are two decisions -------------------------------------
+#
+# `analysis.accuracy_floor` and `lean.accuracy_floor` read the same measurement to opposite
+# ends: the first RAISES a non-blocking finding to say the run is less trustworthy, and ships
+# unset; the second SUPPRESSES rules that cannot be trusted below it, and ships at 0.75. The
+# argument for two keys rather than one is written beside both fields; what these two tests
+# do is make the independence fail loudly if anyone ever wires one to the other, because two
+# numbers that must DIFFER need a binding artefact exactly as two that must agree do.
+
+ACCURACY_RULE: Final = "analysis.accuracy"
+
+
+def test_lowering_the_analysis_floor_does_not_license_a_dead_code_claim(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The failure this separation exists to prevent, written as a test.
+
+    An operator on a project whose third-party headers do not resolve lowers
+    ``analysis.accuracy_floor`` to stop the warning nagging. If the lean rules read that key,
+    they would be unlocked at 10% accuracy -- the configuration in which sixteen of sixteen
+    module bindings this repository reports as unreferenced are in fact read.
+    """
+    settings = every_reference_rule()
+    settings.analysis.accuracy_floor = 0.05
+
+    harness = a_facts_repository(
+        git_repo, tmp_path, settings, Measured((REFUSED_ACCURACY, REFUSED_ACCURACY))
+    )
+    result = harness.run()
+
+    assert rules_of(result) == ["structure.single_implementation"]
+    assert [f for f in result.findings if f.rule == ACCURACY_RULE] == []
+
+
+def test_moving_the_lean_floor_raises_no_analysis_accuracy_finding(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The other direction: ``[lean]`` configures rules, it does not report on the analysis."""
+    harness = a_facts_repository(
+        git_repo,
+        tmp_path,
+        every_reference_rule(accuracy_floor=0.99),
+        Measured((REFUSED_ACCURACY, REFUSED_ACCURACY)),
+    )
+
+    result = harness.run()
+
+    assert [f for f in result.findings if f.rule == ACCURACY_RULE] == []

@@ -23,12 +23,15 @@ from pydantic import ValidationError
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.metric_names import SYNTHETIC_METRICS
 from scitools_hook.config.models import (
+    DEFAULT_ACCURACY_FLOOR,
     DEFAULT_LEAN_CLASS_IGNORE,
     DEFAULT_LEAN_IMPLEMENTATION_IGNORE,
     DEFAULT_LEAN_OVER_EXPORT_IGNORE,
     DEFAULT_LEAN_PARAMETER_IGNORE,
     DEFAULT_LEAN_VARIABLE_IGNORE,
+    DEFAULT_RESOLUTION_FLOOR,
     DEFAULT_UNUSED_IGNORE,
+    REFERENCE_RULES,
     LeanRules,
     Settings,
     matching_pattern,
@@ -51,6 +54,8 @@ unused_classes = "warning"
 unused_classes_ignore = ["Error$"]
 unused_variables = "error"
 unused_variables_ignore = ["^log$"]
+resolution_floor = 0.5
+accuracy_floor = 0.6
 pass_through = "warning"
 pass_through_max_statements = 3
 pass_through_ignore = ["(^|\\\\.)main$"]
@@ -120,11 +125,74 @@ def test_the_verbosity_floor_asks_for_nothing_extra() -> None:
     assert lean.wants_tokens is False
 
 
+# --- requirement 1.8's two floors ---------------------------------------------------
+
+
+def test_the_two_trust_floors_ship_at_the_placeholders_the_rules_document() -> None:
+    """Requirement 1.8 asks for *configurable* floors, and 0.75 is where they start.
+
+    Read off the constants rather than written as 0.75 twice, because the whole point of the
+    keys is that one declaration owns each number and the operator may move it. Neither is
+    calibrated -- requirement 1.10's two-repository count is what will calibrate them -- so
+    nothing here claims either is the rate at which the rules become right.
+    """
+    lean = default_settings().lean
+
+    assert lean.resolution_floor == DEFAULT_RESOLUTION_FLOOR
+    assert lean.accuracy_floor == DEFAULT_ACCURACY_FLOOR
+
+
+def test_a_floor_of_zero_and_a_floor_of_one_are_both_legal() -> None:
+    """The ends of the range: trust nothing about the analysis, or demand a perfect one."""
+    assert LeanRules.model_validate({"resolution_floor": 0.0}).resolution_floor == 0.0
+    assert LeanRules.model_validate({"accuracy_floor": 1.0}).accuracy_floor == 1.0
+
+
+def test_the_floors_cost_nothing_and_turn_nothing_on() -> None:
+    """Requirement 9.4: they bound rules that are off, so on their own they buy no walk."""
+    lean = LeanRules.model_validate({"resolution_floor": 0.9, "accuracy_floor": 0.9})
+
+    assert lean.wants_references is False
+    assert lean.wants_tokens is False
+
+
+# --- the two accuracy floors are two decisions, not one written twice ----------------
+#
+# `analysis.accuracy_floor` and `lean.accuracy_floor` read the same measurement -- the share
+# of files `und analyze -accuracy` parsed without an error -- to opposite ends. The first
+# RAISES a non-blocking finding saying the run is less trustworthy, and ships unset. The
+# second SUPPRESSES the rules that cannot be trusted below it, and ships at 0.75. Both
+# docstrings say so; these tests are what fails if anyone ever wires one to the other, which
+# is the binding two numbers that must DIFFER need exactly as two that must agree do.
+
+
+def test_the_shipped_pair_disagrees_on_purpose() -> None:
+    """One is unset because it reports; the other is set because it refuses."""
+    shipped = default_settings()
+
+    assert shipped.analysis.accuracy_floor is None
+    assert shipped.lean.accuracy_floor == DEFAULT_ACCURACY_FLOOR
+
+
+def test_setting_either_accuracy_floor_leaves_the_other_where_it_was() -> None:
+    """A file that names one key must not move the number the other key owns."""
+    reporting = Settings.model_validate(tomllib.loads("[analysis]\naccuracy_floor = 0.2\n"))
+    refusing = Settings.model_validate(tomllib.loads("[lean]\naccuracy_floor = 0.2\n"))
+
+    assert (reporting.analysis.accuracy_floor, reporting.lean.accuracy_floor) == (
+        0.2,
+        DEFAULT_ACCURACY_FLOOR,
+    )
+    assert (refusing.lean.accuracy_floor, refusing.analysis.accuracy_floor) == (0.2, None)
+
+
 def test_a_configuration_naming_every_new_key_validates() -> None:
-    """All twenty-three keys together, in the spellings the documentation will show."""
+    """All twenty-five keys together, in the spellings the documentation will show."""
     settings = Settings.model_validate(tomllib.loads(EVERY_KEY))
 
     assert settings.lean.unused_variables == "error"
+    assert settings.lean.resolution_floor == 0.5
+    assert settings.lean.accuracy_floor == 0.6
     assert settings.lean.pass_through_max_statements == 3
     assert settings.lean.duplicates_min_lines == 10
     assert settings.lean.similar_threshold == 0.95
@@ -215,6 +283,10 @@ def test_a_path_ignore_list_takes_globs_not_regexes(field: str) -> None:
         {"similar_threshold": 1.5},
         {"max_net_growth": -1},
         {"verbosity_min_statements": 0},
+        {"resolution_floor": 1.5},
+        {"resolution_floor": -0.01},
+        {"accuracy_floor": 1.5},
+        {"accuracy_floor": -0.01},
     ],
     ids=[
         "budget",
@@ -224,6 +296,10 @@ def test_a_path_ignore_list_takes_globs_not_regexes(field: str) -> None:
         "threshold_high",
         "growth",
         "verbosity_floor",
+        "resolution_above",
+        "resolution_below",
+        "accuracy_above",
+        "accuracy_below",
     ],
 )
 def test_a_number_outside_the_range_the_rule_can_mean_is_refused(
@@ -253,6 +329,18 @@ def test_a_lean_rule_takes_only_a_known_severity(rule: str) -> None:
 
 
 # --- the two derived answers the extractor reads ------------------------------------
+
+
+def test_the_suite_and_the_settings_name_the_same_reference_rules() -> None:
+    """One list, two independent statements of it, and this is what keeps them equal.
+
+    ``config.models.REFERENCE_RULES`` is what ``wants_references`` and
+    ``understand.features.ASKED_BY`` both read; ``fixtures.constants.LEAN_REFERENCE_RULES`` is
+    what the suite parametrises over, spelled out rather than imported so that a rule dropped
+    from the production constant cannot silently drop the cases that would have caught it.
+    Two artefacts that must agree need something binding them, and this is it.
+    """
+    assert LEAN_REFERENCE_RULES == REFERENCE_RULES
 
 
 @pytest.mark.parametrize("rule", LEAN_REFERENCE_RULES)

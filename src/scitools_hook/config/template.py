@@ -356,6 +356,16 @@ _LEAN_HELP: Final[tuple[str, ...]] = (
     "[ignore], the scope overrides, the severity map and the ratchet reach them like any other",
     "structural rule. The *_ignore lists are regular expressions over entity names, except",
     "over_export_ignore, duplicates_ignore and similar_ignore, which are path globs.",
+    "The two *_floor keys are the only set lines here that no rule owns, which is why they ship",
+    "SET while every rule in this block ships off: runner.lean.evaluate reads them on every run,",
+    "whatever these switches say. Every other key that ships set here belongs to one rule -- it",
+    "is that rule's limit, its exception list or its severity -- and does nothing until that rule",
+    "is on, with one exception: verbosity_min_statements is read by [thresholds.routine]",
+    "LinesPerStatement, which does ship on. The floors say how much of the analysis has to have",
+    "worked before a rule may claim a name is unused: below either one the dead-code and",
+    "pass_through rules evaluate nothing and say which floor stopped them at what measured",
+    "value. [lean] accuracy_floor REFUSES to judge below it; the separate [analysis]",
+    "accuracy_floor only REPORTS a poorly resolved run and silences nothing.",
 )
 
 _LEAN_REPORTS: Final[dict[str, str]] = {
@@ -384,7 +394,8 @@ def _noted(line: str, note: str) -> str:
     """A live line with the few words that say what its number means.
 
     Only the keys whose name does not: `duplicates_min_lines` is read off the rule's own
-    description, `verbosity_min_statements` is read off nothing at all.
+    description, `verbosity_min_statements` is read off nothing at all, and the two floors
+    are read off nothing an operator has met before this file.
     """
     return f"{line}  # {note}"
 
@@ -406,6 +417,39 @@ def _lean_dead_code(cfg: LeanRules) -> list[str]:
         _line("unused_classes_ignore", cfg.unused_classes_ignore),
         _lean_rule(cfg, "unused_variables"),
         _line("unused_variables_ignore", cfg.unused_variables_ignore),
+    ]
+
+
+def _lean_trust(cfg: LeanRules) -> list[str]:
+    """Requirement 1.8's two floors, the only set lines in this block no rule owns.
+
+    They are not switches and not limits on the code: they say how much of the analysis has
+    to have worked before the rules above and `pass_through` below may claim a name is
+    unused. Below either one the rules evaluate nothing and say which floor stopped them at
+    what measured value, which is why they can ship on without turning any rule on. Every
+    other set line in the block belongs to one named rule -- that rule's limit, its exception
+    list or its severity -- and these two wait on no switch: ``runner.lean.evaluate`` builds
+    the run's ``Trust`` out of them whatever the section turned on.
+
+    "Owned by no rule" is the property, not "set and in force while the block is off", and
+    the difference is one key. ``verbosity_min_statements`` is also set and also in force --
+    ``runner.check.run`` stamps it on every threshold that declares a floor, and its rule,
+    ``[thresholds.routine] LinesPerStatement``, ships on -- so the help text names it as the
+    exception rather than leaving an operator to find it two sections below.
+
+    `accuracy_floor` is not `[analysis] accuracy_floor`; that one ships unset and *reports*
+    a poorly resolved run, this one *refuses* to judge on it. The note beside the line is
+    where an operator finds that out, so it names the other key rather than paraphrasing it.
+    """
+    return [
+        _noted(
+            _line("resolution_floor", cfg.resolution_floor),
+            "below this share of resolved calls the rules above say nothing",
+        ),
+        _noted(
+            _line("accuracy_floor", cfg.accuracy_floor),
+            "the parse floor; NOT [analysis] accuracy_floor, which only reports",
+        ),
     ]
 
 
@@ -464,15 +508,22 @@ def _lean_size(cfg: LeanRules) -> list[str]:
 def _lean_body(cfg: LeanRules) -> str:
     """``[lean]``: one commented line per off rule, in the style of ``_unused`` above.
 
-    Four groups rather than one list because the section holds twenty-three keys, and the
+    Five groups rather than one list because the section holds twenty-five keys, and the
     routine that wrote them all would be past this project's own limits before the family is
-    finished. The groups are also the order an operator reads them in: what is dead, what is
-    empty structure, what is a copy, and how long the change made the project.
+    finished. The groups are also the order an operator reads them in: what is dead, how far
+    the analysis may be trusted to say so, what is empty structure, what is a copy, and how
+    long the change made the project.
     """
     return _section(
         "[lean]",
         _LEAN_HELP,
-        [*_lean_dead_code(cfg), *_lean_shapes(cfg), *_lean_copies(cfg), *_lean_size(cfg)],
+        [
+            *_lean_dead_code(cfg),
+            *_lean_trust(cfg),
+            *_lean_shapes(cfg),
+            *_lean_copies(cfg),
+            *_lean_size(cfg),
+        ],
     )
 
 

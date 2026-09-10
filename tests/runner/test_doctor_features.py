@@ -57,7 +57,8 @@ def offered(tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog, 
 def test_a_build_that_answers_every_command_offers_every_feature(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """The 8.0 shape: six features, each measured by running the thing that needs it."""
+    """The 8.0 shape: five features measured by running the thing that needs them, and two
+    recorded as available on every build because references are what Understand *is*."""
     features = offered(
         tmp_path, git_repo, command_log, und=understand_8(), mode="understand8", api="stub"
     )
@@ -69,6 +70,7 @@ def test_a_build_that_answers_every_command_offers_every_feature(
         Feature.COMMIT_BEFORE: "available",
         Feature.PLUGIN_METRICS: "available",
         Feature.UNUSED_RULE: "available",
+        Feature.LEAN_REFERENCES: "available",
     }
 
 
@@ -209,9 +211,10 @@ def test_the_report_prints_one_row_per_feature(
         "feature commit before",
         "feature plugin metrics",
         "feature unused rule",
+        "feature lean references",
     ):
         assert label in text, label
-    assert text.count("available") >= 6
+    assert text.count("available") >= 7
 
 
 def test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam(
@@ -224,20 +227,21 @@ def test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam(
     processes" for them, on a build that had just been probed for six other features. That is
     a confident wrong answer in the one command whose whole job is to say what is true.
 
-    **Deliberately temporary, and these are the tasks that end it.** Task 4.3 of the
-    lean-code specification records `LEAN_REFERENCES` as available on every build, and task
-    5.5 writes the lexer and duplicate-metric probes; from then on a probed build carries all
-    three answers and `NO_PROBE` no longer appears for them, so whoever lands those tasks
-    rewrites this test around whatever features are then unprobed, or deletes it if none are.
-    What must survive either way is the rule it pins: a feature the report does not answer
-    says it was not measured, and never blames the fixture seam.
+    **Deliberately temporary, and one task has now ended half of it.** Task 4.3 recorded
+    `LEAN_REFERENCES` as available on every build, so its row is asserted as `available` in
+    the test above and is gone from the list below. The two token features are still
+    unprobed; task 5.5 writes the lexer and duplicate-metric probes, and whoever lands it
+    deletes this test, because nothing will then be left for it to be about. What must
+    survive that deletion is the rule it pins, which is why the rule is written here: a
+    feature the report does not answer says it was not measured, and never blames the
+    fixture seam.
     """
     home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
     env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
 
     text = render_report(run_doctor(options(git_repo().path, env, command_log)))
 
-    for label in ("feature lean references", "feature lean tokens", "feature duplicate metric"):
+    for label in ("feature lean tokens", "feature duplicate metric"):
         assert f"{label}: {NO_PROBE}" in text, label
         # Narrowed to the feature rows on purpose: `NOT_CHECKED` is still the right answer for
         # the interpreter row when no pin was read, and asserting its absence from the whole

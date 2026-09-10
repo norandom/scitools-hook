@@ -791,6 +791,62 @@ that is not a file at all.
 """
 
 
+DEFAULT_RESOLUTION_FLOOR: Final = 0.75
+"""The share of a language's call sites that must resolve before a rule may speak (req 1.8).
+
+**A placeholder. No rate at which these rules become sound has been measured.** It is
+deliberately set where nothing yet measured can reach it, and it is not a calibration: the
+two corpora where the predicate was measured wrong were measured by *accuracy*, not by call
+resolution, and the one call-resolution figure that exists (43% on this repository) has never
+been paired with a false-positive count. Requirement 1.10's two-repository measurement, which
+task 6.4 owns, is what re-derives this number.
+
+Silence is not absence: below the floor the rules say what stopped them and at what measured
+value, which is a different product from a rule that is simply off.
+
+It lives here rather than beside the rules that read it because two places would otherwise
+own it -- ``LeanRules.resolution_floor``'s default and ``analysis.lean.dead.Trust``'s -- and
+this project has shipped that defect. ``dead`` imports it from here, which is the direction
+the layer order allows.
+"""
+
+DEFAULT_ACCURACY_FLOOR: Final = 0.75
+"""The share of files the analysis must have parsed cleanly before a rule may speak (1.8).
+
+A placeholder on the same terms as :data:`DEFAULT_RESOLUTION_FLOOR` and for the same reason.
+Both corpora that produced a false-positive count report an accuracy far below it -- 19% on
+this repository and 26% on facdrone -- so this floor is silent on both, but no corpus has been
+measured where these rules are right, and no rate has been shown to be the rate at which they
+become so. Task 6.4 re-derives it from two repositories.
+
+**This is not** ``analysis.accuracy_floor``, **and the collision is deliberate rather than an
+oversight**; :attr:`LeanRules.accuracy_floor` argues it where an operator reads it.
+"""
+
+REFERENCE_RULES: Final[tuple[str, ...]] = (
+    "unused_parameters",
+    "unused_classes",
+    "unused_variables",
+    "pass_through",
+    "single_implementation",
+)
+"""The five ``[lean]`` switches that need the worker's per-entity reference walk (req 9.4).
+
+``over_export`` is deliberately not among them: it is answered from file metrics,
+``file_edges`` and the definitions walk the snapshot already carries, so it needs no ``refs``
+call on any entity. Adding it here would make an over-export-only configuration pay for a
+reference call on every recorded entity and read none of the answers.
+
+**One list, three readers.** :attr:`LeanRules.wants_references` decides whether the extractor
+pays for the walk, ``understand.features.ASKED_BY`` decides which configuration keys the
+build must offer :attr:`~scitools_hook.models.understand.Feature.LEAN_REFERENCES` for, and
+the suite parametrises over it. An earlier draft of the design said six in one place and five
+in another; written out three times, the three would agree on the day they were written and
+never again, and the failure is silent -- a rule missing from the extractor's list reads its
+facts as "not asked" and reports itself unavailable on every run.
+"""
+
+
 class LeanRules(StrictModel):
     """``[lean]``: the lean-code family's switches, numbers and ignore lists (req 1.5-7.5).
 
@@ -826,6 +882,43 @@ class LeanRules(StrictModel):
     unused_variables_ignore: list[str] = Field(
         default_factory=lambda: list(DEFAULT_LEAN_VARIABLE_IGNORE)
     )
+    # Requirement 1.8's two floors: how well this run resolved calls, and how much of it
+    # Understand parsed at all, below which the dead-code and pass-through rules make no
+    # finding and say which floor stopped them at what measured value. Unlike every switch
+    # above they ship *set*, because they are what keeps the rules from deleting working
+    # code and a floor an operator has to remember to add is not a guard.
+    resolution_floor: float = Field(default=DEFAULT_RESOLUTION_FLOOR, ge=0.0, le=1.0)
+    accuracy_floor: float = Field(default=DEFAULT_ACCURACY_FLOOR, ge=0.0, le=1.0)
+    """The accuracy below which a lean rule refuses to judge -- **not** ``analysis.accuracy_floor``.
+
+    Two keys read the same measurement, the share of files ``und analyze -accuracy`` parsed
+    without an error or a warning, and they do opposite jobs:
+
+    * ``analysis.accuracy_floor`` **reports**. It ships unset, and when an operator sets it
+      the run raises one non-blocking finding per side saying that everything below it says
+      less than it appears to. It never blocks and never silences anything.
+    * this key **refuses**. It ships at 0.75, and below it the three dead-code rules and the
+      pass-through rule evaluate nothing and say so once per run.
+
+    **Why not one key.** Sharing would make the safety floor a side effect of tuning a report.
+    An operator whose third-party headers do not resolve lowers the reporting floor to stop
+    the warning nagging -- and would thereby unlock the dead-code rules at that accuracy,
+    which is exactly the configuration this repository's own measurement was taken in: at 19%
+    accuracy, every one of the sixteen module bindings the snapshot answers
+    ``referenced: false`` for is in fact read, a hundred per cent false-positive rate. A
+    number whose job is to refuse must not be movable by someone who believes they are
+    silencing a report. Merging the other way is no better: giving ``analysis.accuracy_floor``
+    the default 0.75 would start a new warning on every repository below it, changing the
+    shipped behaviour of a feature that is deliberately unset (understand-8-features req 7.3).
+
+    **What stops a reader setting the wrong one.** Each lives in the section that names its
+    subject -- ``[analysis]`` reports on the analysis, ``[lean]`` configures the lean rules --
+    each docstring names the other and says which job it does, and setting either one is
+    pinned as changing nothing the other governs. This family's recurring defect is two
+    artefacts that must agree with nothing binding them; these two must *differ*, so the
+    binding artefact is the pair of tests that fail if one ever starts reading the other.
+    """
+
     pass_through: Severity | None = None
     # At most two statements, because the third is a body: requirement 2.2 draws the line at
     # "a routine with one caller and a body of its own is a decomposition the Gate's own hints
@@ -906,20 +999,13 @@ class LeanRules(StrictModel):
         answers, which is the cost requirement 9.4 forbids while a rule is off and
         requirement 9.5 puts a ceiling on when one is on.
 
-        The design says the same thing twice on purpose (its ``LeanRules`` note and its
-        ``ASKED_BY`` note): an earlier draft said six here and five there, and the two must
-        stay in agreement or the extractor pays for the difference.
+        The names are read from :data:`REFERENCE_RULES` rather than written out here, because
+        an earlier draft of the design said six in one place and five in another and the two
+        must stay in agreement or the extractor pays for the difference. That list is also
+        what ``understand.features`` maps to the build capability these five need, so the
+        question is asked in one place and answered in one place.
         """
-        return any(
-            rule is not None
-            for rule in (
-                self.unused_parameters,
-                self.unused_classes,
-                self.unused_variables,
-                self.pass_through,
-                self.single_implementation,
-            )
-        )
+        return any(getattr(self, rule) is not None for rule in REFERENCE_RULES)
 
     @property
     def wants_tokens(self) -> bool:

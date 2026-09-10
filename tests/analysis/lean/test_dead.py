@@ -356,6 +356,31 @@ def test_every_dead_rule_says_what_it_did_not_judge() -> None:
         assert "so nothing was judged unused;" in message
 
 
+def test_the_missing_declaring_class_tally_says_it_judged_nothing_unused_too() -> None:
+    """The fourth call site in this module, which the three-rule test above cannot reach.
+
+    ``find_unused_parameters`` refuses twice for two different reasons -- no routine facts,
+    and no declaring-class tally -- and only the first is on the path the test above takes.
+    Measured rather than assumed: rewording ``_UNUSED`` at this call site alone left the
+    whole suite green, so of the four sites ``dead.unavailable`` is called from here, three
+    were pinned and this one was not. It is now.
+    """
+    record = routine("app.Service.run", facts(unused=("verbose",)))
+    after = ProjectSnapshot(
+        side="after",
+        languages=["Python"],
+        entities={record.key: record},
+        call_resolution={"Python": RESOLVED},
+        method_declarations=None,
+    )
+
+    outcome = find_unused_parameters(after, {record.key}, trust=TRUSTED)
+
+    assert outcome.findings == []
+    assert "declaring-class tally" in outcome.unavailable[0]
+    assert "so nothing was judged unused;" in outcome.unavailable[0]
+
+
 # --- the parameter rule's three unmeasured facts ----------------------------------
 
 
@@ -513,6 +538,38 @@ def test_the_resolution_floor_is_per_language_and_the_measured_one_still_reports
     assert "C++" in outcome.unavailable[0]
 
 
+def test_two_refused_languages_are_reported_in_one_fixed_order() -> None:
+    """``TrustGate.messages`` promises "a fixed order so a run reads the same twice" (1.8).
+
+    ``sorted(self._refused)`` is what keeps that promise, and nothing stood on it: every
+    other test here refuses at most one language, and ``_refused`` is a dict, so it answers
+    in walk order whether or not it is sorted.
+
+    **The walk order has to be the reverse of the sorted order or the test proves nothing**,
+    and that was measured rather than assumed: an earlier draft used C++ and Python, which
+    ``affected_records`` walks by long name -- ``app.Native.run`` before ``app.Service.run``,
+    so C++ was inserted first and the sort was already a no-op. Dropping ``sorted`` left it
+    green. Here the Rust routine is walked first and ``"Rust"`` sorts *after* ``"Python"``,
+    so an unsorted gate answers ``["Rust", "Python"]``.
+    """
+    walked_first = routine("app.Alpha.run", facts(unused=("count",)), language="Rust")
+    walked_second = routine("app.Beta.run", facts(unused=("verbose",)))
+    after = ProjectSnapshot(
+        side="after",
+        languages=["Rust", "Python"],
+        entities={walked_first.key: walked_first, walked_second.key: walked_second},
+        call_resolution={"Rust": WELL_BELOW, "Python": BELOW_FLOOR},
+        method_declarations={},
+    )
+
+    outcome = find_unused_parameters(after, {walked_first.key, walked_second.key}, trust=TRUSTED)
+
+    assert outcome.findings == []
+    named = [message.split()[5].rstrip(":") for message in outcome.unavailable]
+
+    assert named == ["Python", "Rust"]
+
+
 def test_one_message_per_language_however_many_routines_it_holds() -> None:
     """Requirement 1.8 says once per run, not once per entity."""
     first = routine("app.Service.run", facts(unused=("verbose",)))
@@ -612,6 +669,21 @@ def test_the_floors_default_to_the_documented_placeholders() -> None:
     """
     assert Trust().resolution_floor == DEFAULT_RESOLUTION_FLOOR
     assert Trust().accuracy_floor == DEFAULT_ACCURACY_FLOOR
+
+
+def test_the_floors_a_caller_passes_nothing_for_are_the_ones_the_settings_ship() -> None:
+    """One declaration, two readers: `[lean]`'s defaults and `Trust`'s are the same numbers.
+
+    They have to be. `runner.lean` builds a `Trust` from `settings.lean`, so a `Trust`
+    default that drifted from the field default would mean a unit test and a run judging the
+    same snapshot by different floors -- and the unit tests here are what the floors' whole
+    behaviour is argued from. Bound by having `config.models` own both constants and this
+    module import them, so the two cannot be moved apart; this test is what says so.
+    """
+    shipped = LeanRules()
+
+    assert Trust().resolution_floor == shipped.resolution_floor
+    assert Trust().accuracy_floor == shipped.accuracy_floor
 
 
 # --- the floors are asked before the facts are believed ---------------------------
