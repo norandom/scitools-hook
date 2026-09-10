@@ -67,7 +67,7 @@
   - _Requirements: 4.1, 4.2, 4.3_
   - _Boundary: analysis/lean/layering_
 
-- [ ] 2.2 (P) The net delta of a change and the optional growth finding
+- [x] 2.2 (P) The net delta of a change and the optional growth finding
   - Over every routine of an affected or deleted file, on either side, paired by key and then by signature family through the ratchet's existing pairing helper, which the design names as this rule's one dependency inside the analysis layer: statements and code lines after minus before, a missing side counting as zero; no before side means no delta
   - When a maximum net growth is configured, a project-scope finding at the configured severity when statements exceed it
   - Done when unit tests show a deleted file counting negative, a renamed signature paired rather than counted twice, a whole-project run answering no delta, and the growth finding raised only past the limit

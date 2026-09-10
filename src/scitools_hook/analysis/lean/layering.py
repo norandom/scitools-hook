@@ -55,6 +55,13 @@ key of its own, which is also what the design gives the siblings for the single 
 name (``forwards_to`` in the pass-through rule). So: **a shared key keeps the type it already
 has, and a rule naming one entity gives it a key of its own rather than narrowing somebody
 else's.**
+
+*Keys reserved by the same reasoning, recorded here because this is where the family looks.*
+A bare ``lines`` belongs to the rule that names a **line range** -- the duplicate-block rule,
+whose finding is about where in a file the repetition sits -- so a rule carrying a *count* of
+lines does not take it: ``net`` publishes ``net_lines`` and ``net_routines`` beside the
+statement figure it puts in ``Finding.value``. The same applies to any later rule wanting to
+publish a number of lines: the plural noun is the location, not the size.
 """
 
 from __future__ import annotations
