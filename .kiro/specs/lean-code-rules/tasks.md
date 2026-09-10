@@ -61,7 +61,7 @@
   - _Boundary: tests/understand/api_fakes.py, scitools-hook.toml_
 
 - [ ] 2. Rules that need no new extraction, and the net delta
-- [ ] 2.1 (P) The over-export rule from today's snapshot
+- [x] 2.1 (P) The over-export rule from today's snapshot
   - A file defining exactly one routine or class, holding no other module-level definition, and depended on by exactly one project file is reported against the affected file, naming the dependant; initialisers and ignored paths are excluded; a file nothing depends on is not this rule's finding
   - Done when unit tests cover the finding, the initialiser exclusion, the zero-dependant case and the two-dependant case, and the rule is off by default
   - _Requirements: 4.1, 4.2, 4.3_
