@@ -267,3 +267,31 @@ Cross-cutting findings recorded as they were learned, so a later task does not r
 - **1.7** `variable_referenced` as designed would answer True for every module variable in every project, because a binding's own defining assignment is a `Set Init` reference to it. The design now reads only `useby, callby, typedby`, and a write-only variable is dead, which is also how Understand defines its own unused-variable metric. Task 3.2 implements it that way.
 - **1.7** Clipping a file's lexeme stream to a routine's line range picks up a trailing empty-text lexeme, which adds a free matching token to both sides of every similarity comparison: 0.637 with it against 0.631 without, on the contract project's cross-language pair. The design now drops lexemes by empty text rather than by class name, because the documented token classes do not include one for it.
 - **1.7** Two contract failures predate this feature and are owned by nobody: `test_doctor_features_contract` expects six feature rows where task 1.2 made nine, and `test_metrics_contract::test_the_catalogue_answers_a_metric_list_for_every_configurable_language` answers an empty set. Both need scheduling.
+
+## Found while dogfooding, and NOT part of this feature
+
+**The structural ratchet can report that an untouched file's coupling grew.** Found during
+task 1.8 and characterised by its review, on Understand 8.0 Build 1262 with this repository's
+own configuration.
+
+Appending two comment lines to `config/template.py` makes `check --worktree` report
+`analysis/recommend.py fan-out rose from 6 to 7 files`. That file is byte-identical on both
+sides and none of its dependencies was deleted, so it cannot legitimately have gained
+fan-out. Measured:
+
+- deterministic across repeated runs, so not a race;
+- survives moving the snapshot cache aside and forcing a cold before-side extraction, so not
+  a stale cache;
+- absent when an unrelated file is touched, and absent when a different dependency of the
+  same file is touched, so not universal;
+- the after side's recorded dependencies are the correct seven (four imports plus the three
+  package initialisers Python executes on the way), all present at HEAD too, so **the before
+  side's six is the under-resolved figure**, under an analysis reporting 19% accuracy.
+
+A structural "worse than before" finding on a file that is unchanged between the two sides is
+an artefact by construction. The cheap and defensible guard is to refuse to raise one for a
+file whose content is identical on both sides, or to require the two sides' resolution to
+agree before comparing structural counts.
+
+This is a defect in the base maintainability gate, not in the lean-code family, and it should
+have its own specification rather than being absorbed here. Recorded so it is not lost.
