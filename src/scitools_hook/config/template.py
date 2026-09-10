@@ -34,6 +34,7 @@ from scitools_hook.config.models import (
     CouplingRule,
     IgnoreRules,
     LayerRule,
+    LeanRules,
     OutputSettings,
     ParseSettings,
     PathScope,
@@ -342,6 +343,137 @@ _COMMENT_WIDTH: Final = 94
 def _wrapped(text: str) -> list[str]:
     """One comment split over as many lines as it needs; never an empty list."""
     return textwrap.wrap(text, width=_COMMENT_WIDTH) or [text]
+
+
+# --- the lean-code family ----------------------------------------------------------
+
+_LEAN_HELP: Final[tuple[str, ...]] = (
+    "The lean-code family: code an agent left behind, layers that forward and nothing else,",
+    "abstractions with one implementation, files that export one name, copies and near-copies.",
+    "Every rule below SHIPS OFF, and each commented line is both the switch and the",
+    'documentation: uncomment it to enable the rule, and "warning" -- report it, do not refuse',
+    "the commit -- is the value to start from. Findings carry the `structure.` category, so",
+    "[ignore], the scope overrides, the severity map and the ratchet reach them like any other",
+    "structural rule. The *_ignore lists are regular expressions over entity names, except",
+    "over_export_ignore, duplicates_ignore and similar_ignore, which are path globs.",
+)
+
+_LEAN_REPORTS: Final[dict[str, str]] = {
+    "unused_parameters": "Reports parameters a routine never reads",
+    "unused_classes": "Reports classes nothing in the project references",
+    "unused_variables": "Reports module-level names nothing references",
+    "pass_through": "Reports a routine with one caller that only forwards",
+    "single_implementation": "Reports a base class only one subclass uses",
+    "over_export": "Reports files defining one name for one importer",
+    "duplicates": "Reports copies of duplicates_min_lines lines or more",
+    "similar_routines": "Reports routines whose tokens twin another's",
+}
+"""What each off rule reports, in the few words that fit beside its commented line.
+
+The file `init` writes is where an operator meets this family, and requirements 1.5, 2.4, 3.4
+and 4.3 each ask for two facts the settings model cannot hold: that the rule is off *and* what
+turns it on. `None` says the first; only the text beside the line says the second.
+
+Each is short enough to keep its rendered line inside `_COMMENT_WIDTH`, the width the rest of
+this file wraps at. A generated file whose own lines wrap in the operator's editor is a file
+that reads as machine output rather than as documentation.
+"""
+
+
+def _noted(line: str, note: str) -> str:
+    """A live line with the few words that say what its number means.
+
+    Only the keys whose name does not: `duplicates_min_lines` is read off the rule's own
+    description, `verbosity_min_statements` is read off nothing at all.
+    """
+    return f"{line}  # {note}"
+
+
+def _lean_rule(cfg: LeanRules, name: str) -> str:
+    """One rule switch: the severity in force, or the commented line that would set one."""
+    severity = getattr(cfg, name)
+    if severity is not None:
+        return _line(name, severity)
+    return f'# {name} = "warning"  # unset: off. {_LEAN_REPORTS[name]}'
+
+
+def _lean_dead_code(cfg: LeanRules) -> list[str]:
+    """Dead code beyond routines: a parameter, a class, a module-level name (req 1.5)."""
+    return [
+        _lean_rule(cfg, "unused_parameters"),
+        _line("unused_parameters_ignore", cfg.unused_parameters_ignore),
+        _lean_rule(cfg, "unused_classes"),
+        _line("unused_classes_ignore", cfg.unused_classes_ignore),
+        _lean_rule(cfg, "unused_variables"),
+        _line("unused_variables_ignore", cfg.unused_variables_ignore),
+    ]
+
+
+def _lean_shapes(cfg: LeanRules) -> list[str]:
+    """Structure that adds a name and no behaviour (req 2.4, 3.4, 4.3)."""
+    return [
+        _lean_rule(cfg, "pass_through"),
+        _line("pass_through_max_statements", cfg.pass_through_max_statements),
+        _line("pass_through_ignore", cfg.pass_through_ignore),
+        _lean_rule(cfg, "single_implementation"),
+        _line("single_implementation_ignore", cfg.single_implementation_ignore),
+        _lean_rule(cfg, "over_export"),
+        _line("over_export_ignore", cfg.over_export_ignore),
+    ]
+
+
+def _lean_copies(cfg: LeanRules) -> list[str]:
+    """The two rules answered from token streams, and the numbers that bound them (req 5.5)."""
+    return [
+        _lean_rule(cfg, "duplicates"),
+        _line("duplicates_min_lines", cfg.duplicates_min_lines),
+        _line("duplicates_ignore", cfg.duplicates_ignore),
+        _lean_rule(cfg, "similar_routines"),
+        _line("similar_min_statements", cfg.similar_min_statements),
+        _noted(_line("similar_threshold", cfg.similar_threshold), "1.0 is an identical token run"),
+        _line("similar_ignore", cfg.similar_ignore),
+    ]
+
+
+def _lean_size(cfg: LeanRules) -> list[str]:
+    """The verbosity floor and the net-growth maximum, which is off like every rule (req 7.5).
+
+    The commented line says *reports*, not *refuses*, and the difference is the requirement:
+    ``net_growth_severity`` ships at ``warning``, so an operator who uncomments the maximum
+    gets a finding and a commit, not a refusal. A generated line promising otherwise would be
+    read by every repository that runs ``init`` as a reason not to uncomment it.
+    """
+    growth = (
+        _line("max_net_growth", cfg.max_net_growth)
+        if cfg.max_net_growth is not None
+        else "# max_net_growth = 50  # unset: off. Reports a change adding more than N net lloc"
+    )
+    return [
+        _noted(
+            _line("verbosity_min_statements", cfg.verbosity_min_statements),
+            "below this a routine is not judged by LinesPerStatement",
+        ),
+        growth,
+        _noted(
+            _line("net_growth_severity", cfg.net_growth_severity),
+            "how a max_net_growth finding is reported",
+        ),
+    ]
+
+
+def _lean_body(cfg: LeanRules) -> str:
+    """``[lean]``: one commented line per off rule, in the style of ``_unused`` above.
+
+    Four groups rather than one list because the section holds twenty-three keys, and the
+    routine that wrote them all would be past this project's own limits before the family is
+    finished. The groups are also the order an operator reads them in: what is dead, what is
+    empty structure, what is a copy, and how long the change made the project.
+    """
+    return _section(
+        "[lean]",
+        _LEAN_HELP,
+        [*_lean_dead_code(cfg), *_lean_shapes(cfg), *_lean_copies(cfg), *_lean_size(cfg)],
+    )
 
 
 def _codecheck(cfg: CodeCheckSettings) -> str:
@@ -664,10 +796,7 @@ def render_template(settings: Settings | None = None, *, proposal: Proposal | No
         _thresholds(cfg.thresholds),
         _ratchet(cfg.ratchet),
         _ignore(cfg.ignore),
-        _structure_body(cfg.structure),
-        _fan(cfg.structure),
-        _layers(cfg.structure.layers),
-        _coupling(cfg.structure.coupling),
+        *_structural_sections(cfg),
         _codecheck(cfg.codecheck),
         _baseline(cfg.baseline),
         _hints(cfg.hints),
@@ -678,6 +807,22 @@ def render_template(settings: Settings | None = None, *, proposal: Proposal | No
         *(proposal.suggestions if proposal is not None else ()),
     ]
     return "\n".join(part for part in parts if part)
+
+
+def _structural_sections(cfg: Settings) -> list[str]:
+    """The sections whose findings all carry the ``structure.`` category, in reading order.
+
+    Grouped rather than listed one by one in :func:`render_template`, because that routine is
+    an outline of the document and the five blocks below are one subject in it -- and because
+    a nineteen-line list literal is a routine this project's own LinesPerStatement rule reports.
+    """
+    return [
+        _structure_body(cfg.structure),
+        _fan(cfg.structure),
+        _layers(cfg.structure.layers),
+        _coupling(cfg.structure.coupling),
+        _lean_body(cfg.lean),
+    ]
 
 
 def _has_parse_suggestion(proposal: Proposal | None) -> bool:

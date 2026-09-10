@@ -45,7 +45,7 @@
   - Done when the extended fixture builds on the licensed install and the existing contract suite is green with the updated counts
   - _Requirements: 5.7, 9.1_
 
-- [ ] 1.8 Render the section in the `init` template
+- [x] 1.8 Render the section in the `init` template
   - The template renders the `[lean]` section commented, one line per off rule with its default in the comment, in the style of the unused rule's line
   - Done when the rendered template round-trips through the loader to the same effective settings, and the template test names every lean key
   - _Requirements: 1.5, 10.2_
@@ -295,3 +295,9 @@ agree before comparing structural counts.
 
 This is a defect in the base maintainability gate, not in the lean-code family, and it should
 have its own specification rather than being absorbed here. Recorded so it is not lost.
+
+**Update, same task, later run:** the artefact did NOT reproduce on a subsequent
+`check --worktree` over the same two files with four small edits added. So it is not purely a
+function of which files changed, and whatever resolves the before side's sixth edge varies
+between runs that ought to be equivalent. That widens the question rather than narrowing it,
+and it is worth reproducing deliberately before any fix is designed.

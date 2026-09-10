@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Final
 
 import pytest
+from fixtures.constants import LEAN_RULE_SWITCHES
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.detect import PARSE_REASONS, Detection, detect
 from scitools_hook.config.models import (
     CouplingRule,
     LayerRule,
+    LeanRules,
     ParseAcknowledgement,
     PathScope,
     Settings,
 )
 from scitools_hook.config.template import (
+    _COMMENT_WIDTH,
     CONFIG_FILENAME,
     propose,
     render_template,
@@ -36,6 +40,7 @@ EXPECTED_SECTIONS = [
     "[ignore]",
     "[structure]",
     "[structure.fan]",
+    "[lean]",
     "[codecheck]",
     "[baseline]",
     "[hints]",
@@ -369,3 +374,166 @@ def test_a_second_configuration_naming_the_same_test_tree_adds_one_scope(tmp_pat
     proposal = propose(found)
     assert list(proposal.settings.scope) == ["tests"]
     assert Settings.model_validate(tomllib.loads(render_template(proposal=proposal))) is not None
+
+
+# --- the [lean] block ---------------------------------------------------------------
+#
+# `[lean]` is the only place the second half of requirements 1.5, 2.4, 3.4 and 4.3 can be
+# said. The model expresses "off" as `None`; "and a warning when you switch it on" is not a
+# fact about the type at all, it is a fact about the line an operator reads in the file this
+# renderer writes. So these tests assert the *text*, not only the settings it loads to.
+
+LEAN_UNSET_KEYS: Final[tuple[str, ...]] = (*LEAN_RULE_SWITCHES, "max_net_growth")
+"""Every ``[lean]`` key that ships unset, and therefore has to be rendered commented."""
+
+
+def lean_block(text: str | None = None) -> str:
+    """The rendered ``[lean]`` body: the lines after its header, up to the next section."""
+    rendered = render_template() if text is None else text
+    return rendered.split("\n[lean]\n")[1].split("\n\n")[0]
+
+
+def lean_line(name: str, text: str | None = None) -> str:
+    """The single line of the block that sets ``name``, whether or not it is commented."""
+    lines = [
+        line
+        for line in lean_block(text).splitlines()
+        if line.startswith(f"{name} = ") or line.startswith(f"# {name} = ")
+    ]
+    assert len(lines) == 1, f"{name} is written on {len(lines)} lines: {lines}"
+    return lines[0]
+
+
+def test_the_lean_block_names_every_key_the_model_carries() -> None:
+    """Driven off ``LeanRules`` itself: a key added later and forgotten here fails here.
+
+    A hand-written list would pass forever while the template quietly stopped documenting
+    the newest rule, which is the only failure mode this test exists for (req 10.2).
+    """
+    block = lean_block()
+    missing = [
+        name
+        for name in LeanRules.model_fields
+        if not any(
+            line.startswith(f"{name} = ") or line.startswith(f"# {name} = ")
+            for line in block.splitlines()
+        )
+    ]
+
+    assert missing == []
+
+
+@pytest.mark.parametrize("rule", LEAN_UNSET_KEYS)
+def test_every_lean_rule_is_written_commented_and_changes_nothing(rule: str) -> None:
+    """Requirement 9.1: the shipped file documents each rule without enabling one."""
+    assert lean_line(rule).startswith("# ")
+    assert getattr(Settings.model_validate(tomllib.loads(render_template())).lean, rule) is None
+
+
+@pytest.mark.parametrize("rule", LEAN_RULE_SWITCHES)
+def test_every_off_lean_line_shows_the_value_that_enables_it(rule: str) -> None:
+    """Requirements 1.5, 2.4, 3.4, 4.3, 5.5: off, and a warning when the operator says so."""
+    line = lean_line(rule)
+
+    assert f'# {rule} = "warning"' in line
+    assert "unset: off" in line
+
+
+@pytest.mark.parametrize("rule", LEAN_RULE_SWITCHES)
+def test_every_off_lean_line_says_what_the_rule_reports(rule: str) -> None:
+    """An operator learns what a rule does from the line, not from the reference."""
+    _, _, described = lean_line(rule).partition("unset: off.")
+
+    assert len(described.split()) >= 4, f"{rule} is not described: {described!r}"
+
+
+def test_the_lean_numbers_and_ignore_lists_are_written_as_the_values_in_force() -> None:
+    """The tunable half is not commented: an operator edits a number that is already there."""
+    lean = tomllib.loads(render_template())["lean"]
+    shipped = default_settings().lean
+
+    assert lean["duplicates_min_lines"] == shipped.duplicates_min_lines
+    assert lean["similar_threshold"] == shipped.similar_threshold
+    assert lean["similar_min_statements"] == shipped.similar_min_statements
+    assert lean["pass_through_max_statements"] == shipped.pass_through_max_statements
+    assert lean["verbosity_min_statements"] == shipped.verbosity_min_statements
+    assert lean["net_growth_severity"] == shipped.net_growth_severity
+    assert lean["unused_parameters_ignore"] == shipped.unused_parameters_ignore
+    assert lean["over_export_ignore"] == shipped.over_export_ignore
+    assert set(lean) & set(LEAN_UNSET_KEYS) == set()
+
+
+EVERY_LEAN_KEY_SET: Final[dict[str, object]] = {
+    "unused_parameters": "warning",
+    "unused_classes": "error",
+    "unused_variables": "warning",
+    "pass_through": "warning",
+    "pass_through_max_statements": 1,
+    "single_implementation": "warning",
+    "over_export": "error",
+    "over_export_ignore": ["**/__init__.py"],
+    "duplicates": "warning",
+    "duplicates_min_lines": 20,
+    "duplicates_ignore": ["tests/**"],
+    "similar_routines": "warning",
+    "similar_min_statements": 8,
+    "similar_threshold": 0.95,
+    "similar_ignore": ["tests/**"],
+    "verbosity_min_statements": 3,
+    "max_net_growth": 40,
+    "net_growth_severity": "error",
+}
+"""Every key the renderer branches on, set away from its default, plus the numbers.
+
+Not literally every field -- the five name-pattern ignore lists keep their shipped values --
+and that is enough: ``_lean_rule`` branches only on the eight switches and ``_lean_size``
+only on ``max_net_growth``, so an ignore list has one rendering and it is already asserted
+against the defaults above.
+"""
+
+
+def test_a_configured_lean_section_round_trips_through_the_renderer() -> None:
+    """An enabled rule is written uncommented, at the severity it was set to."""
+    custom = default_settings().model_copy(deep=True)
+    custom.lean = LeanRules.model_validate(EVERY_LEAN_KEY_SET)
+    text = render_template(custom)
+
+    assert Settings.model_validate(tomllib.loads(text)) == custom
+    assert lean_line("unused_parameters", text) == 'unused_parameters = "warning"'
+    assert lean_line("max_net_growth", text) == "max_net_growth = 40"
+
+
+def test_no_lean_prose_line_runs_past_the_width_the_file_wraps_at() -> None:
+    """The block is documentation, and documentation that wraps in an editor reads as noise.
+
+    Only the lines this renderer writes prose on: an ignore list is a value, and the shipped
+    ``pass_through_ignore`` is the same four patterns ``structure.unused_ignore`` already
+    renders on one line above. The width is read off the renderer rather than repeated here,
+    so moving the wrap column moves this test with it instead of past it.
+    """
+    prose = [line for line in lean_block().splitlines() if "  # " in line or line.startswith("# ")]
+    too_wide = [line for line in prose if len(line) > _COMMENT_WIDTH]
+
+    assert too_wide == []
+
+
+def test_every_lean_number_an_operator_cannot_read_off_its_name_carries_a_note() -> None:
+    """``verbosity_min_statements = 5`` says nothing on its own; the trailing comment does."""
+    assert "  # " in lean_line("verbosity_min_statements")
+    assert "  # " in lean_line("net_growth_severity")
+    assert "  # " in lean_line("similar_threshold")
+
+
+def test_the_net_growth_line_promises_a_report_and_never_a_refusal() -> None:
+    """Requirement 7.5: the delta never blocks by default, so its line may not say it does.
+
+    ``net_growth_severity`` ships at ``warning``: uncommenting ``max_net_growth`` buys a
+    finding, not a refused commit. The stems are checked rather than the sentence, because
+    the failure this guards against is a rewording that drifts from the shipped severity --
+    which is what a reviewer caught in this line's first draft.
+    """
+    line = lean_line("max_net_growth").lower()
+
+    assert "refus" not in line
+    assert "block" not in line
+    assert default_settings().lean.net_growth_severity == "warning"
