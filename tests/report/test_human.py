@@ -41,6 +41,7 @@ from scitools_hook.models.snapshot import EntityKey, EntityRef, ParseError
 from scitools_hook.report.human import (
     PARSE_HEADER,
     ColorMode,
+    ReportSettings,
     Verbosity,
     _limit_distance,
     overshoot_ratio,
@@ -51,6 +52,14 @@ from scitools_hook.report.human import (
 TEXT: Final = "src/util/text.cpp"
 
 ANSI: Final = re.compile(r"\x1b\[[0-9;]*m")
+
+ASKED: Final = ReportSettings(show_highest=True)
+"""The configuration's answer to requirement 5.6 when the operator asked for the highest values.
+
+Named rather than written out at each call, because it is the only field of
+:class:`~scitools_hook.report.human.ReportSettings` these tests vary and spelling it out turns
+a one-line render into four.
+"""
 
 
 def routine_ref(longname: str, path: str, line: int) -> EntityRef:
@@ -1042,9 +1051,9 @@ def test_the_blocking_summary_line_is_the_one_the_snapshots_carry() -> None:
 
 def test_a_run_carrying_none_of_these_facts_renders_byte_identically() -> None:
     """The no-op run: empty -- and zero-valued -- fields must not add a single character."""
-    blocking = render_human(blocking_run(), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    blocking = render_human(blocking_run(), Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     assert blocking == BLOCKING_TEXT
-    assert render_human(run(), Verbosity.NORMAL, ColorMode.OFF, True, True) == EMPTY_TEXT
+    assert render_human(run(), Verbosity.NORMAL, ColorMode.OFF, True, ASKED) == EMPTY_TEXT
     nothing = run(
         *blocking_run().findings,
         ignored_counts={"routine": 0, "class": 0},
@@ -1052,11 +1061,11 @@ def test_a_run_carrying_none_of_these_facts_renders_byte_identically() -> None:
         tightened=[],
         highest=[],
     )
-    assert render_human(nothing, Verbosity.NORMAL, ColorMode.OFF, True, True) == BLOCKING_TEXT
+    assert render_human(nothing, Verbosity.NORMAL, ColorMode.OFF, True, ASKED) == BLOCKING_TEXT
 
 
 def test_every_fact_renders_in_its_place_around_the_findings() -> None:
-    assert render_human(facts_run(), Verbosity.NORMAL, ColorMode.OFF, True, True) == FACTS_TEXT
+    assert render_human(facts_run(), Verbosity.NORMAL, ColorMode.OFF, True, ASKED) == FACTS_TEXT
 
 
 def test_the_facts_render_without_findings_too() -> None:
@@ -1067,7 +1076,7 @@ def test_the_facts_render_without_findings_too() -> None:
         tightened=TIGHTENED,
         highest=HIGHEST,
     )
-    text = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, True)
+    text = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     assert text == (
         f"{UNAVAILABLE_BLOCK}\n\n{IGNORED_BLOCK}\n\n{TIGHTENED_BLOCK}\n\n{HIGHEST_BLOCK}\n\n"
         "nothing to report: this change breaks no rule that was evaluated\n"
@@ -1136,7 +1145,7 @@ def test_the_summary_says_nothing_about_metrics_when_every_one_was_evaluated() -
 
 def test_quiet_withholds_the_unavailable_list_but_keeps_its_count() -> None:
     """5.5's precedent: 7.8 is the narrower rule, but quiet may not hide an incomplete run."""
-    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, True)
+    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, ASKED)
     assert f"| {UNAVAILABLE_SEGMENT} |" in text
     assert "unavailable metrics: these limits were NOT evaluated" not in text
 
@@ -1144,8 +1153,8 @@ def test_quiet_withholds_the_unavailable_list_but_keeps_its_count() -> None:
 def test_the_unavailable_section_is_as_loud_as_the_parse_errors() -> None:
     """Both report coverage that was lost, so both wear the alarm colour."""
     result = facts_run()
-    colored = render_human(result, Verbosity.NORMAL, ColorMode.ON, True, True)
-    plain = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, True)
+    colored = render_human(result, Verbosity.NORMAL, ColorMode.ON, True, ASKED)
+    plain = render_human(result, Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     header = UNAVAILABLE_BLOCK.splitlines()[0]
     assert f"\x1b[1;31m{header}\x1b[0m" in colored
     assert ANSI.sub("", colored) == plain
@@ -1179,32 +1188,34 @@ def test_the_tightened_section_names_each_limit_and_both_values() -> None:
 
 def test_the_highest_values_print_only_when_the_operator_asks() -> None:
     """Requirement 5.6 is conditional on ``--show-highest``; nothing else turns it on."""
-    asked = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
-    unasked = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, False)
+    asked = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
+    unasked = render_human(
+        run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, ReportSettings()
+    )
     assert HIGHEST_BLOCK in asked
     assert "highest" not in unasked
     assert unasked == EMPTY_TEXT
 
 
 def test_the_highest_value_names_the_entity_that_has_it() -> None:
-    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     assert "  routine.CyclomaticStrict  20  engine.Engine.evaluate  src/analysis/engine.py" in text
     assert "line 42" in text
 
 
 def test_a_file_scope_highest_does_not_repeat_its_path() -> None:
-    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     assert "  file.CountLineCode  700  src/cli/app.py  line 1" in text
 
 
 def test_a_population_highest_prints_without_an_entity() -> None:
-    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    text = render_human(run(highest=HIGHEST), Verbosity.NORMAL, ColorMode.OFF, True, ASKED)
     assert text.endswith("  project.AVG:CyclomaticStrict  4.5\n\n" + EMPTY_TEXT)
 
 
 def test_quiet_prints_none_of_the_three_notes() -> None:
     """7.8 prints the summary and the blocking findings; the notes wait for a normal run."""
-    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, True)
+    text = render_human(facts_run(), Verbosity.QUIET, ColorMode.OFF, True, ASKED)
     assert text == QUIET_TEXT.replace(BLOCKING_SUMMARY, FACTS_SUMMARY)
     assert "ignored entities" not in text
     assert "tightened limits" not in text

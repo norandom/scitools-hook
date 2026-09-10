@@ -1,9 +1,10 @@
 """The human view of a run: findings grouped by file, then one summary line (req 7.3).
 
 The renderer is a pure function of a :class:`~scitools_hook.models.findings.RunResult` and
-four decisions the caller has already made -- how much to print, whether to colour, whether
-the run should end with instructions for a coding agent, and whether the operator asked for
-the highest values (req 5.6). It reads neither ``sys.stdout`` nor the environment:
+five decisions the caller has already made -- how much to print, whether to colour, whether
+the run should end with instructions for a coding agent, and, in :class:`ReportSettings`,
+whether the operator asked for the highest values (req 5.6) and which lean-code rules are
+switched on (lean-code req 7.6). It reads neither ``sys.stdout`` nor the environment:
 requirement 7.6 (no colour on a non-interactive terminal unless forced) is a decision about
 the terminal, which belongs to the CLI, so the CLI computes it with :func:`resolve_color` and
 passes the answer in. That keeps every rendering test free of monkeypatching and makes the
@@ -78,6 +79,25 @@ Decisions worth knowing about, all of them visible in ``tests/report/test_human.
 * **Counts** in the summary are taken from ``result.findings`` rather than from the
   ``*_count`` fields, so the line can never disagree with the findings printed above it;
   ``blocking_count`` is a validated mirror of the same findings and decides the exit code.
+* **The net line** closes the run, under the summary, whenever the check had a before side
+  to subtract from (lean-code req 7.1, 7.3). It is one line for the whole change rather than
+  a finding about a piece of it, and the ``agent-rules`` snippet promises an agent this exact
+  shape, so the two ship together: ``net: +12 lloc (+30 lines) over 7 routines``. A run with
+  no before side (``--all``) carries no delta and prints **no line at all** -- printing a zero
+  there would report a measurement of a change nothing looked at (7.4). It survives ``--quiet``
+  because requirement 7.1 puts the figure in the summary and quiet keeps the summary.
+* **The lean-already line** follows it when, and only when, all three of requirement 7.6's
+  conditions hold: a lean rule is switched on, no lean finding was raised, and the delta is at
+  or below zero. Each one is what stops a congratulation from being false -- on a repository
+  where no lean rule looked, on a change that collected six lean findings, on a change that
+  added two hundred lines -- so they are three separate guards in :func:`_nothing_to_cut`
+  rather than one boolean expression, and ``tests/report/test_lean_report.py`` fails a run for
+  each of them on its own.
+* **The worked example** of a lean finding (req 8.2) prints under its hint at
+  ``Verbosity.VERBOSE`` and nowhere else. It is the five-line before/after block the hint
+  catalogue ships, attached to the finding by the check pipeline under ``details["example"]``;
+  it teaches the shorter form to an agent that asked for detail, and it is five lines per
+  finding that the default report and ``--quiet`` are better without.
 * **Colour** is emitted as SGR escapes around already-padded text, so stripping the escapes
   gives exactly the uncoloured rendering. The design's ``rich`` console lives in the CLI; a
   renderer that returns a string must not wrap or re-flow the text it is handed.
@@ -92,23 +112,32 @@ from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
 from scitools_hook.config.metric_names import SCOPES, Scope
-from scitools_hook.config.models import Severity
+from scitools_hook.config.models import LeanRules, Severity
 from scitools_hook.exit_codes import ExitCode, describe
+from scitools_hook.models.change import NetDelta
 from scitools_hook.models.findings import (
     Finding,
     HighestValue,
     RunResult,
     TightenedLimit,
     UnderstandSarif,
+    structure_rule,
 )
 from scitools_hook.models.snapshot import ParseError
+from scitools_hook.report.lean_examples import LEAN_RULES
 
 
 class Verbosity(StrEnum):
-    """How much of a run to print; ``QUIET`` is requirement 7.8."""
+    """How much of a run to print; ``QUIET`` is requirement 7.8, ``VERBOSE`` lean-code 8.2.
+
+    ``VERBOSE`` is ``NORMAL`` plus the worked example under each lean finding's hint. It adds
+    detail to a finding rather than adding findings, so every other section reads it exactly
+    as it reads ``NORMAL``: only ``QUIET`` narrows what is printed.
+    """
 
     NORMAL = "normal"
     QUIET = "quiet"
+    VERBOSE = "verbose"
 
 
 class ColorMode(StrEnum):
@@ -151,6 +180,25 @@ HIGHEST_HEADER: Final = (
 PROJECT_HEADER: Final = "project-wide"
 ARCH_HEADER_PREFIX: Final = "architecture node "
 AGENT_HEADER: Final = "agent instructions"
+
+EXAMPLE_LABEL: Final = "example: "
+"""What opens the worked example's first line, so a reader sees where the block starts."""
+
+LEAN_ALREADY_PREFIX: Final = "lean already: nothing to cut, net "
+"""Requirement 7.6's one line, and the whole claim it makes: the rules looked and found none.
+
+It repeats the figure the net line above it already carries, deliberately: this line is the
+answer to "is there anything left to remove", and an answer that has to be read together with
+the line above it is one an agent can quote without the number that qualifies it.
+"""
+
+_LEAN_RULE_NAMES: Final[frozenset[str]] = frozenset(structure_rule(name) for name in LEAN_RULES)
+"""The rule names whose presence means a lean rule *did* find something (req 7.6).
+
+Derived from :data:`~scitools_hook.report.lean_examples.LEAN_RULES`, which is the report
+layer's single naming of the family, so a tenth rule joins this set by being added there
+rather than by being remembered here.
+"""
 
 _AGENT_LINES: Final[tuple[str, ...]] = (
     "  Re-run while editing:  scitools-hook check --worktree",
@@ -225,17 +273,55 @@ def _limit_distance(finding: Finding) -> float | None:
     return overshoot_ratio(finding)
 
 
+@dataclass(frozen=True, slots=True)
+class ReportSettings:
+    """What the effective configuration, rather than the command line, tells the renderer.
+
+    These two answers arrive in one object instead of as parameters of their own, and the
+    reason is the finding the Gate raised on this file when the second one landed:
+    :func:`render_human` reached six parameters against ``routine.CountParams``, whose own hint
+    asks for the parameters that always travel together to become one object. These do travel
+    together -- both are read from ``Settings`` at the one call site that has one, while
+    ``verbosity``, ``color`` and ``show_agent_block`` are decided from the terminal and the
+    command -- so the line is drawn where the answers come from, not wherever the count
+    happened to fit.
+    """
+
+    show_highest: bool = False
+    """Requirement 5.6: the operator asked for the highest value per metric."""
+
+    lean: LeanRules | None = None
+    """The effective ``[lean]`` section, for requirement 7.6's "nothing to cut" line.
+
+    Passed whole rather than as a "lean rules are on" boolean so that a caller cannot answer
+    the question narrowly by mistake: ``LeanRules.wants_references`` leaves three of the nine
+    switches out on purpose (see :func:`_lean_is_on`), and 7.6 asks about all nine. ``None``
+    is a caller with no lean configuration to speak for, and prints no such line.
+    """
+
+
+UNCONFIGURED: Final = ReportSettings()
+"""What a caller with no configuration to speak for passes: nothing asked for, nothing on.
+
+A module-level singleton because it is the default of :func:`render_human`, and building one
+in the signature would build it at import time under a name nobody can see -- the shape
+``ruff``'s ``B008`` refuses. It is frozen, so the one instance is safe to share.
+"""
+
+
 def render_human(
     result: RunResult,
     verbosity: Verbosity = Verbosity.NORMAL,
     color: ColorMode = ColorMode.OFF,
     show_agent_block: bool = True,
-    show_highest: bool = False,
+    settings: ReportSettings = UNCONFIGURED,
 ) -> str:
     """Render ``result`` as text, without a trailing newline.
 
     Covers requirements 7.3, 7.6, 7.8 and 10.4, the parse errors of 2.6, and the run facts
-    3.6, 5.5, 8.3 and -- when ``show_highest`` says the operator asked for them -- 5.6.
+    3.6, 5.5, 8.3 and -- when ``settings`` says the operator asked for them -- 5.6. The
+    lean-code family adds the net line (its 7.1, 7.3), the lean-already line (7.6) and, at
+    ``Verbosity.VERBOSE``, the worked example under each hint (8.2).
     """
     style = _Style(color)
     sections = []
@@ -243,9 +329,11 @@ def render_human(
         sections.append(_parse_error_section(result.parse_errors, style))
     if _shows_unavailable(result, verbosity):
         sections.append(_unavailable_section(result.unavailable_metrics, style))
-    sections.extend(_render_group(group, style) for group in _groups(_visible(result, verbosity)))
-    sections.extend(_note_sections(result, verbosity, show_highest, style))
-    sections.append(_closing(result, style))
+    sections.extend(
+        _render_group(group, verbosity, style) for group in _groups(_visible(result, verbosity))
+    )
+    sections.extend(_note_sections(result, verbosity, settings.show_highest, style))
+    sections.append(_closing(result, settings.lean, style))
     if _wants_agent_block(result, verbosity, show_agent_block):
         sections.append(_agent_block(result, style))
     return "\n\n".join(sections)
@@ -338,20 +426,65 @@ def _sort_key(finding: Finding) -> tuple[int, int, float, str, int, int, str]:
     )
 
 
-def _render_group(group: _Group, style: _Style) -> str:
+def _render_group(group: _Group, verbosity: Verbosity, style: _Style) -> str:
     """The group header followed by each of its findings."""
     lines = [style.strong(group.header)]
     for finding in group.findings:
-        lines.extend(_finding_lines(finding, group.path, style))
+        lines.extend(_finding_lines(finding, group.path, verbosity, style))
     return "\n".join(lines)
 
 
-def _finding_lines(finding: Finding, path: str, style: _Style) -> list[str]:
-    """One finding: the head line, its message, and its hint when the pipeline attached one."""
+def _finding_lines(finding: Finding, path: str, verbosity: Verbosity, style: _Style) -> list[str]:
+    """One finding: the head line, its message, its hint, and -- verbose -- its example."""
     lines = ["  " + "  ".join(_head_parts(finding, path, style)), f"    {finding.message}"]
     if finding.hint:
         lines.append(style.hint(f"    hint: {finding.hint}"))
+    lines.extend(_example_lines(finding, verbosity, style))
     return lines
+
+
+def _example_lines(finding: Finding, verbosity: Verbosity, style: _Style) -> list[str]:
+    """The worked before-and-after example under the hint, verbose only (lean-code req 8.2).
+
+    The example is the catalogue's text, attached to the finding by the check pipeline, and it
+    is printed **whole**: its first line names the location and the tag, and the block under it
+    is the shorter form. Quoting the head alone would leave an agent the description of an edit
+    it was meant to be shown, which is the failure task 2.4's review recorded on the hints.
+
+    ``details`` is a free-form bag, so a value that is not text is skipped rather than
+    rendered, and an example an operator emptied through ``[hints]`` prints nothing at all --
+    silencing one is a thing to be able to do, and a bare ``example:`` heading over nothing
+    would not be silence.
+
+    The surrounding newlines go before anything else, because requirement 8.6 lets an operator
+    write the replacement in ``[hints]`` and TOML's multi-line string opens and closes on its
+    own line. Left in, the leading one would print ``example:`` over an empty line and the
+    trailing one would end the finding with a blank line, which in this layout reads as the
+    end of the group.
+    """
+    if verbosity is not Verbosity.VERBOSE:
+        return []
+    example = finding.details.get("example")
+    if not isinstance(example, str):
+        return []
+    body = example.strip("\n")
+    if not body:
+        return []
+    head, *rest = body.split("\n")
+    return [
+        style.hint(f"    {EXAMPLE_LABEL}{head}"),
+        *(_example_line(line, style) for line in rest),
+    ]
+
+
+def _example_line(text: str, style: _Style) -> str:
+    """One continuation line of an example, indented under the finding; a blank stays blank.
+
+    An empty line wrapped in SGR escapes renders as an empty line and greps as one that is
+    not, so the example's own paragraph break is emitted as nothing rather than as colour
+    around nothing.
+    """
+    return style.hint(f"    {text}") if text else ""
 
 
 def _head_parts(finding: Finding, path: str, style: _Style) -> list[str]:
@@ -607,10 +740,84 @@ def _highest_parts(item: HighestValue) -> list[str]:
     return parts
 
 
-def _closing(result: RunResult, style: _Style) -> str:
-    """The summary line, led by the no-findings line when no finding was printed above it."""
+def _closing(result: RunResult, lean: LeanRules | None, style: _Style) -> str:
+    """The summary line, the no-findings line before it, and the change's delta after it."""
     summary = _summary_line(result, style)
-    return summary if result.findings else f"{_nothing_line(result)}\n{summary}"
+    lines = [summary] if result.findings else [_nothing_line(result), summary]
+    return "\n".join(lines + _delta_lines(result, lean))
+
+
+def _delta_lines(result: RunResult, lean: LeanRules | None) -> list[str]:
+    """What this change did to the project's length, in one line or two (req 7.1, 7.3, 7.6).
+
+    Neither line is coloured: the summary above them is the run's verdict and wears the only
+    emphasis in this block, while these two are measurements to be read after it.
+    """
+    delta = result.net_delta
+    if delta is None:
+        return []
+    lines = [net_line(delta)]
+    if _nothing_to_cut(result, delta, lean):
+        lines.append(f"{LEAN_ALREADY_PREFIX}{delta.statements:+d} lloc")
+    return lines
+
+
+def net_line(delta: NetDelta) -> str:
+    """``net: +12 lloc (+30 lines) over 7 routines`` -- the shape ``agent-rules`` promises.
+
+    The sign is always written, in both directions and on a zero: the figure is a movement,
+    and ``net: 0 lloc`` would read as a measurement that was not taken rather than as a change
+    that replaced exactly what it removed. Statements lead because formatting cannot move
+    them; the source-line delta beside them is what says a change spread the same logic wider.
+
+    **Public because the promise and the output must be one string.**
+    :mod:`scitools_hook.report.agent_rules` shows an agent this line before it writes anything
+    and calls this function to produce the example, so a change to the format changes the
+    document that promised it. Written out twice they agreed on the day they were written and
+    nothing afterwards -- which is exactly how task 2.4 re-introduced the defect task 2.3's
+    review had just fixed, by quoting a hint instead of sharing it.
+    """
+    return (
+        f"net: {delta.statements:+d} lloc ({delta.lines:+d} lines) "
+        f"over {_plural(delta.routines, 'routine')}"
+    )
+
+
+def _nothing_to_cut(result: RunResult, delta: NetDelta, lean: LeanRules | None) -> bool:
+    """Requirement 7.6's three conditions, one guard each so that none can be lost.
+
+    A boolean expression would fuse them: branch coverage records no arc for an ``and``
+    short-circuit, so a clause deleted from one would leave the module at 100% with every test
+    green. Each condition below is what keeps the line from being a false congratulation --
+    on a repository where no lean rule ran, on a change that raised six lean findings, or on
+    a change that added two hundred lines -- so each is tested by a run where it alone fails.
+    """
+    if not _lean_is_on(lean):
+        return False
+    if delta.statements > 0:
+        return False
+    return not any(finding.rule in _LEAN_RULE_NAMES for finding in result.findings)
+
+
+def _lean_is_on(lean: LeanRules | None) -> bool:
+    """Whether any switch in ``[lean]`` is set, which is what "enabled" means in 7.6.
+
+    All nine, not the five ``wants_references`` asks about: that property answers "must the
+    worker walk references", which deliberately excludes ``over_export`` (answered from
+    metrics and edges the snapshot already carries) and knows nothing of the net-growth
+    maximum. ``report.agent_rules._lean_labels`` enumerates the same nine to print them, and
+    the two lists must agree -- a rule an operator switched on and that this list forgets
+    would let the Gate report "nothing to cut" about a rule that did look.
+
+    ``max_net_growth`` rather than ``net_growth_severity`` decides the last one, as it does in
+    ``agent_rules._net_growth_label``: the severity always has a value and the maximum is what
+    an operator sets to turn the rule on.
+    """
+    if lean is None:
+        return False
+    if lean.wants_references or lean.wants_tokens:
+        return True
+    return lean.over_export is not None or lean.max_net_growth is not None
 
 
 def _nothing_line(result: RunResult) -> str:

@@ -43,6 +43,7 @@ from scitools_hook.config.models import (
     ThresholdSpec,
 )
 from scitools_hook.errors import ConfigError
+from scitools_hook.models.change import NetDelta
 from scitools_hook.models.findings import (
     STRUCTURE_RULES,
     EffectiveThreshold,
@@ -56,6 +57,7 @@ from scitools_hook.report.agent_rules import (
     render_rules,
 )
 from scitools_hook.report.hints import DEFAULT_CATALOGUE
+from scitools_hook.report.human import net_line
 from scitools_hook.report.lean_examples import LEAN_RULES
 
 CORE: Final = "Directory Structure/src/core"
@@ -476,6 +478,24 @@ def test_the_net_line_is_explained_whether_or_not_a_rule_is_on(lean_snippet: str
         assert "`net: +12 lloc (+30 lines) over 7 routines`" in lean
         assert "logical lines" in lean
         assert "`--all`" in lean
+
+
+def test_the_line_the_snippet_promises_is_the_line_the_report_prints(lean_snippet: str) -> None:
+    """The promise and the output are one string, and this is the shape both must have.
+
+    An agent reads this snippet before it writes anything and the report afterwards, so a
+    net line here that the report does not print is a document that lies to the only reader
+    it has. The two are bound in the source -- ``_NET_LINE`` calls
+    :func:`~scitools_hook.report.human.net_line` -- and this pins that shared function to the
+    literal requirement 7.3 fixes; ``tests/report/test_lean_human.py`` pins the same literal
+    against the rendered report. Written out as prose on both sides they would agree on the
+    day they were written and never again, which is how task 2.4 lost what task 2.3's review
+    had just added to the hints.
+    """
+    promised = "net: +12 lloc (+30 lines) over 7 routines"
+
+    assert net_line(NetDelta(statements=12, lines=30, routines=7)) == promised
+    assert f"`{promised}`" in section(lean_snippet, "Lean code")
 
 
 def test_the_net_growth_rule_appears_only_with_a_configured_maximum() -> None:

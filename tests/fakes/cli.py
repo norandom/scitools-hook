@@ -26,7 +26,7 @@ from fixtures.constants import STARTED_AT
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import Settings
 from scitools_hook.models.baseline import Baseline
-from scitools_hook.models.change import ChangeSummary
+from scitools_hook.models.change import ChangeSummary, NetDelta
 from scitools_hook.models.findings import Finding, HighestValue, RunResult
 from scitools_hook.runner.baseline_cmd import BaselineCapture
 from scitools_hook.runner.explain import ExplainOptions
@@ -75,7 +75,18 @@ test pass against a renderer that ignored the setting entirely (found by mutatio
 """
 
 
-def a_result(selection: str, findings: Sequence[Finding] = ()) -> RunResult:
+SHRANK = NetDelta(statements=-4, lines=-9, routines=3)
+"""One net delta, so a command that drops the lean configuration changes what is printed.
+
+The same lesson as :data:`HIGHEST` above: requirement 7.6's line needs a delta at or below
+zero to exist at all, so a run without one cannot tell a renderer that was told which lean
+rules are on from one that was told nothing.
+"""
+
+
+def a_result(
+    selection: str, findings: Sequence[Finding] = (), net_delta: NetDelta | None = None
+) -> RunResult:
     """A ``RunResult`` for ``selection``, with ``blocking_count`` kept consistent."""
     return RunResult(
         tool_version=TOOL_VERSION,
@@ -85,6 +96,7 @@ def a_result(selection: str, findings: Sequence[Finding] = ()) -> RunResult:
         started_at=STARTED_AT,
         seconds=0.5,
         findings=list(findings),
+        net_delta=net_delta,
         highest=list(HIGHEST),
         analyzed_files=1,
         blocking_count=sum(1 for finding in findings if finding.blocking),
@@ -98,6 +110,7 @@ class StubCheck:
     """Stands in for ``CheckPipeline``: records the selection and answers about it."""
 
     findings: Sequence[Finding] = ()
+    net_delta: NetDelta | None = None
     error: BaseException | None = None
     selections: list[Selection] = field(default_factory=list)
 
@@ -106,7 +119,7 @@ class StubCheck:
         self.selections.append(selection)
         if self.error is not None:
             raise self.error
-        return a_result(describe(selection), self.findings)
+        return a_result(describe(selection), self.findings, self.net_delta)
 
 
 def a_summary(

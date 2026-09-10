@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from fakes.cli import StubAssembler, a_finding, a_result, describe
+from fakes.cli import SHRANK, StubAssembler, a_finding, a_result, describe
 from typer.testing import CliRunner
 
 from scitools_hook.cli import app as app_module
@@ -27,7 +27,7 @@ from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.loader import load_settings
 from scitools_hook.errors import AnalysisFailedError, LicenseError, ReportUndeliverableError
 from scitools_hook.exit_codes import ExitCode
-from scitools_hook.report.human import ColorMode, Verbosity, render_human
+from scitools_hook.report.human import ColorMode, ReportSettings, Verbosity, render_human
 from scitools_hook.report.json_out import render_json
 from scitools_hook.report.sarif import render_sarif
 from scitools_hook.runner.pipeline import Selection
@@ -152,7 +152,7 @@ def test_human_findings_go_to_standard_output(assembler: StubAssembler) -> None:
         Verbosity.NORMAL,
         ColorMode.OFF,
         True,
-        False,
+        ReportSettings(),
     )
     assert result.stdout == expected + "\n"
 
@@ -202,7 +202,8 @@ def test_sarif_is_written_beside_the_chosen_format_not_instead_of_it(
     result = run("check", "--all", "--sarif", str(target))
     expected = a_result("all", BLOCKING)
     assert (
-        result.stdout == render_human(expected, Verbosity.NORMAL, ColorMode.OFF, True, False) + "\n"
+        result.stdout
+        == render_human(expected, Verbosity.NORMAL, ColorMode.OFF, True, ReportSettings()) + "\n"
     )
     document = json.loads(target.read_text(encoding="utf-8"))
     assert document["version"] == "2.1.0"
@@ -333,8 +334,29 @@ def test_the_highest_values_section_follows_the_effective_setting(
         }
     )
     result = run("check", "--all")
-    expected = render_human(a_result("all"), Verbosity.NORMAL, ColorMode.OFF, True, True)
+    expected = render_human(
+        a_result("all"), Verbosity.NORMAL, ColorMode.OFF, True, ReportSettings(show_highest=True)
+    )
     assert result.stdout == expected + "\n"
+
+
+def test_the_lean_configuration_reaches_the_renderer(assembler: StubAssembler) -> None:
+    """Lean-code requirement 7.6 is a configuration question, so ``[lean]`` must arrive.
+
+    The mirror of the test above, and for the same reason: "nothing to cut" is a claim the
+    renderer may only make when a lean rule is switched on, so a command that renders without
+    ``settings.lean`` prints a report that is missing a line rather than one that is wrong --
+    the failure mode a test on the pipeline's own output cannot see.
+    """
+    settings = assembler.assembly.ctx.settings
+    assembler.assembly.ctx.settings = settings.model_copy(
+        update={"lean": settings.lean.model_copy(update={"pass_through": "warning"})}
+    )
+    assembler.assembly.check_pipeline.net_delta = SHRANK
+
+    result = run("check", "--all")
+
+    assert "lean already: nothing to cut, net -4 lloc" in result.stdout
 
 
 class Terminal:
@@ -374,7 +396,7 @@ def test_quiet_reaches_the_renderer(assembler: StubAssembler) -> None:
     assembler.assembly.check_pipeline.findings = WARNING_ONLY
     result = run("--quiet", "check", "--all")
     expected = render_human(
-        a_result("all", WARNING_ONLY), Verbosity.QUIET, ColorMode.OFF, True, False
+        a_result("all", WARNING_ONLY), Verbosity.QUIET, ColorMode.OFF, True, ReportSettings()
     )
     assert result.stdout == expected + "\n"
 

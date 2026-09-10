@@ -54,7 +54,7 @@ from scitools_hook.cli import change, common, pipelines
 from scitools_hook.config.models import Settings
 from scitools_hook.exit_codes import ExitCode
 from scitools_hook.models.findings import RunResult
-from scitools_hook.report.human import render_human
+from scitools_hook.report.human import ReportSettings, render_human
 from scitools_hook.report.json_out import render_json
 from scitools_hook.report.sarif import render_sarif
 from scitools_hook.runner.companions import write_beside
@@ -182,7 +182,9 @@ def render(
     Colour is decided from the *destination*: a file is never a terminal, so ``--output
     report.txt`` gets no escapes even from an interactive session (task 9.1's ``color_for``).
     ``show_highest`` comes from the settings rather than from the flag, so requirement 5.6
-    can also be answered by a configuration file.
+    can also be answered by a configuration file, and ``[lean]`` travels beside it so the
+    renderer can tell a change with nothing left to cut from one where no lean rule looked
+    (lean-code req 7.6).
     """
     if output_format is CheckFormat.JSON:
         return render_json(result)
@@ -193,7 +195,7 @@ def render(
         options.verbosity,
         options.color_for(output),
         True,
-        settings.output.show_highest,
+        ReportSettings(show_highest=settings.output.show_highest, lean=settings.lean),
     )
 
 

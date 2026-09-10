@@ -75,12 +75,14 @@ from scitools_hook.config.models import (
     StructureRules,
 )
 from scitools_hook.errors import ConfigError
+from scitools_hook.models.change import NetDelta
 from scitools_hook.models.findings import (
     EffectiveThreshold,
     StructureRuleName,
     structure_rule,
 )
 from scitools_hook.report.hints import DEFAULT_CATALOGUE
+from scitools_hook.report.human import net_line
 from scitools_hook.report.lean_examples import LEAN_RULES
 
 BEGIN_MARKER: Final = "<!-- scitools-hook:begin -->"
@@ -180,11 +182,21 @@ The rules this repository has enabled: the severity each reports at, and the tag
 opens with. The tag is the edit being asked for -- `delete:` it is not used, `yagni:` it
 should not have been written, `shrink:` the same work fits in less code."""
 
-_NET_LINE: Final = """\
+_PROMISED_DELTA: Final = NetDelta(statements=12, lines=30, routines=7)
+"""The change the example line describes: twelve statements more, over seven routines.
+
+The numbers themselves are arbitrary. What is not is that the line below is rendered by
+:func:`~scitools_hook.report.human.net_line`, the same function that renders the real one, so
+this document cannot promise an agent a shape the report does not print. Written out as a
+literal the two agreed on the day they were written and never again -- the drift that made
+task 2.4 re-introduce the defect task 2.3 had just fixed.
+"""
+
+_NET_LINE: Final = f"""\
 ### The net line
 
 A check with a before side ends with one line for the whole change:
-`net: +12 lloc (+30 lines) over 7 routines`. That is logical lines added minus logical lines
+`{net_line(_PROMISED_DELTA)}`. That is logical lines added minus logical lines
 removed, the source-line delta beside it, and the number of routines it was summed over.
 `--all` has no before side, so it prints no net line.
 

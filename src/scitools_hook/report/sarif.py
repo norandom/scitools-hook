@@ -42,6 +42,14 @@ below are only about the decisions the schema cannot make.
   model's own names, so a consumer can join a result to the JSON document field by field.
   Absent measurements are omitted rather than written as ``null``.
 
+* **The net delta is a property of the run, not a result.** ``runs[0].properties.net_delta``
+  carries the change's movement in statements and source lines and the routines it was summed
+  over (lean-code req 7.1), under the same names the JSON document uses, so the two formats
+  can be joined field by field. It is not a finding -- it breaks no rule and blocks nothing --
+  so it must not appear among the results, where a code-scanning platform would triage it as
+  one. A run with no before side has no delta and declares no property at all rather than a
+  zero (7.4), and the ``net_growth`` rule, which *is* a finding, is unaffected either way.
+
 ``level`` follows the design: ``error`` and ``warning`` map through, and a pre-existing
 finding is a ``note`` whatever its severity, because it is not what this change did.
 
@@ -71,6 +79,9 @@ TOOL_NAME: Final = "scitools-hook"
 SRCROOT: Final = "%SRCROOT%"
 """The uri base id every in-repo artifact location is expressed against."""
 
+NET_DELTA: Final = "net_delta"
+"""The run property carrying the change's net movement, under the JSON output's own name."""
+
 _INDENT: Final = 2
 _FIRST_LINE: Final = 1
 """Smallest line number SARIF accepts; anything below it means "no region"."""
@@ -90,6 +101,8 @@ def render_sarif(result: RunResult, tool_version: str) -> str:
         "originalUriBaseIds": {SRCROOT: {"uri": _directory_uri(result.repo_root)}},
         "results": [_result(finding, indexes) for finding in result.findings],
     }
+    if result.net_delta is not None:
+        run["properties"] = {NET_DELTA: result.net_delta.model_dump()}
     document: JsonObject = {"$schema": SARIF_SCHEMA_URI, "version": SARIF_VERSION, "runs": [run]}
     return json.dumps(document, indent=_INDENT, ensure_ascii=False)
 

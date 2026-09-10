@@ -89,7 +89,7 @@
   - _Requirements: 8.3, 8.4, 8.5_
   - _Boundary: Reports_
 
-- [ ] 2.5 The net line, the lean-already line, the example in verbose output and the SARIF run property
+- [x] 2.5 The net line, the lean-already line, the example in verbose output and the SARIF run property
   - The human summary prints `net: +N lloc (+M lines) over K routines` with either sign whenever a delta exists; when a lean rule is on, no lean finding was raised and the delta is at or below zero, one line says there is nothing to cut; verbose output prints a finding's example under its hint; SARIF carries the delta as a run property; JSON carries it as a field
   - Done when unit tests cover both signs, the absent delta, the lean-already line, the example under the hint, and the run property in the SARIF document
   - _Depends: 2.2, 2.3_
