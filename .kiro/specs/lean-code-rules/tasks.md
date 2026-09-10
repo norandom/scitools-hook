@@ -128,7 +128,7 @@
   - _Requirements: 1.6, 2.5, 9.4_
 
 - [ ] 4. The reference rules
-- [ ] 4.1 (P) Dead parameters, classes and module variables
+- [x] 4.1 (P) Dead parameters, classes and module variables
   - Three rules over the after side: a parameter of an affected routine that the routine never references, located at the routine and naming the parameter, unless the routine overrides or the name matches the ignore list; an affected class nothing references unless ignored; an affected file's module variable nothing references unless ignored; a missing fact on any affected record yields the rule's unavailable message and nothing else; a deleted entity cannot appear
   - Done when unit tests cover each finding, the override exclusion, the receiver exclusion by default ignore, the unavailable message, and an unreferenced class in an unaffected file not reported
   - **Measured on this repository during task 3.3's review, and it is the strongest evidence the floor exists for:** every one of the 16 module bindings in `src/` that the snapshot answers `referenced: false` for is in fact read. Understand recorded no use reference for them because the use sites sit inside regions its analysis errored on, and a controlled two-file probe shows the same constants resolve correctly in a clean parse. That is a **100 per cent false-positive rate** for the unused-variable rule on this repository at this resolution. Requirement 10.5's blind-spot documentation needs it too
