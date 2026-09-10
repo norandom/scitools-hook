@@ -42,10 +42,10 @@ from __future__ import annotations
 from typing import Any, Final
 
 import pytest
-from api_fakes import FakeEnt, FakeRef, FakeUnderstand
+from api_fakes import FakeEnt, FakeRef
 from worker_projects import (
-    ANALYSIS_ROOT,
     a_class,
+    a_context,
     a_file,
     a_parameter,
     a_routine,
@@ -56,19 +56,6 @@ from scitools_hook.config.metric_names import SCOPE_KINDS
 from scitools_hook.understand import worker, worker_lean
 
 # --- the fixtures ---------------------------------------------------------------------
-
-
-def a_context() -> worker_lean.LeanContext:
-    """The context ``worker.py`` hands over: **its own** path helper and its analysis root.
-
-    ``worker._project_path`` rather than a stand-in written here, because the whole meaning
-    of "project" in these facts is that function's answer -- it is what refuses Understand's
-    injected stubs and anything outside the root -- and a second copy of that judgement in
-    the tests would let the two drift apart without either failing.
-    """
-    return worker_lean.LeanContext(
-        api=FakeUnderstand(), project_path=worker._project_path, root=ANALYSIS_ROOT
-    )
 
 
 def facts(ent: FakeEnt) -> dict[str, Any]:
@@ -449,13 +436,15 @@ def test_a_parameter_is_what_the_worker_already_counts() -> None:
 
 
 def test_the_file_an_entity_is_written_in_is_found_the_way_the_worker_finds_it() -> None:
-    """The third copy, and the one no behavioural test can reach.
+    """The third copy, and the one no behavioural test here reaches.
 
-    ``FakeEnt.ref`` answers the containment reference whatever filter it is given, exactly as
-    the impact tests need it to, so a kind dropped from ``CONTAINER_KINDS`` changes no unit
-    test's answer. A routine the project only declares -- a pure virtual, an ``extern`` -- has
-    no ``definein`` to fall back on, so losing ``declarein`` would silently drop every such
-    callee, and only on a licensed machine.
+    ``FakeEnt.ref`` honours a ``definein`` / ``declarein`` / ``end`` filter and ignores every
+    other kind, so it *can* refuse a narrowed string -- but only for an entity that carries
+    one half of the pair and not the other, and every entity the reference measurements are
+    given below carries a definition. Narrowing ``CONTAINER_KINDS`` to either half therefore
+    changes no answer any of them produces. A routine the project only declares -- a pure
+    virtual, an ``extern`` -- has no ``definein`` to fall back on, so losing ``declarein``
+    would silently drop every such callee, and only on a licensed machine.
     """
     assert worker_lean.CONTAINER_KINDS == worker.CONTAINER_REFS
 

@@ -1,13 +1,18 @@
 """Every lean measurement the extractor makes, in a file the worker loads by path.
 
-**The reference facts, so far.** `routine_facts` answers the callers, callees, forwarding
-target, override flag and unused parameter names three rules read; `class_facts` answers
-whether a class is used, what derives from it and how many other things name it;
-`variable_referenced` answers whether a module-level binding is read; `method_declarations`
-tallies, over the whole project, how many classes declare each method name. `token_index`
-arrives with the duplication rules. The file itself, its place in the architecture gate and
-the rule it is held to came first, before any of them, because a file that appears later
-appears without.
+**The reference facts.** `routine_facts` answers the callers, callees, forwarding target,
+override flag and unused parameter names three rules read; `class_facts` answers whether a
+class is used, what derives from it and how many other things name it; `variable_referenced`
+answers whether a module-level binding is read; `method_declarations` tallies, over the whole
+project, how many classes declare each method name. The file itself, its place in the
+architecture gate and the rule it is held to came first, before any of them, because a file
+that appears later appears without.
+
+**And the token half.** `token_index` reads the project's lexeme streams once and answers with
+one hash per code line and one normalised shape per routine, which is everything the
+duplicate-block and similar-routine rules see of the source. It is the only measurement here
+that is whole-project rather than per entity, along with `method_declarations`, and the only
+one that can report a file it could not read at all.
 
 **Why a second file rather than more of `worker.py`.** `worker.py` measures 1 060 of its
 1 200 permitted code lines and 119 of its 130 functions, and six lean extractions do not fit
@@ -48,6 +53,8 @@ because a change confined to the sibling would otherwise be served stale.
 
 from __future__ import annotations
 
+import hashlib
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
@@ -83,9 +90,13 @@ CONTAINER_KINDS: Final = "definein, declarein"
 """Reference kinds leading from an entity to the file it is written in: ``worker``'s own.
 
 The third string this file has to write out twice, and bound to ``worker.CONTAINER_REFS`` by
-a test for the same reason as the other two: the fake ignores an ``Ent.ref`` filter, so a
-kind dropped from here is invisible to every unit test, and a callee whose file this file
-could not find is a callee the snapshot's own walk did find.
+a test for the same reason as the other two: a kind dropped from here is invisible to every
+unit test, and a callee whose file this file could not find is a callee the snapshot's own
+walk did find. The fake honours a ``definein`` / ``declarein`` / ``end`` filter and ignores
+every other kind, but the entities the reference measurements are given all carry a
+definition, so narrowing this pair to either half goes on answering for all of them. Only
+:data:`START_REFS`, which is the one query that *means* the narrower half, is bound by
+behaviour instead.
 """
 
 PARAMETER_REFS: Final = "Define"
@@ -432,3 +443,277 @@ def _definition_path(ent: Any, ctx: LeanContext) -> str | None:
     """The project path of the file an entity is written in, or ``None`` when it has none."""
     ref = ent.ref(CONTAINER_KINDS)
     return None if ref is None else ctx.project_path(ref.file(), ctx.root)
+
+
+# --- the token index the duplication rules read (requirements 5.4, 5.8) ----------------
+
+
+DROPPED_TOKENS: Final = frozenset({"Whitespace", "Comment", "Newline", "Indent", "Dedent"})
+"""The token classes that carry no code, in Understand's own spelling for ``Lexeme.token()``.
+
+Requirement 5.4 in one set, and the design's own list: a re-indented, re-commented copy has to
+hash equal to its original, so layout and prose are what the comparison must not see.
+``Indent`` and ``Dedent`` are the classes the documented vocabulary carries for a change of
+indentation and are dropped for the reason ``Whitespace`` is; ``Newline`` is what would
+otherwise put one matching token on the end of every line of every file.
+
+**Not a superset of "things with no text".** A lexeme whose text is empty is dropped as well,
+by :func:`_code_lines` and on its text rather than on its class, because the documented
+classes carry no name for the end-of-file artefact that produces one.
+"""
+
+IDENTIFIER_TOKEN: Final = "Identifier"
+LITERAL_TOKENS: Final = frozenset({"String", "Literal"})
+IDENTIFIER_SHAPE: Final = "ID"
+LITERAL_SHAPE: Final = "LIT"
+"""The two classes a shape sees in place of a name or a value (requirement 5.4).
+
+A renamed twin is still a twin, so the names are exactly what the similarity comparison must
+not read; ``String`` and ``Literal`` are one class here because a message and a number are
+both values, and a routine that differs from another only in what it prints is a copy.
+Everything else keeps its text, so a copy differing in one *operator* is not one.
+"""
+
+START_REFS: Final = "definein"
+END_REFS: Final = "end"
+"""Where a routine's body begins and where it ends, as two single-kind reference queries.
+
+``definein`` alone rather than :data:`CONTAINER_KINDS`, which is what the design specifies and
+what a range needs: a declaration's line is not the first line of a body, so a span reading
+``declarein .. end`` would run from a header to a source file. Which of the two
+:data:`CONTAINER_KINDS` a build answers first for a method with both is **not** measured here,
+and nothing depends on it: the two references are read as a pair and :func:`_routine_span`
+refuses any span whose ends do not land in one project file.
+
+**A routine carrying only a declaration is the case that makes this string load-bearing**,
+and it is a live one on every C++ and Java project: a pure virtual, an interface method or a
+prototype whose definition is outside the analysis passes the extractor's kind filter, is kept
+by ``worker._remember`` -- whose ``_container_of`` reads :data:`CONTAINER_KINDS` and so takes
+either half -- and answers ``None`` here. It has no body to compare, so it is absent from the
+index rather than measured out of its own header.
+"""
+
+LINE_HASH_CHARS: Final = 16
+"""How much of each line's SHA-256 the index keeps: 64 bits, as design.md specifies.
+
+The index is one entry per code line of a whole project, so the width is a size decision
+rather than a security one; the hash is compared with other hashes of the same run and never
+inverted.
+"""
+
+
+def token_index(
+    file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, str]], ctx: LeanContext
+) -> dict[str, object]:
+    """The project's code lines and routine shapes, for the two duplication rules (5.4, 5.8).
+
+    ``files`` is one ``(line, hash)`` pair per code line of each project file, keeping the
+    file's own line numbers so a finding names a range a reader opens; ``routines`` is one
+    shape per routine the database gives both ends of, encoded through ``vocabulary``;
+    ``unreadable`` names the files whose lexer refused, which contribute nothing and are said
+    once per run rather than arriving as a file with nothing in it (requirement 5.8).
+
+    Both maps are the extractor's own -- ``file_ents`` and ``routine_ents`` -- taken whole for
+    the reason :func:`method_declarations` takes ``class_ents`` whole: the entity walk has
+    already collected them, whole-project, and a second query would pay for them twice. The
+    path half of each routine pair is deliberately **not** read: it comes from ``definein,
+    declarein``, which is not known to be the file a body's lines are in, while a shape has to
+    name the file it was clipped from.
+
+    **One lexer pass per file, and a file is finished before the next one is opened.** Both
+    halves read the same filtered lines rather than a second ``lexemes(start, end)`` call, so
+    a token dropped from one cannot survive in the other -- and no file's lines outlive it.
+    Keeping them all for a shape pass at the end instead measured 96 MB against 26 MB on a
+    project this repository's size and grew with the project rather than with its largest
+    file. The spans come first because they need only ``Ent.ref``; the keys are sorted at the
+    end because the shaping order is now the file order.
+    """
+    vocabulary = _Vocabulary()
+    spans = _routine_spans(routines, ctx)
+    files: dict[str, list[list[object]]] = {}
+    shapes: dict[str, dict[str, object]] = {}
+    unreadable: list[str] = []
+    for path in sorted(file_ents):
+        lines = _code_lines(file_ents[path], ctx)
+        if lines is None:
+            unreadable.append(path)
+            continue
+        files[path] = _line_hashes(lines)
+        shapes.update(_file_shapes(path, spans.get(path, []), lines, vocabulary))
+    return {
+        "vocabulary": vocabulary.texts,
+        "files": files,
+        "routines": {token: shapes[token] for token in sorted(shapes)},
+        "unreadable": unreadable,
+    }
+
+
+class _Vocabulary:
+    """The token texts a shape indexes into, in the order they were first seen.
+
+    A shape is a list of small integers rather than of strings because the index carries one
+    entry per token of every routine in the project, and the rule that reads it compares
+    shingles of them. One vocabulary for the whole document, so two routines in two files
+    encode the same token to the same number -- which is the only way their shapes can be
+    compared at all.
+
+    A plain class for the reason :class:`LeanContext` is one: ``@dataclass`` raises under the
+    path load ``worker._lean_module()`` performs.
+    """
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+        self.ids: dict[str, int] = {}
+
+    def index(self, text: str) -> int:
+        """The number standing for ``text``, assigning it one the first time it is asked for."""
+        if text not in self.ids:
+            self.ids[text] = len(self.texts)
+            self.texts.append(text)
+        return self.ids[text]
+
+
+def _code_lines(ent: Any, ctx: LeanContext) -> list[tuple[int, list[tuple[str, str]]]] | None:
+    """One file's code lines in line order, each with its ``(class, text)`` tokens in order.
+
+    ``None`` -- and only ``None`` -- means the lexer refused, which is requirement 5.8's file:
+    ``Ent.lexer`` documents ``UnderstandError`` when the source is gone or has changed since
+    the parse, a condition a gate measuring a worktree between two commits meets often. A
+    readable file with no code in it answers an empty list, and the two must not be confused:
+    one is the absence of a measurement, the other is a measurement. A line left with no
+    tokens at all is **absent** rather than empty, so that the padding between two functions
+    is not a line every other blank line matches.
+
+    The API's own error class is named through ``ctx.api`` rather than caught as
+    ``Exception``, which is what the context carries the module for: a bug in this function
+    must fail the run rather than mark every file unreadable.
+
+    The stream is read into plain tuples in one pass because each ``token()`` and ``text()``
+    call crosses into the API, and both halves of the index read every token.
+
+    **Grouped and ordered here rather than in either half**, for two reasons. The document a
+    run produces must not depend on an ordering the lexer documents nothing about, or the two
+    sides of a change would not be comparable document to document. And a routine's shape is
+    clipped by a binary search over these line numbers, which is a search this ordering is
+    what makes correct -- the tokens *within* a line keep the order they arrived in, because
+    that order is the line's text.
+    """
+    try:
+        lexemes = list(ent.lexer(False).lexemes())
+    except ctx.api.UnderstandError:
+        return None
+    grouped: dict[int, list[tuple[str, str]]] = {}
+    for lexeme in lexemes:
+        token_class, text = str(lexeme.token()), str(lexeme.text())
+        if token_class not in DROPPED_TOKENS and text != "":
+            grouped.setdefault(int(lexeme.line_begin()), []).append((token_class, text))
+    return sorted(grouped.items())
+
+
+def _line_hashes(lines: list[tuple[int, list[tuple[str, str]]]]) -> list[list[object]]:
+    """One ``[line, hash]`` pair per code line, in the order :func:`_code_lines` put them.
+
+    The texts of a line are joined and hashed, so two lines differing only in layout or in
+    comments hash equal (requirement 5.4).
+    """
+    return [[line, _line_hash("".join(text for _, text in tokens))] for line, tokens in lines]
+
+
+def _line_hash(text: str) -> str:
+    """The first :data:`LINE_HASH_CHARS` hex characters of one line's SHA-256."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:LINE_HASH_CHARS]
+
+
+def _routine_spans(
+    routines: Mapping[str, tuple[Any, str]], ctx: LeanContext
+) -> dict[str, list[tuple[str, int, int]]]:
+    """Every routine the index can place, as ``(key, first line, last line)`` per file path.
+
+    Grouped by path so that :func:`token_index` can finish a file while its lines are still
+    in hand, and resolved before any lexing because a span is read from ``Ent.ref`` alone.
+
+    **The keys are sorted, and that is load-bearing rather than tidiness.** A group is shaped
+    in the order it was built, and :meth:`_Vocabulary.index` hands out its numbers in the
+    order it is first asked -- so for two routines written in *one* file, the order the walk
+    collected them in would otherwise decide both the vocabulary and every shape in the
+    document. Sorting the keys here is what :func:`_code_lines` promises for lines: the
+    document a run produces does not depend on an ordering nothing documents, or the two
+    sides of a change would not be comparable document to document. Deleting the ``sorted``
+    leaves the rest of the suite green and fails
+    ``test_two_routines_in_one_file_number_their_tokens_the_same_either_way_round``.
+
+    A routine is left out rather than approximated in two shapes here, each of which is an
+    absence and not a zero: the database gives no end for it, or its two ends sit in different
+    files. A third is left out later, by having no group of its own: the file it is written in
+    is one the lexer refused, or one the walk never collected. The similar-routine rule reads
+    an absence as "not measured for that routine" and reports nothing about it.
+    """
+    grouped: dict[str, list[tuple[str, int, int]]] = {}
+    for token in sorted(routines):
+        span = _routine_span(routines[token][0], ctx)
+        if span is None:
+            continue
+        path, start, end = span
+        grouped.setdefault(path, []).append((token, start, end))
+    return grouped
+
+
+def _file_shapes(
+    path: str,
+    spans: list[tuple[str, int, int]],
+    lines: list[tuple[int, list[tuple[str, str]]]],
+    vocabulary: _Vocabulary,
+) -> dict[str, dict[str, object]]:
+    """The shapes of the routines written in one file, clipped from that file's code lines.
+
+    Each range is found by binary search rather than by filtering the whole file per routine.
+    At this repository's own scale -- 316 files, 110 425 lines, about 21 routines per file --
+    the filtering form measures 2.38 s against 0.35 s, and it degrades with the *product* of a
+    file's routines and its tokens, so the worst file in a project costs the most.
+    """
+    numbers = [line for line, _ in lines]
+    shaped: dict[str, dict[str, object]] = {}
+    for token, start, end in spans:
+        clipped = lines[bisect_left(numbers, start) : bisect_right(numbers, end)]
+        shaped[token] = {
+            "path": path,
+            "start": start,
+            "end": end,
+            "shape": [
+                vocabulary.index(_shape_text(token_class, text))
+                for _, tokens in clipped
+                for token_class, text in tokens
+            ],
+        }
+    return shaped
+
+
+def _routine_span(ent: Any, ctx: LeanContext) -> tuple[str, int, int] | None:
+    """The project path and the first and last line of a routine's body, or ``None``.
+
+    Both references are required and both must be written in the same project file. A routine
+    with no ``Definein`` is one the database has only a declaration of, which is a shape every
+    C++ and Java project carries (:data:`START_REFS`); a routine with no ``End`` is one the
+    database did not see the end of; and a range clipped from a file that holds only one of
+    its ends would be some other routine's tokens.
+
+    The ``None`` half of the path test is what makes the pair a path rather than a maybe-path;
+    a routine whose file is not project code has no lines to clip from either way, so it is
+    ``mypy --strict`` rather than a case that refuses it.
+    """
+    start, end = ent.ref(START_REFS), ent.ref(END_REFS)
+    if start is None or end is None:
+        return None
+    path = ctx.project_path(start.file(), ctx.root)
+    if path is None or path != ctx.project_path(end.file(), ctx.root):
+        return None
+    return path, int(start.line()), int(end.line())
+
+
+def _shape_text(token_class: str, text: str) -> str:
+    """One token as the similarity comparison sees it: a name, a value, or its own text."""
+    if token_class == IDENTIFIER_TOKEN:
+        return IDENTIFIER_SHAPE
+    if token_class in LITERAL_TOKENS:
+        return LITERAL_SHAPE
+    return text

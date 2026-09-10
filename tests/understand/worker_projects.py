@@ -28,7 +28,7 @@ from api_fakes import (
 from conftest import understand_probe
 
 from scitools_hook.models.snapshot import EntityKey
-from scitools_hook.understand import worker
+from scitools_hook.understand import worker, worker_lean
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 WORKER_PATH: Final = REPO_ROOT / "src" / "scitools_hook" / "understand" / "worker.py"
@@ -66,8 +66,13 @@ def a_file(path: str, language: str = "Python", **fields: object) -> FakeEnt:
     )
 
 
-def a_routine(name: str, container: FakeEnt, **fields: object) -> FakeEnt:
-    """A routine defined in ``container``; ``parameters`` distinguishes overloads."""
+def a_routine(name: str, container: FakeEnt, line: int = 9, **fields: object) -> FakeEnt:
+    """A routine defined in ``container``; ``parameters`` distinguishes overloads.
+
+    ``line`` is the line its ``Definein`` reference sits on -- which every reference fact
+    ignores and the token index reads as the first line of the body, so it is a parameter
+    rather than a fixed 9 that a caller would have to shadow through ``fields``.
+    """
     return FakeEnt(
         qualified=name,
         kind_path="python Function",
@@ -75,7 +80,7 @@ def a_routine(name: str, container: FakeEnt, **fields: object) -> FakeEnt:
         lang=container.lang,
         params="argv",
         container=container,
-        line_no=9,
+        line_no=line,
         **fields,  # type: ignore[arg-type]
     )
 
@@ -118,6 +123,23 @@ def a_variable(name: str, container: FakeEnt, kind: str = "c Object Local") -> F
         lang="C++",
         container=container,
         line_no=3,
+    )
+
+
+def a_context() -> worker_lean.LeanContext:
+    """The context ``worker.py`` hands the lean measurements: **its own** path helper and root.
+
+    ``worker._project_path`` rather than a stand-in written here, because the whole meaning
+    of "project" in those facts is that function's answer -- it is what refuses Understand's
+    injected stubs and anything outside the root -- and a second copy of that judgement in
+    the tests would let the two drift apart without either failing.
+
+    It lives here rather than in one of the two modules that call it for the same reason: the
+    reference facts and the token index are measured against one context, and a per-module
+    copy would let one of them be given a root the other is not.
+    """
+    return worker_lean.LeanContext(
+        api=FakeUnderstand(), project_path=worker._project_path, root=ANALYSIS_ROOT
     )
 
 

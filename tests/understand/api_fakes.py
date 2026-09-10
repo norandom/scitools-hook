@@ -196,6 +196,23 @@ class FakeEnt:
     lib: str = ""
     container: FakeEnt | None = None
     line_no: int | None = None
+    declared_in: FakeRef | None = None
+    """The ``Declarein`` reference of an entity declared apart from its definition, or ``None``.
+
+    :attr:`container` is the ``Definein`` half -- the file the entity's *body* is written in,
+    at :attr:`line_no` -- and this is the other one. They are separate fields because
+    Understand records them as separate references and the worker asks for them with separate
+    filters: ``worker.CONTAINER_REFS`` names both and takes whichever the entity has, while
+    ``worker_lean.START_REFS`` names only ``definein`` because a declaration's line is not the
+    first line of a body.
+
+    So an entity carrying only this one -- a C++ pure virtual, a Java interface method, a C
+    prototype whose definition is outside the analysis -- is the shape that separates the two
+    filters, and a fake that answered one reference to both of them could not express it.
+
+    A whole :class:`FakeRef` rather than a file, for the reason :attr:`end_ref` is one: a
+    declaration has a line of its own, and it is not the line of the definition.
+    """
     param_ents: list[FakeEnt] = field(default_factory=list)
     """The parameters ``Ent.ents("Define", "Parameter ~Catch")`` answers with, in order.
 
@@ -232,6 +249,19 @@ class FakeEnt:
     work rather than the entity's: a test describes a file's tokens without having to know
     what a lexeme object is, and :class:`FakeLexer` is the one place that turns them into
     lexemes.
+    """
+    end_ref: FakeRef | None = None
+    """The ``End`` reference of a routine -- the last line of its body -- or ``None``.
+
+    ``None`` is the shape requirement 5.4's index has to survive: Understand records an
+    ``End`` reference for a routine it saw the whole of, and a routine it did not gets none,
+    so the token index has no range to clip to and leaves the routine out. A fake that
+    invented an end line for every routine would make that case unreachable.
+
+    Spelled as a whole :class:`FakeRef` rather than as an end *line* because the second thing
+    the index asks of it is which file it is written in: a C++ method declared in a header
+    and defined in a source has its ``Definein`` in one file and its ``End`` in the other,
+    and a shape clipped from the wrong stream would be some other routine's tokens.
     """
     refs_error: str | None = None
     drawable: tuple[str, ...] = ("Butterfly", "Calls", "Called By")
@@ -329,8 +359,37 @@ class FakeEnt:
         return FakeLexer(self.tokens)
 
     def ref(self, refkinds: str) -> FakeRef | None:
-        """The first reference of ``refkinds``; the worker asks for the container file."""
-        return None if self.container is None else FakeRef(self.container, self.line_no)
+        """The first reference of ``refkinds``, honouring the filter for the three kinds asked.
+
+        ``definein`` answers :attr:`container` at :attr:`line_no`, ``declarein`` answers
+        :attr:`declared_in`, ``end`` answers :attr:`end_ref`, and a filter naming none of
+        them answers ``None``.
+
+        **The filter is applied rather than ignored, and every caller depends on it.** The
+        three strings the worker asks with -- ``"definein, declarein"``, ``"definein"`` and
+        ``"end"`` -- are the whole vocabulary of ``Ent.ref`` in this codebase, and a fake that
+        answered the container to all three would agree with an implementation that asked for
+        none of them: a routine would get the range ``definein .. definein``, and a start
+        query narrowed, widened or misspelled would go on answering. Each of the three is a
+        measurement, so each has to be refusable.
+
+        Matched against the kinds as a list rather than as a substring, because ``definein``
+        and ``declarein`` both end in letters that spell nothing here and a substring test
+        would be one rename away from answering the wrong reference.
+
+        ``definein`` is tried before ``declarein`` for an entity that carries both. Which one
+        a real build answers first to a filter naming both is **not** modelled here and
+        nothing may depend on it: the worker reads such a pair as a range and refuses any
+        range whose ends land in two files.
+        """
+        kinds = {kind.strip().lower() for kind in refkinds.split(",")}
+        if "end" in kinds:
+            return self.end_ref
+        if "definein" in kinds and self.container is not None:
+            return FakeRef(self.container, self.line_no)
+        if "declarein" in kinds:
+            return self.declared_in
+        return None
 
     def ents(self, refkinds: str, entkinds: str) -> list[FakeEnt]:
         """The entities reached by ``refkinds``; the only query made of it is a routine's
@@ -341,7 +400,10 @@ class FakeEnt:
         """The references of ``refkinds``, both directions, as ``Ent.refs()`` returns them.
 
         The containment reference to the file the entity is written in is always present,
-        because Understand always records one and the impact walk has to leave it out.
+        because Understand always records one and the impact walk has to leave it out. An
+        entity carrying a :attr:`declared_in` reference contributes that one too, and under
+        its own kind: the two accessors have to describe the same entity, or one of them
+        would report a routine no file contains.
 
         **The filter is applied here rather than ignored**, even though the impact walk asks
         for everything. A fake that answered every reference whatever it was asked would let a
@@ -354,6 +416,9 @@ class FakeEnt:
         found: list[FakeRef] = []
         if self.container is not None:
             found.append(FakeRef(self.container, self.line_no, "python Definein", False))
+        if self.declared_in is not None:
+            declaration = self.declared_in
+            found.append(FakeRef(declaration.file(), declaration.line(), "c Declarein", False))
         found.extend(FakeRef(ent, None, "python Define", True) for ent in self.members)
         found.extend(FakeRef(ent, None, "python Call", True) for ent in self.refs_to)
         found.extend(FakeRef(ent, None, self.refs_by_kind, False) for ent in self.refs_by)
