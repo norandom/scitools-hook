@@ -139,6 +139,7 @@
   - Done when unit tests show one caller with two callees not reported, a budget of two accepting a call-and-return body, the base reported on the commit that adds the only derived class, and a base with an outside referrer not reported
   - _Depends: 2.1_
   - The pass-through rule takes the same resolution floor: an understated caller count is exactly what it reports on (requirement 2.6)
+  - **From task 3.1's review, a design-versus-requirement gap to settle here:** requirement 2.1 asks the finding to name the caller, but the snapshot records the caller COUNT as an integer, so no rule can recover the name from it. Either the facts carry the caller's long name the way they already carry the forwarding target, which changes what task 3.1 built and what 3.3 records, or the requirement is amended to name only the callee. Decide it and say which
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.2, 3.3, 3.4_
   - _Boundary: analysis/lean/layering_
 
@@ -201,6 +202,7 @@
 - [ ] 6. Contract measurements on the licensed install
 - [ ] 6.1 Reference kinds and counts on the contract project
   - On the extended fixture: the Python and C++ inheritance kinds answer the derived class; overrides are flagged on both; the caller count agrees with the plugin caller metric for every routine of the fixture, and any disagreement is recorded with its cause; each reference rule reports its planted case and nothing else
+  - **From task 3.1's review:** `setby`'s place in the parameter-use set is reasoned rather than measured, unlike `callby`, which the fixture forced. Measure whether Understand records a `Set Init` against a defaulted parameter's own declaration. If it does, every defaulted parameter reads as used and requirement 1.2 under-reports in silence, which is the quietest failure this family can have
   - Done when the contract test passes on Build 1262 and prints the per-language kind table into the research log
   - _Depends: 4.3_
   - _Requirements: 1.3, 1.4, 2.1, 3.1, 10.5_
