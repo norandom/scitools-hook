@@ -113,6 +113,10 @@ class SnapshotExtractor:
             # property exists to make unrepeatable. Five rules turn it on and `over_export`
             # is deliberately not one of them; the property records why.
             lean_references=self.settings.lean.wants_references,
+            # Its own property, for the reason above, and separate from the reference key
+            # because the two are two costs -- a `refs` call per recorded entity against a
+            # lexer pass over every file -- so a rule asking for one does not pay the other.
+            lean_tokens=self.settings.lean.wants_tokens,
         )
 
     def wire_request(self, target: SnapshotTarget) -> dict[str, object]:

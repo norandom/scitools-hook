@@ -596,6 +596,13 @@ exactly the cost requirement 9.4 forbids.
 """
 
 
+TOKENS_ASKED_BY: Final[tuple[Settings, ...]] = (
+    Settings(lean=LeanRules(duplicates="warning")),
+    Settings(lean=LeanRules(similar_routines="warning")),
+)
+"""One configuration per rule that needs the whole-project lexer pass, each on **alone**."""
+
+
 @pytest.mark.parametrize("settings", REFERENCES_ASKED_BY)
 def test_each_reference_rule_alone_asks_the_worker_for_the_reference_walk(
     settings: Settings,
@@ -610,7 +617,7 @@ def test_an_over_export_only_configuration_asks_for_no_reference_walk() -> None:
     assert an_extractor({}, settings).request().lean_references is False
 
 
-@pytest.mark.parametrize("settings", [Settings(), *REFERENCES_ASKED_BY])
+@pytest.mark.parametrize("settings", [Settings(), *REFERENCES_ASKED_BY, *TOKENS_ASKED_BY])
 def test_the_request_asks_for_references_exactly_when_the_settings_want_them(
     settings: Settings,
 ) -> None:
@@ -620,21 +627,45 @@ def test_the_request_asks_for_references_exactly_when_the_settings_want_them(
     from a second reading of the five rules could serve a cached snapshot with no facts in it
     to a run whose configuration asks for them -- and every affected record would answer
     ``None``, which the rules report as unavailable. One property, asked twice, cannot drift.
+
+    The token configurations are in the table for the mirror case, and it is the one this
+    reads for: a request that wrote ``wants_references or wants_tokens`` would make a
+    duplicates-only run pay a ``refs`` call on every recorded entity and read none of the
+    answers. Without them the two keys are guarded asymmetrically -- the tokens twin below
+    spans both tables and this one did not.
     """
     request = an_extractor({}, settings).request()
 
     assert request.lean_references is settings.lean.wants_references
-    assert request.lean_tokens is False
 
 
-def test_the_token_index_is_not_asked_for_yet() -> None:
-    """Task 5.2 owns the token half of the request; until it lands nothing may ask for it.
+# --- the token pass, asked for by two rules (lean-code requirement 9.4) -----------
 
-    Recorded as an assertion rather than left implicit because the worker's load condition
-    already reads the key: a request that turned it on here would load the sibling for a pass
-    that does not exist and pay for it on every extraction.
+
+@pytest.mark.parametrize("settings", TOKENS_ASKED_BY)
+def test_each_token_rule_alone_asks_the_worker_for_the_token_pass(settings: Settings) -> None:
+    assert an_extractor({}, settings).request().lean_tokens is True
+
+
+@pytest.mark.parametrize("settings", REFERENCES_ASKED_BY)
+def test_a_reference_rule_alone_asks_for_no_token_pass(settings: Settings) -> None:
+    """The two keys are two costs. A lexer pass over every file of the project is not what a
+    dead-parameter rule asked for, and a request that turned both on together would pay for
+    it on every check that enables any lean rule at all.
     """
-    settings = Settings(lean=LeanRules(duplicates="warning", similar_routines="warning"))
-
-    assert settings.lean.wants_tokens is True
     assert an_extractor({}, settings).request().lean_tokens is False
+
+
+@pytest.mark.parametrize("settings", [Settings(), *TOKENS_ASKED_BY, *REFERENCES_ASKED_BY])
+def test_the_request_asks_for_tokens_exactly_when_the_settings_want_them(
+    settings: Settings,
+) -> None:
+    """Read from ``LeanRules.wants_tokens``, for the reason the reference key is read from
+    ``wants_references``: ``config/fingerprint`` decides from the same property whether a
+    cached snapshot still describes this configuration, so a snapshot recorded with no index
+    in it cannot be served to a run that asks for one -- and the two sites agreeing is what
+    makes that true. Spelling the two rules again here is how they would drift.
+    """
+    request = an_extractor({}, settings).request()
+
+    assert request.lean_tokens is settings.lean.wants_tokens

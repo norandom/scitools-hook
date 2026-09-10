@@ -1139,6 +1139,14 @@ class _Extractor:
         # to detect one by. Written only when asked, beside where task 5.2 writes `tokens`.
         if self.plan.lean_references:
             document["method_declarations"] = self.plan.lean.method_declarations(self.class_ents)
+        # After the walk and not before it: `routine_ents` is empty until the scopes above
+        # have been read. Both maps are whole-project rather than `plan.files`, because a
+        # duplicate has two ends and only one of them need be in the change. A statement and
+        # not a helper -- this file stands at its recorded `CountDeclFunction` ceiling of 130.
+        if self.plan.lean_tokens:
+            document["tokens"] = self.plan.lean.token_index(
+                self.file_ents, self.routine_ents, self.plan.lean_ctx
+            )
         document.update(self._edges())
         return document
 
