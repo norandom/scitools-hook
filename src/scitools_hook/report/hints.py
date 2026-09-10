@@ -13,7 +13,7 @@ Lookup runs through four levels, most specific first::
     generic "generic.threshold" | "generic.ratchet" | "generic.structural" | "generic.codecheck"
             | "generic.parse"
 
-The variant level exists for one rule and would not be worth having for a threshold. A parse
+The variant level exists for two rules and would not be worth having for a threshold. A parse
 error is the one finding whose remedy is not a refactoring at all but a **rewrite of a
 specific construct**, and which construct it is decides the whole of the answer: "rewrite the
 type-parameter list as an explicit TypeVar" and "write `X: TypeAlias = ...` instead of `type
@@ -22,6 +22,18 @@ pipeline identifies the construct from the analysed source and leaves it in
 ``Finding.details["construct"]``; :data:`PARSE_CONSTRUCTS` is the classifier and the keys
 below carry one hint each. A construct nobody recognised simply falls through to the rule
 level, which is still actionable.
+
+The second rule is ``structure.similar_routine``, for the same reason and not by analogy: the
+remedy changes with the construct rather than being worded differently for it. A family of
+near-identical routines spread over files means all but one of them go away, which is
+``delete:``; the same family inside one file becomes a single routine with a parameter, which
+is ``shrink:`` -- a different edit and a different tag, selected by :data:`SAME_FILE`.
+
+The variant namespace carries one **reserved name**: ``<rule>/example`` is where
+:mod:`scitools_hook.report.lean_examples` keeps a rule's worked example, so that an operator
+overrides an example with the same table and the same key shape as a hint (lean-code req
+8.6). No rule may name a construct ``example``, because :meth:`HintCatalogue.hint` would then
+answer with the example. Nothing does; ``tests/report/test_lean_hints.py`` keeps it that way.
 
 The rule level exists because the same metric means different things per scope -- a routine
 over 60 lines is split into routines, a file over 500 lines is split into modules -- while the
@@ -54,6 +66,7 @@ from scitools_hook.models.findings import (
     FindingKind,
     parse_rule_name,
 )
+from scitools_hook.report.lean_examples import EXAMPLE_SUFFIX, EXAMPLES
 
 GENERIC_KEYS: Final[dict[FindingKind, str]] = {
     "threshold": "generic.threshold",
@@ -70,6 +83,17 @@ VARIANT_SEPARATOR: Final = "/"
 A ``/`` rather than a ``.``, so a variant key can never be mistaken for -- or collide with --
 a rule name: ``.`` is the rule grammar's own separator and ``analysis.parse_error.type_params``
 would parse as the analysis rule ``parse_error.type_params``, which does not exist.
+"""
+
+SAME_FILE: Final = "same_file"
+"""The construct ``structure.similar_routine`` names when the whole family is in one file.
+
+The rule that writes it lives in ``analysis.lean.similar`` and cannot import this constant --
+``analysis`` sits below ``report`` and the import direction is checked -- so the literal is
+agreed rather than shared, and this is the side that says so. A rule that spelled it
+differently would not fail: the lookup would fall through to the rule level and print the
+cross-file wording, which is wrong advice rather than an error, so the agreement is worth
+naming here and worth a line in that rule's own tests.
 """
 
 PARSE_CONSTRUCTS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
@@ -358,43 +382,50 @@ _GENERIC_HINTS: Final[dict[str, str]] = {
 
 _LEAN_HINTS: Final[dict[str, str]] = {
     "structure.unused_parameter": (
-        "delete: the parameter and every argument passed for it -- nothing in the routine "
-        "reads it. If a signature it overrides declares it, that is not this finding; if a "
-        "caller Understand cannot see passes it, add the name to lean.unused_parameters_ignore"
+        "delete: the parameter, and the argument at every call site -- nothing in the routine "
+        "reads, sets or modifies it. A parameter a signature this routine overrides declares "
+        "stays in the signature and is not this finding; a name only a caller Understand "
+        "cannot see passes goes in lean.unused_parameters_ignore"
     ),
     "structure.unused_class": (
-        "delete: the class and its file if nothing else lives there -- nothing in the project "
-        "references it. If it is reached in a way references cannot show, a registry, an entry "
-        "point, a test collection, add a pattern to lean.unused_classes_ignore"
+        "delete: the class, and its file with it when nothing else lives there -- no reference "
+        "in the project names it. If a registry, an entry point or a test collection reaches "
+        "it in a way references cannot show, add a pattern to lean.unused_classes_ignore"
     ),
     "structure.unused_variable": (
-        "delete: the module-level name -- nothing in the project reads it. A constant kept for "
-        "an outside importer belongs in lean.unused_variables_ignore, not in the module"
+        "delete: the module-level name and its initialiser -- nothing in the project reads it. "
+        "A constant kept for an importer outside the project stays where it is; add its name "
+        "to lean.unused_variables_ignore"
     ),
     "structure.pass_through": (
-        "yagni: delete this routine and let its one caller call what it forwards to -- the "
-        "layer adds a name and a file, not behaviour"
+        "yagni: delete the routine and let its one caller call what it forwards to -- a name "
+        "and a hop are not behaviour"
     ),
     "structure.single_implementation": (
-        "yagni: fold the base into its one implementation -- an abstraction written for a "
-        "second implementation that never came costs a file and a hop and buys nothing"
+        "yagni: fold the base into its one implementation and delete it -- an abstraction kept "
+        "for a second implementation that never arrived costs a file and a hop and buys "
+        "nothing"
     ),
     "structure.over_export": (
         "yagni: move the definition into the one file that depends on it and delete this file "
-        "-- a module with one definition and one importer is a name, not a boundary"
+        "-- one definition with one importer is a name, not a boundary"
     ),
     "structure.duplicate_block": (
-        "delete: keep one copy of these lines and call it from the others -- the finding names "
-        "where the rest of them are"
+        "delete: keep one copy of these lines, call it from the others and delete the rest -- "
+        "the finding names where every copy is"
     ),
     "structure.similar_routine": (
-        "delete: keep one of the two routines and pass what differs as an argument -- they "
-        "are the same code under different names"
+        "delete: keep one routine of the family, pass what differs as an argument, and delete "
+        "the others -- they are the same code under different names"
+    ),
+    f"structure.similar_routine{VARIANT_SEPARATOR}{SAME_FILE}": (
+        "shrink: the whole family is in this one file -- merge it into a single routine whose "
+        "parameter carries the difference, and the file loses routines rather than gaining an "
+        "import"
     ),
     "structure.net_growth": (
-        "shrink: this change adds more logical lines than the limit allows -- cut what it "
-        "replaced before adding what replaces it, and check the shorter form of each new "
-        "routine first"
+        "shrink: the change adds more logical lines than the limit allows -- delete what the "
+        "new code replaced before adding it, and take the shorter form of each new routine"
     ),
 }
 """The lean-code family, in ponytail's tag form: one tag, what to cut, what replaces it.
@@ -402,7 +433,14 @@ _LEAN_HINTS: Final[dict[str, str]] = {
 Three tags and no others. `stdlib:` and `native:` are ponytail's remaining two, and the Gate
 never emits them: whether a routine re-implements something the language already ships is a
 semantic question a reference database cannot answer, so it stays with the agent (lean-code
-requirement 8.3).
+requirement 8.3). The agent-rules snippet says so and hands those two rungs back (8.3, 8.4);
+a hint here that reached for either would be the Gate claiming evidence it does not have,
+which is why ``tests/report/test_lean_hints.py`` asserts their absence and not only the
+presence of the three.
+
+Nine rules and ten keys: the similar-routine rule reads differently depending on where the
+rest of the family is, and :data:`SAME_FILE` above says why that difference is a tag rather
+than a wording.
 """
 
 DEFAULT_CATALOGUE: Final[dict[str, str]] = {
@@ -412,6 +450,7 @@ DEFAULT_CATALOGUE: Final[dict[str, str]] = {
     **_PROJECT_HINTS,
     **_STRUCTURE_HINTS,
     **_LEAN_HINTS,
+    **EXAMPLES,
     **_PARSE_HINTS,
     **_SHARED_METRIC_HINTS,
     **_GENERIC_HINTS,
@@ -438,6 +477,21 @@ class HintCatalogue:
             if text:
                 return text
         return _LAST_RESORT
+
+    def example(self, rule: str) -> str | None:
+        """The worked before-and-after example for ``rule``, or ``None`` where none exists.
+
+        One key and no fallback chain, which is the whole difference from :meth:`hint`. A hint
+        must always answer something, so it falls through four levels to generic advice; an
+        example is only ever right for the rule that ships it, and a generic one -- the
+        neighbouring metric's code, another scope's shape -- would teach the wrong edit. So a
+        rule outside the lean family answers ``None`` and the renderer prints nothing
+        (lean-code req 8.2).
+
+        An operator who empties the key in ``[hints]`` gets ``None`` too, rather than a
+        heading over an empty block: silencing an example is a thing to be able to do.
+        """
+        return self._hints.get(f"{rule}{EXAMPLE_SUFFIX}") or None
 
 
 def construct_of(source_line: str) -> str:

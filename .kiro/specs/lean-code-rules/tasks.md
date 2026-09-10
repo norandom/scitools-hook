@@ -74,7 +74,7 @@
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
   - _Boundary: analysis/lean/net_
 
-- [ ] 2.3 (P) Tag-form hints and one worked example per rule
+- [x] 2.3 (P) Tag-form hints and one worked example per rule
   - A hint per lean rule beginning with `delete:`, `yagni:` or `shrink:`, stating what to cut and what replaces it in one line; an example per rule under the rule's example key, in ponytail's format, drawn from its published examples where one fits
   - The similar-routine rule has two entries: the rule key carries `delete:` and its same-file variant carries `shrink:`, selected through the catalogue's existing variant lookup; the net-growth rule carries `shrink:`
   - The catalogue answers an example by rule name, and an operator's hints table overrides the hint and the example at the rule level
