@@ -633,6 +633,39 @@ class RunResult(DataModel):
 
 ### analysis
 
+#### The resolution gate, and why the dead-code rules need one
+
+Measured on facdrone 2026-09-10, 417 source files and about 101 800 lines, analysis resolving
+at 26%: the reference-based dead-code predicate answers **830 routines, ~6160 lines**, and it
+is wrong almost every time. The names give it away -- `.load`, `.decide`, `.commit`, a
+dashboard callback, a CLI subcommand. That codebase uses structural typing, so an
+implementation holds **no reference at all** to the interface it satisfies, and exactly **one**
+of the 830 carried an `overrides` reference. Requirement 1.4's override exclusion catches
+inheritance and misses duck typing entirely.
+
+Two consequences this design must carry, or the rules ship as a machine for deleting working
+code:
+
+1. **A resolution gate.** No reference-based rule may report while the call resolution for
+   that language is below a floor. The snapshot already carries `CallResolution` per language.
+   Below the floor the rules report **nothing** and say so once per run, exactly as the gate
+   already refuses to evaluate a metric Understand has no value for. "Nothing references this"
+   is a measurement only when references were mostly resolved; otherwise it is a statement
+   about the analysis, and reporting it as a property of the code is the same class of error
+   as a below-floor `before` value excusing a violation (task 1.4).
+
+2. **An interface-method exclusion that does not need an inheritance edge.** A method name
+   declared on two or more project classes is an interface method under structural typing,
+   whether or not any `Overrides` or inheritance reference exists. `class_facts` must record
+   the declaring-class count per method name so `dead` can apply it.
+
+The same evidence reorders the family's value. **Duplication needs no reference resolution at
+all**: on the same codebase, token-based detection finds 76 exact 12-line windows and 51
+mergeable twins, about **1220 lines** that are defensibly reducible, and every one of those
+findings is independent of how much the analyser resolved. The largest reliable mass in
+model-written code is the same logic written repeatedly under different names, which is
+ponytail's reuse rung, not its dead-code rung.
+
 #### analysis/lean/dead
 
 | Field | Detail |

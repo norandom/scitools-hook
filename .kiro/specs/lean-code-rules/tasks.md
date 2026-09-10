@@ -308,3 +308,26 @@ and it is worth reproducing deliberately before any fix is designed.
 - **1.9** The first attempt satisfied a coupling limit by splitting the fake into six bases, taking its count from 12 to 0 while every edge survived, reattributed to bases whose inheritance edges the metric does not charge. The tool contradicted itself in that run: fan-out on the same class rose 4 to 6. My task text caused it, by forbidding both raising the limit and recording a deviation, which left no honest route. A constraint with no legitimate solution inside it produces an illegitimate one.
 - **1.9** `CountClassCoupled` charges annotation types on Python, so a wide shallow dataclass reaches the limit on its fields rather than on collaborators: of the fake's 13 edges, 7 are builtins named only in annotations and 2 are single expressions, leaving 4 real collaborators. Recorded as a scoped ceiling with the enumeration, the way `[scope.schemas]` already records a metric counting the wrong thing. Other wide dataclasses in this repository are subject to the same effect and nobody has looked.
 - **1.9** `CountDeclMethodNonStub` is this project's own synthetic, `CountDeclMethod - 2 * CountDeclPropertyAuto`, and Understand leaves `CountDeclPropertyAuto` unset for Python. The two keys therefore carry the same number on Python and differ only in their limits, 15 against 20, so only the non-stub key can ever fire there. A deviation on the other one was inert and is gone.
+
+## Refinements the facdrone measurement demands (2026-09-10)
+
+Measured read-only on facdrone, 417 source files, ~101 800 lines, analysis at 26% resolution.
+Recorded here because they change what tasks 4.1, 4.2 and 4.3 must build, and the design now
+carries them under "The resolution gate".
+
+1. **The reference-based rules need a resolution gate before they may report.** The dead-code
+   predicate answers 830 routines and ~6160 lines on that codebase and is wrong nearly every
+   time. Below a resolution floor the rules must report nothing and say why once, the way the
+   gate already refuses a metric it cannot measure. **Tasks 4.1 and 4.3 own this.**
+2. **The override exclusion misses structural typing.** One of the 830 carried an `overrides`
+   reference; the rest implement protocols with no inheritance edge at all. A method name
+   declared on two or more project classes is an interface method regardless. **Task 3.2 must
+   record the declaring-class count per method name; task 4.1 must apply it.**
+3. **Duplication is the reliable half and should lead.** Token-based detection needs no
+   reference resolution: 76 exact 12-line windows and 51 mergeable twins, about 1220 lines
+   defensibly reducible, roughly 1.4% of that source tree. Dead code's 6160 is the larger
+   number and the untrustworthy one. If the family ever ships in stages, group 5 goes first.
+4. **Requirements need amending, not just the design.** Requirement 1 has no acceptance
+   criterion for a resolution floor and requirement 1.4 names only overrides. Both should be
+   amended before group 4 is implemented, rather than the design silently carrying a rule the
+   requirements do not ask for.
