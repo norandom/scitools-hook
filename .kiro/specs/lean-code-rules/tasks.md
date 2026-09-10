@@ -97,7 +97,7 @@
 
 - [ ] 2.6 The lean step of the check pipeline
   - One step that runs each lean rule whose severity is set, gathers their unavailable messages, computes the delta, and hands findings, notes and delta to the pipeline; findings go through scopes, ignores, the severity map and hints like any structural finding; notes are printed once per run; the delta lands on the run result; a rule that is off adds nothing
-  - The extractor asks for module-level definitions whenever the over-export rule is on, so the rule has them without a second request
+  - The extractor asks for module-level definitions whenever the over-export rule is on, so the rule has them without a second request. **Found in task 2.1's review and it is a live gap, not tidiness:** the fingerprint already keys on the disjunction, so a stale snapshot cannot be served, but the extractor still sets `include_definitions` from the duplicate-definitions setting alone. With over-export on and duplicate definitions off, a FRESH snapshot carries no definitions, the rule's module-level-binding guard sees nothing, and every candidate file with a constant beside its one routine becomes a false positive. Land it with a test that an over-export-only configuration produces a request with definitions on
   - The pipeline's finishing step attaches the catalogue's example to every lean finding's details, beside the hint it already attaches
   - Done when a pipeline test with a fixture snapshot shows over-export and the delta in the run result, the example in the finding's details, and an all-off configuration producing a run result identical to today's
   - _Depends: 2.1, 2.2, 2.3, 2.5_
@@ -337,3 +337,5 @@ carries them under "The resolution gate".
    criterion for a resolution floor and requirement 1.4 names only overrides. Both should be
    amended before group 4 is implemented, rather than the design silently carrying a rule the
    requirements do not ask for.
+- **2.1** Branch coverage does not protect a guard fused into a boolean expression: coverage records no arc for an `and` short-circuit, so `None not in counts and ...` could be deleted with the module still reporting 100%. All 21 tests stayed green under that mutation. Every rule in this family should assume the coverage number says nothing about its guards, and mutate them.
+- **2.1** `details` keys are a shared namespace across the whole `structure.` category, not per rule. The first draft published `depended_on_by` as a string where `structure.fan_in` already publishes it as a list, in the same JSON object and the same SARIF properties. The convention the five remaining rules follow is recorded in the layering module's docstring.
