@@ -230,7 +230,13 @@ def test_population_and_project_metrics_come_back_for_the_configured_thresholds(
     ``AVG:CyclomaticStrict`` at routine scope and a plain project metric are the two shapes
     requirement 3.4 distinguishes, and the worker tells them apart by the prefix alone. An
     empty vector here would make every stats threshold evaluate against nothing.
+
+    The population is one value per routine in the project, both languages, so it is the
+    routine count and not a sample of it -- a stats threshold computed over a subset would
+    answer a different average from the one an operator configured. The project maximum is
+    3 because the fixture's most complex routines are the four renamed twins, each a loop
+    and a guard; every other routine here is straight-line code at 1.
     """
-    assert len(alpha.populations["routine"]["CyclomaticStrict"]) == 13
-    assert alpha.populations["project"]["MaxCyclomaticStrict"] == [1.0]
+    assert len(alpha.populations["routine"]["CyclomaticStrict"]) == 36
+    assert alpha.populations["project"]["MaxCyclomaticStrict"] == [3.0]
     assert set(alpha.languages) == {"C++", "Python"}

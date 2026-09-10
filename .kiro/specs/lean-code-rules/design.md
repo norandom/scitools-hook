@@ -493,11 +493,19 @@ def routine_facts(ent, ctx: LeanContext) -> dict[str, object]:
 # `referrers` deliberately excludes the derived class; `unused_class` no longer does.
 #
 # Two things measured about that fix, recorded so it is not mistaken for more than it is.
-# Only `inheritby` actually fires on Build 1262 for Python and C++; `derive`, `extendby` and
-# `implementby` match nothing on this fixture and are carried for the languages the contract
-# project does not build. `derive` is also an OUTBOUND kind sitting in an otherwise inbound
-# set: on a class it answers that class's subclasses rather than its users, which gives the
-# same boolean here only because "has a subclass" and "is inherited by something" coincide.
+# **Which kind fires is per language**, measured on the contract project on Build 1262 once
+# task 1.7 gave it a C++ base class as well as a Python one: Python answers `Python Inheritby`
+# and C++ answers `C Public Derive`, both recorded ON THE BASE CLASS and naming the derived
+# one. `inheritby` matches nothing on the C++ side and `derive` nothing on the Python side, so
+# a set holding either alone would answer "dead" for the other language's base class -- which
+# is why both are in `REFERENCE_KINDS` and `DERIVED_KINDS` rather than one of them. `extendby`
+# and `implementby` match nothing on this fixture at all and are carried for the languages the
+# contract project does not build. The C++ derived class carries `C Public Base` back to its
+# base, which is in neither set on purpose: it would make a subclass count as a *user* of its
+# base and take every base class out of `single_implementation`. Both kinds that do fire are
+# OUTBOUND kinds sitting in an otherwise inbound set: on a class they answer that class's
+# subclasses rather than its users, which gives the same boolean here only because "has a
+# subclass" and "is inherited by something" coincide.
 # And the fix has a cost: `unused_class` can now never reach a base class that has any
 # subclass, including an abstract base whose whole subtree is dead. That is accepted as the
 # cheaper error than two rules contradicting each other on one class.
@@ -508,8 +516,22 @@ def class_facts(ent, ctx: LeanContext) -> dict[str, object]:
     entities referencing the class other than itself, its members, its derived classes
     and their members; referenced is any project reference at all."""
 
+VARIABLE_USE = "useby, callby, typedby"                          # a WRITE is not a use
+
 def variable_referenced(ent, ctx: LeanContext) -> bool:
-    """Any REFERENCE_KINDS reference from a project file."""
+    """Whether a project file READS the variable: a VARIABLE_USE reference, not a write.
+
+    **`REFERENCE_KINDS` is the wrong set here, and task 1.7's review caught it.** That set
+    holds `setby`, and a module-level binding's own defining assignment is a `Set Init`
+    reference to it, so every variable in every project would answer True and the rule would
+    report nothing, ever. The contract fixture discriminates only by accident: its dead
+    variables happen to have no `Use` either.
+
+    Writes are excluded rather than merely the defining one, which is a deliberate second
+    decision. A variable that something assigns and nothing reads is dead too, and this is
+    also how Understand defines its own `CountUnusedVariable` -- declare, initialise and
+    assign all count as writes, so a write-only variable counts as unused there as well.
+    """
 
 def token_index(file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, str]],
                 ctx: LeanContext) -> dict[str, object]:
@@ -517,7 +539,17 @@ def token_index(file_ents: Mapping[str, Any], routines: Mapping[str, tuple[Any, 
         'routines': {token: {'path': str, 'start': int, 'end': int, 'shape': [int, ...]}},
         'unreadable': [path, ...]}
     Line hashes: lexeme texts of one line with Whitespace, Comment, Newline, Indent, Dedent
-    dropped, joined, SHA-256 truncated to 16 hex characters; blank results skipped.
+    **and every lexeme whose text is empty** dropped, joined, SHA-256 truncated to 16 hex
+    characters; blank results skipped.
+
+    The empty-text rule is not tidiness, and task 1.7 measured what it costs to omit it.
+    Clipping a FILE's lexeme stream to a routine's line range picks up a trailing end-of-file
+    lexeme carrying the empty string, which is an artefact of reading the stream rather than a
+    token of the routine. Kept, it adds one free MATCHING token to both sides of every
+    comparison and inflates every ratio: the contract project's cross-language twin pair
+    measures 0.637 with it and 0.631 without. The rule is written on text rather than on a
+    token-class name because the documented `Lexeme.token()` values do not include such a
+    class, so a name-based drop would be guessing at an undocumented spelling.
     Shapes: every remaining lexeme mapped to a vocabulary index, where Identifier -> 'ID',
     String and Literal -> 'LIT', Keyword/Operator/Punctuation -> their text; the routine's
     range is ref('definein').line() .. ref('end').line() in the same file, else absent.

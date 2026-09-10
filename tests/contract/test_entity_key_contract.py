@@ -158,7 +158,12 @@ def test_two_databases_from_different_roots_agree_on_every_entity(
 
     assert set(before.entities) == set(after.entities)
     assert before.entities == after.entities
-    assert len(before.entities) == 22, sorted(key.token for key in before.entities)
+    # Every file, every routine and every class the fixture holds, written as the sum so the
+    # number says which scope it came from: 36 routines (the four C++ overloads counted
+    # separately) and 9 classes across the two languages. The two equalities above compare
+    # the sides with each other and would still hold if the extractor dropped a whole scope
+    # from *both*, which is what this count is here to catch.
+    assert len(before.entities) == len(FILES) + 36 + 9, sorted(key.token for key in before.entities)
 
 
 def test_no_key_carries_the_analysis_root(alpha: ProjectSnapshot) -> None:
@@ -236,15 +241,30 @@ def test_a_cpp_class_is_keyed_to_its_header_and_its_methods_to_their_definitions
 ) -> None:
     """Where a C++ entity lives, measured: a split declaration does not become two entities.
 
-    The class is attributed to the header that declares it and every member function to the
-    source file that defines it, so each routine appears once even though the compiler sees
-    its signature twice.
+    ``Shape`` is declared in ``native/shape.h`` and defined in ``native/shape.cpp``. The class
+    is attributed to the header that declares it and every routine of that pair -- the four
+    member functions and the two free ``scale`` overloads -- to the source file that defines
+    it, so each appears once even though the compiler sees its signature twice.
+
+    The classes written whole inside a source file are the control on the same claim. They
+    are keyed to that source file, which is what makes the header attribution above a
+    statement about the *declaration* rather than a preference for headers over sources.
     """
     native = [key for key in alpha.entities if key.path.startswith("native/")]
+    split = [
+        key
+        for key in native
+        if key.longname in {"Shape", "Shape::Shape", "Shape::area", "Shape::side", "scale"}
+    ]
 
-    assert [key.path for key in native if key.scope == "class"] == ["native/shape.h"]
-    assert {key.path for key in native if key.scope == "routine"} == {"native/shape.cpp"}
-    assert len([key for key in native if key.scope == "routine"]) == 6
+    assert [key.path for key in split if key.scope == "class"] == ["native/shape.h"]
+    assert {key.path for key in split if key.scope == "routine"} == {"native/shape.cpp"}
+    assert len([key for key in split if key.scope == "routine"]) == 6
+    assert {key.path for key in native if key.scope == "class"} == {
+        "native/shape.h",
+        "native/lean_dead.cpp",
+        "native/lean_layers.cpp",
+    }
 
 
 # --- what ``parameters`` really discriminates (evidence for task 11.6) -----------
@@ -297,7 +317,10 @@ def test_only_the_cpp_overloads_need_parameters_to_stay_apart(alpha: ProjectSnap
     }
     python = [name for name in census if name[1].endswith(".py")]
     assert all(census[name] == 1 for name in python)
-    assert len(python) == 13
+    # 11 Python files, 18 Python routines and 5 Python classes. The count is asserted
+    # beside the uniqueness claim because "nothing else collides" is satisfied trivially by
+    # a census that lost most of its rows.
+    assert len(python) == 11 + 18 + 5
 
 
 # --- entity kinds the key cannot separate ----------------------------------------

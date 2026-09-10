@@ -104,7 +104,8 @@ def test_the_directory_structure_nodes_at_depth_two(alpha: ProjectSnapshot) -> N
 
     Three things are decided at once here and each has been wrong before: the shadow
     directory's own name is **not** part of a node path; a branch shallower than the
-    requested depth (``app/``, ``native/``) contributes its own leaf rather than vanishing;
+    requested depth (``app/``, ``lean/``, ``native/``) contributes its own leaf rather than
+    vanishing;
     and a file no node at this depth holds -- ``main.py`` in the root, ``pkg/core.py`` beside
     a subdirectory -- is attributed to the architecture itself, so it stays inside every
     node-level rule instead of being silently exempt.
@@ -112,7 +113,27 @@ def test_the_directory_structure_nodes_at_depth_two(alpha: ProjectSnapshot) -> N
     assert nodes(alpha) == {
         ARCH: ["main.py", "pkg/core.py"],
         f"{ARCH}/app": ["app/entry.py"],
-        f"{ARCH}/native": ["native/shape.cpp", "native/shape.h"],
+        f"{ARCH}/lean": [
+            "lean/dead.py",
+            "lean/exported.py",
+            "lean/layers.py",
+            "lean/table_left.py",
+            "lean/table_right.py",
+            "lean/twin_left.py",
+            "lean/twin_right.py",
+        ],
+        f"{ARCH}/native": [
+            "native/lean_dead.cpp",
+            "native/lean_exported.h",
+            "native/lean_layers.cpp",
+            "native/lean_table_left.cpp",
+            "native/lean_table_right.cpp",
+            "native/lean_twin_left.cpp",
+            "native/lean_twin_right.cpp",
+            "native/measure.cpp",
+            "native/shape.cpp",
+            "native/shape.h",
+        ],
         f"{ARCH}/pkg/inner": ["pkg/inner/leaf.py"],
     }
 
@@ -121,12 +142,34 @@ def test_a_shallower_depth_gives_a_different_node_set(shallow: ProjectSnapshot) 
     """The discriminator for the test above: depth is read, not ignored.
 
     At depth 1 ``pkg`` is a node holding both of its files, and only ``main.py`` falls back
-    to the architecture. Without this, "depth 2" could be any number at all.
+    to the architecture. Without this, "depth 2" could be any number at all. ``lean`` and
+    ``native`` are identical in both expectations on purpose: they are one level deep, so a
+    depth that changed them would be changing something other than depth.
     """
     assert nodes(shallow) == {
         ARCH: ["main.py"],
         f"{ARCH}/app": ["app/entry.py"],
-        f"{ARCH}/native": ["native/shape.cpp", "native/shape.h"],
+        f"{ARCH}/lean": [
+            "lean/dead.py",
+            "lean/exported.py",
+            "lean/layers.py",
+            "lean/table_left.py",
+            "lean/table_right.py",
+            "lean/twin_left.py",
+            "lean/twin_right.py",
+        ],
+        f"{ARCH}/native": [
+            "native/lean_dead.cpp",
+            "native/lean_exported.h",
+            "native/lean_layers.cpp",
+            "native/lean_table_left.cpp",
+            "native/lean_table_right.cpp",
+            "native/lean_twin_left.cpp",
+            "native/lean_twin_right.cpp",
+            "native/measure.cpp",
+            "native/shape.cpp",
+            "native/shape.h",
+        ],
         f"{ARCH}/pkg": ["pkg/core.py", "pkg/inner/leaf.py"],
     }
 
@@ -154,15 +197,29 @@ def test_the_file_dependency_edges_carry_their_reference_counts(alpha: ProjectSn
     """Every import and every include, with the reference count the ratchet compares.
 
     The count is what makes a *ref-count* change distinguishable from a *topology* change, so
-    it is asserted rather than the mere presence of an edge. The C++ include is here too: a
+    it is asserted rather than the mere presence of an edge. The C++ includes are here too: a
     dependency edge set that only knew about Python imports would leave every native file
     structurally invisible.
+
+    ``native/measure.cpp -> native/shape.cpp`` is the one edge in this project that no
+    ``#include`` and no ``import`` explains -- the two files are joined by the three calls
+    ``measure`` makes into the routines defined there. It is asserted because a file
+    dependency set built from include and import directives alone would be missing it, and
+    would report a layering violation as absent rather than as clean.
+
+    Every native edge stays inside ``native/`` and every lean edge inside ``lean/``, which is
+    why their ``crosses_arch`` is ``False`` at the shipped depth while all three Python
+    package edges cross.
     """
     assert edges(alpha) == {
         ("main.py", "app/entry.py", 3, True),
         ("app/entry.py", "pkg/core.py", 4, True),
         ("pkg/core.py", "pkg/inner/leaf.py", 3, True),
+        ("lean/dead.py", "lean/exported.py", 3, False),
         ("native/shape.cpp", "native/shape.h", 4, False),
+        ("native/lean_dead.cpp", "native/lean_exported.h", 2, False),
+        ("native/measure.cpp", "native/shape.h", 2, False),
+        ("native/measure.cpp", "native/shape.cpp", 3, False),
     }
 
 
@@ -184,11 +241,42 @@ def test_crossing_an_architecture_boundary_is_decided_by_the_depth(
 
 
 def test_a_class_that_uses_another_class_is_a_class_edge(alpha: ProjectSnapshot) -> None:
-    """Class-scope edges exist and are keyed by ``EntityKey.token`` on both ends."""
+    """Class-scope edges exist and are keyed by ``EntityKey.token`` on both ends.
+
+    Three edges and three shapes: one class that *uses* another, and one inheritance edge per
+    language. The inheritance pair is asserted because Understand spells the reference
+    differently on each side -- ``Python Inheritby`` for ``layers.OnlyChannel`` and ``C Public
+    Derive`` for ``OnlyNativeChannel``, measured on Build 1262 -- and an edge set built from
+    one spelling alone would silently publish half the class graph of a mixed-language
+    project. Both point from the derived class to its base, which is the direction the
+    coupling rules read as a dependency.
+    """
     engine = EntityKey(scope="class", path="pkg/core.py", longname="core.Engine", parameters=None)
     leaf = EntityKey(scope="class", path="pkg/inner/leaf.py", longname="leaf.Leaf", parameters=None)
+    only = EntityKey(
+        scope="class", path="lean/layers.py", longname="layers.OnlyChannel", parameters=None
+    )
+    base = EntityKey(
+        scope="class", path="lean/layers.py", longname="layers.BaseChannel", parameters=None
+    )
+    only_native = EntityKey(
+        scope="class",
+        path="native/lean_layers.cpp",
+        longname="OnlyNativeChannel",
+        parameters=None,
+    )
+    base_native = EntityKey(
+        scope="class",
+        path="native/lean_layers.cpp",
+        longname="BaseNativeChannel",
+        parameters=None,
+    )
 
-    assert {(edge.src, edge.dst) for edge in alpha.class_edges} == {(engine.token, leaf.token)}
+    assert {(edge.src, edge.dst) for edge in alpha.class_edges} == {
+        (engine.token, leaf.token),
+        (only.token, base.token),
+        (only_native.token, base_native.token),
+    }
 
 
 def test_the_architecture_dependency_understand_reports_is_published_at_depth_one(

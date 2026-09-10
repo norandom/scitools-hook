@@ -40,7 +40,7 @@
   - Done when the extended fixture builds on the licensed install and the counts it changes are listed in the task's commit message for task 1.7 to apply
   - _Requirements: 5.7, 9.1_
 
-- [ ] 1.7 Plant the C++ contract cases and update the existing count assertions
+- [x] 1.7 Plant the C++ contract cases and update the existing count assertions
   - The same eight cases in the contract project's C++ sources where the language allows them; every existing contract test that asserts the fixture's entity, edge or definition counts is updated with the new count and the reason
   - Done when the extended fixture builds on the licensed install and the existing contract suite is green with the updated counts
   - _Requirements: 5.7, 9.1_
@@ -263,3 +263,7 @@ Cross-cutting findings recorded as they were learned, so a later task does not r
 - **1.6** The reference sets had a second omission of the same kind as the inheritance one: `PARAMETER_USE` lacked `callby`, so a parameter used only as `fn()` read as unused. Masked in the fixture by the `self|cls|this` ignore, but `def apply(fn): return fn()` has no ignore to hide behind. Corrected in the design.
 - **1.6** Of the four inheritance kinds now in the reference set, only `inheritby` fires on Build 1262 for Python and C++, and `derive` is an outbound kind in an otherwise inbound set. Recorded in the design so it is not read as four measured facts.
 - **1.6** Uniqueness in the contract project is a per-language property until task 1.7 lands. `Shape` is a second unused class and `native/shape.h` a second over-export, both pre-existing on the C++ side, and 1.7 owns resolving them.
+- **1.7** C++ inheritance fires `derive` where Python fires `inheritby`, both on the base class naming the derived one. A reference set holding either alone calls the other language's base class dead. Both were already in the set; the design's claim that only one fired was falsified by the C++ case and corrected.
+- **1.7** `variable_referenced` as designed would answer True for every module variable in every project, because a binding's own defining assignment is a `Set Init` reference to it. The design now reads only `useby, callby, typedby`, and a write-only variable is dead, which is also how Understand defines its own unused-variable metric. Task 3.2 implements it that way.
+- **1.7** Clipping a file's lexeme stream to a routine's line range picks up a trailing empty-text lexeme, which adds a free matching token to both sides of every similarity comparison: 0.637 with it against 0.631 without, on the contract project's cross-language pair. The design now drops lexemes by empty text rather than by class name, because the documented token classes do not include one for it.
+- **1.7** Two contract failures predate this feature and are owned by nobody: `test_doctor_features_contract` expects six feature rows where task 1.2 made nine, and `test_metrics_contract::test_the_catalogue_answers_a_metric_list_for_every_configurable_language` answers an empty set. Both need scheduling.

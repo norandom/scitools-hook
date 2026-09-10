@@ -18,24 +18,29 @@ Everything here is built with plain ``und`` subprocess calls. A contract test th
 database through :class:`~scitools_hook.understand.database.DatabaseManager` would be testing
 the manager; the databases are the *given*, and the adapters are what is under test.
 
-**The lean-code cases.** ``lean/`` holds one instance of each shape the lean-code rules
-report -- a dead parameter, class and module variable, a pass-through routine, an abstraction
-with one implementation, an over-exporting file, a copied block and a renamed twin -- and one
-control beside each, so that a rule which reported every routine, every class or every module
-variable fails here instead of passing. There is deliberately exactly *one* instance of each
-**in the Python sources**, because a fixture holding two of a shape can only be asserted by
-counting. Adding a routine, a class or an import to any of these files can create a second
-instance somewhere else: ``app/entry.py`` carries a module-level constant, and both it and
-``core.Engine.run`` carry a statement of their own, for no other reason.
+**The lean-code cases.** ``lean/`` and ``native/lean_*`` hold one instance each of every
+shape the lean-code rules report -- a dead parameter, class and module variable, a
+pass-through routine, an abstraction with one implementation, an over-exporting file, a
+copied block and a renamed twin -- and one control beside each, so that a rule which reported
+every routine, every class or every module variable fails here instead of passing. There is
+deliberately exactly *one* instance of each **per language**, because a fixture holding two
+of a shape can only be asserted by counting. Adding a routine, a class or an import to any of
+these files can create a second instance somewhere else: ``app/entry.py`` carries a
+module-level constant, and both it and ``core.Engine.run`` carry a statement of their own,
+for no other reason.
 
-Uniqueness is per language until the C++ cases are planted. Measured on the installed build,
-the C++ sources hold two second instances that task 1.7 owns and must resolve: ``Shape`` in
-``native/shape.h`` is a second unused class -- the only inbound reference Understand records
-for it is the ``Nameby`` from the file that defines its methods, and no use, call or typed
-reference at all -- and ``native/shape.h`` itself is a second over-exporting file, with
-``CountDeclClass`` 1, ``CountDeclFunction`` 0 and one inbound edge. The only other
-module-level entity in that header is a Macro, and the definitions walk does not record a
-Macro, so nothing takes the file back out of the rule.
+Two of the shapes were already present in the C++ sources by accident before the C++ cases
+were planted, and one file takes them back out. Measured on the installed build, ``Shape``
+had no use, call or typed reference anywhere in the project -- its only inbound reference was
+the ``Nameby`` from the file defining its methods -- which is the unused-class predicate, and
+``native/shape.h`` had ``CountDeclClass`` 1, ``CountDeclFunction`` 0 and a single inbound
+edge, which is the over-export predicate. The two ``scale`` overloads the header also declares
+do not take it back out: ``CountDeclFunction`` counts *definitions*, and both are defined in
+``native/shape.cpp``. Nor does the include guard, the only other module-level entity there,
+because it is a Macro and the definitions walk records no Macro. ``native/measure.cpp``
+constructs a ``Shape`` and includes the header, so the class is used and the header has two
+inbound edges, and ``native/shape.h`` is left to answer only the overload contract it was
+written for.
 """
 
 from __future__ import annotations
@@ -145,9 +150,9 @@ class Leaf:
     # body of its own, the used module variable, the class the one implementation is derived
     # from -- so a rule that reported everything of a kind would fail rather than pass.
     #
-    # "One instance" means one in the *Python* sources. `native/shape.h` is a second unused
-    # class (`Shape`) and a second over-exporting file, measured; task 1.7 owns both when it
-    # plants the C++ cases. Nothing here relies on the C++ side holding none of a shape.
+    # "One instance" means one per language: `lean/` holds the Python instances and
+    # `native/lean_*` the C++ ones, and each is unique within its own sources. Nothing here
+    # relies on the C++ side holding none of a shape.
     #
     # Written to parse as Python 2: the installed Understand resolves no bare `python` on
     # this machine and falls back to its Python 2 grammar, so no f-string and no annotation
@@ -158,8 +163,7 @@ class Leaf:
 
 Nothing else is defined here and ``lean/dead.py`` is the only file that imports it, which is
 the whole of the rule's predicate. A second definition, or a second importer, and the Python
-sources lose their only instance of this case. ``native/shape.h`` is a second instance on the
-C++ side -- one class, no functions, one inbound edge -- which task 1.7 resolves.
+sources lose their only instance of this case. ``native/lean_exported.h`` is the C++ one.
 """
 
 
@@ -175,9 +179,10 @@ variable and every class would pass a fixture that held only the dead ones. ``ad
 carries the unused parameter, and its body is two statements of its own so that the
 pass-through rule has to leave it alone (2.2).
 
-``ForgottenReport`` is the only unused class in the *Python* sources. The C++ class ``Shape``
-in ``native/shape.h`` carries no use, call or typed reference either, and is a second instance
-until task 1.7 plants the C++ cases and resolves it.
+``ForgottenReport`` is the only unused class in the Python sources;
+``ForgottenNativeReport`` in ``native/lean_dead.cpp`` is the C++ one. ``Shape`` in
+``native/shape.h`` used to be a second instance and is not one now, because
+``native/measure.cpp`` constructs it.
 """
 
 from lean.exported import only_export
@@ -361,6 +366,242 @@ int Shape::side() const { return side_; }
 int scale(int value) { return value * 2; }
 
 int scale(int value, int factor) { return value * factor; }
+""",
+    # --- the C++ half of the lean-code cases (lean-code-rules 5.7, 9.1) ------------------
+    #
+    # The same eight shapes again, one instance of each in the C++ sources, because a rule
+    # measured on Python alone has not been measured on a language with headers, free
+    # functions and overloads. They sit flat in `native/` rather than in a `native/lean/`
+    # subdirectory on purpose: a subdirectory would give `native/` a child, and at depth 2
+    # that moves `native/shape.cpp` and `native/shape.h` out of their own architecture node --
+    # a change to what the structure contract measures and nothing to do with lean code.
+    #
+    # Written to compile as C++98: `override`, `nullptr` and `auto` are not used, so nothing
+    # here depends on which standard the installed clang defaults to.
+    #
+    # `analyze` reports one error per C++ translation unit on this machine -- clang's note
+    # that a future release would prefer a different libstdc++ include directory -- so the
+    # banner reads `Errors:8 Warnings:0` here where it read `Errors:1` with one source file.
+    # It is the same note eight times and not eight problems; nothing asserts the count.
+    #
+    # Two shapes are planted rather than adopted. `Shape` and `native/shape.h` satisfied the
+    # unused-class and over-export predicates exactly, measured, before these files existed,
+    # and `native/measure.cpp` is what takes them back out again. Adopting them instead would
+    # have made one header answer both the overload contract and two lean-code cases, so an
+    # edit made for one would silently break the other, and neither would have a control
+    # beside it.
+    #
+    # The C++ over-exporting file: one definition, no other recorded one, one includer (4.1).
+    "native/lean_exported.h": """#ifndef SAMPLE_LEAN_EXPORTED_H
+#define SAMPLE_LEAN_EXPORTED_H
+
+// One definition for one includer: the C++ over-exporting file (lean-code 4.1).
+//
+// `native/lean_dead.cpp` is the only file that includes this header, and the only other
+// entity it declares is the include guard, which is a Macro and which the definitions walk
+// does not record. A second definition here, or a second includer, and the C++ sources lose
+// their only instance of this case.
+inline int only_native_export(int value) { return value * 3; }
+
+#endif
+""",
+    # The three dead-code shapes requirement 1 adds to the routine rule, with their controls.
+    "native/lean_dead.cpp": """// A constant, a class and a parameter nothing uses (lean-code 1).
+//
+// `kRetryLimit` and `ForgottenNativeReport` are what nothing in the project names.
+// `kDefaultStep` and `native_advance` are the controls beside them, because a rule that
+// reported every file-scope constant and every class would pass a fixture that held only the
+// dead ones. `native_advance` carries the unused parameter.
+//
+// `ForgottenNativeReport` is the only unused class in the C++ sources. `Shape` in
+// `native/shape.h` was the other one until `native/measure.cpp` gave it a user.
+#include "lean_exported.h"
+
+static const int kRetryLimit = 3;
+
+static const int kDefaultStep = 2;
+
+// A class nothing in the project references: the C++ unused-class case (1.1).
+class ForgottenNativeReport {
+public:
+    int total;
+};
+
+// `verbose` is never read: the C++ unused-parameter case (1.2).
+//
+// The body is three statements of its own, as the Python `advance` next door is, so that the
+// pass-through rule has to leave this routine alone (2.2) for a reason of its own rather than
+// only because nothing calls it.
+int native_advance(int value, bool verbose) {
+    int stepped = value + kDefaultStep;
+    int scaled = only_native_export(stepped);
+    return scaled;
+}
+""",
+    # The pass-through routine (2.1) and the abstraction with one implementation (3.1).
+    "native/lean_layers.cpp": """// A routine that forwards, and a base with one implementation.
+//
+// `display_native_name` is the pass-through: one project caller, one project callee, no body
+// of its own. `canonical_native_name` beside it has one caller too and a body, which is the
+// decomposition requirement 2.2 says must never be reported. `BaseNativeChannel` is named by
+// nothing in the project except the class derived from it, and `OnlyNativeChannel` is used by
+// `open_native_channel`, so that the C++ sources' one unused class is in
+// `native/lean_dead.cpp` and not here.
+
+// One caller and a body of its own, so the pass-through rule must stay silent (2.2).
+//
+// Three statements, as the Python `canonical_name` next door has: at two it sat exactly on
+// the default budget and was excluded only by having no project callee, which is one reason
+// where the Python control has two.
+int canonical_native_name(int raw) {
+    int trimmed = raw - 1;
+    int scaled = trimmed * 2;
+    return scaled;
+}
+
+// The pass-through: forwards to `canonical_native_name` and does nothing else (2.1).
+int display_native_name(int raw) { return canonical_native_name(raw); }
+
+// One derived class and no other user: the C++ single-implementation case (3.1).
+class BaseNativeChannel {
+public:
+    virtual int send(int message) const { return message; }
+};
+
+// The one implementation. Its body is three statements of its own, so the pass-through rule
+// has to leave it alone whether or not this build records an `overrides` reference for a C++
+// virtual member -- the Python override next door is excused by `overrides` and this one is
+// excused by requirement 2.2, and between them both readings are covered.
+class OnlyNativeChannel : public BaseNativeChannel {
+public:
+    virtual int send(int message) const {
+        int labelled = display_native_name(message);
+        int shouted = labelled + 1;
+        return shouted;
+    }
+};
+
+// Gives `OnlyNativeChannel` the project reference that keeps it out of the dead-code rule.
+int open_native_channel(int message) {
+    OnlyNativeChannel channel;
+    return channel.send(message);
+}
+""",
+    # The renamed twin (5.2), one half in each file. Neither is included by anything: a
+    # single-definition file with one includer would be an over-export finding as well.
+    "native/lean_twin_left.cpp": """// One half of the C++ renamed twin pair (lean-code 5.2).
+//
+// Every difference between this routine and `native/lean_twin_right.cpp`'s is an identifier,
+// which is exactly what requirement 5.4 says similarity normalises away, and both are well
+// past the six-statement floor the rule ships with. At most two consecutive lines are
+// identical between the two files, so the duplicate-block rule has nothing to say about this
+// pair and the similarity rule has.
+//
+// Measured on the installed build with the normalised shape design.md describes: this pair
+// agrees at 1.00 and the Python pair in `lean/twin_left.py` agrees at 1.00, while a C++
+// routine against a Python one agrees at only 0.63 -- 35 matched of 41 + 70 tokens. The two
+// pairs are two findings at any threshold the rule would ship, never one four-way finding.
+int summarise_native_orders(const int* totals, int count) {
+    int total = 0;
+    int seen = 0;
+    for (int index = 0; index < count; ++index) {
+        total = total + totals[index];
+        seen = seen + 1;
+    }
+    if (seen == 0) {
+        return 0;
+    }
+    return total / seen;
+}
+""",
+    "native/lean_twin_right.cpp": """// The other half of the C++ renamed twin pair (lean-code 5.2).
+//
+// The same routine as `native/lean_twin_left.cpp`'s under other names.
+int summarise_native_invoices(const int* amounts, int count) {
+    int amount = 0;
+    int found = 0;
+    for (int index = 0; index < count; ++index) {
+        amount = amount + amounts[index];
+        found = found + 1;
+    }
+    if (found == 0) {
+        return 0;
+    }
+    return amount / found;
+}
+""",
+    # The copied block (5.1): the sixteen lines from `static const char* const columns[] = {`
+    # to the closing brace of the routine are identical in both files, past the twelve-line
+    # minimum the rule ships with.
+    "native/lean_table_left.cpp": """// One half of the C++ copied block (lean-code 5.1).
+//
+// The copy is an initialiser rather than a run of statements, for the same reason the Python
+// half is a literal: it has to survive the duplication rule's twelve-line minimum once
+// whitespace and comments are dropped, and it has to stay below the similar-routine rule's
+// six-statement floor, so that the twin pair stays the C++ sources' only similarity finding.
+// `columns` is a local, so the duplicate-definition rule that already ships does not see it.
+//
+// Measured: sixteen consecutive normalised lines are shared with `native/lean_table_right.cpp`
+// and no window of twelve is shared with the Python pair, whose surrounding syntax differs on
+// every line.
+const char* const* native_order_columns() {
+    static const char* const columns[] = {
+        "order_id",
+        "customer_id",
+        "created_at",
+        "updated_at",
+        "status",
+        "currency",
+        "subtotal",
+        "discount",
+        "shipping",
+        "tax",
+        "total",
+        "notes",
+    };
+    return columns;
+}
+""",
+    "native/lean_table_right.cpp": """// The other half of the C++ copied block (lean-code 5.1).
+//
+// The routine is named differently and the comment says something else, so the duplicate run
+// is the initialiser itself: sixteen consecutive lines this file shares with
+// `native/lean_table_left.cpp` and with nothing else in the project.
+const char* const* native_invoice_columns() {
+    static const char* const columns[] = {
+        "order_id",
+        "customer_id",
+        "created_at",
+        "updated_at",
+        "status",
+        "currency",
+        "subtotal",
+        "discount",
+        "shipping",
+        "tax",
+        "total",
+        "notes",
+    };
+    return columns;
+}
+""",
+    # Not a case: what keeps two of them unique. See the block comment above.
+    "native/measure.cpp": """// What takes `Shape` and `native/shape.h` out of two lean-code rules.
+//
+// Measured before this file existed: `Shape` had no use, call or typed reference anywhere in
+// the project -- the unused-class predicate (1.1) exactly -- and `native/shape.h` defined one
+// class, no function and had exactly one includer, which is the over-export predicate (4.1).
+// Constructing a `Shape` answers the first and including the header answers the second, and
+// `native/shape.h` is left to the overload contract it was written for.
+//
+// It is also the fixture's only caller of a routine in `native/shape.cpp`, so the C++
+// overloads are reachable rather than merely present.
+#include "shape.h"
+
+int measure(int side, int width) {
+    Shape shape(side);
+    return shape.area(width) + scale(side);
+}
 """,
 }
 """The sample repository, one entry per file, written verbatim under both roots."""
