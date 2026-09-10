@@ -81,6 +81,15 @@ side, where an entity the change deleted is absent.
 ``definition`` is ``structure.duplicate_definition``'s, the name of a module-level binding,
 and the variable rule reports the same kind of thing under it -- a shared key keeps the type
 it already has (see :mod:`scitools_hook.analysis.lean.layering` for what learning that cost).
+
+*What of this module is the family's rather than these three rules'.* :class:`LeanOutcome`,
+:class:`Trust`, :data:`UNMEASURED`, :class:`TrustGate`, :func:`unavailable`,
+:func:`compiled_patterns` and :func:`name_excused` are public because
+:mod:`scitools_hook.analysis.lean.layering` asks them rather than answering the same
+questions again: what the two floors are and how a refusal is worded, what a stale analysis
+cache is told to do about itself, and what an ignore list matches. They landed here because
+these were the first rules to need them; the package initialiser is not their home, because
+it is held to one line for a coupling measurement this module's sibling records.
 """
 
 from __future__ import annotations
@@ -140,6 +149,9 @@ _NO_ROUTINE_FACTS: Final = "reference measurement for every affected routine"
 _NO_TALLY: Final = "declaring-class tally that sees an interface method without an edge"
 _NO_CLASS_FACTS: Final = "reference measurement for every affected class"
 _NO_BINDING_FACTS: Final = "reference measurement for every module binding the change touched"
+
+_UNUSED: Final = "judged unused"
+"""What these three rules decide, for the sentence :func:`unavailable` writes once."""
 
 
 class Trust(NamedTuple):
@@ -201,8 +213,13 @@ class _Class(NamedTuple):
     referenced: bool
 
 
-class _TrustGate:
+class TrustGate:
     """Requirement 1.8's two floors, asked once per entity and answered once per reason.
+
+    The pass-through rule asks this gate too, and requirement 2.6 is why: the floors bound
+    the same two failures there, and the *direction* is worse -- an understated caller count
+    moves a routine towards that rule's predicate rather than away from it. A second gate of
+    its own would be a second place for the two floors to disagree about what a refusal says.
 
     It records the reason it refused rather than raising or returning it, because the caller
     needs the refusal at the end of the walk and the decision in the middle of it.
@@ -272,7 +289,7 @@ def find_unused_parameters(
     method whose name two project classes declare (1.4, 1.9). ``trust`` carries requirement
     1.8's two floors and the figure one of them is judged against.
     """
-    records = _affected(after, affected, "routine")
+    records = affected_records(after, affected, "routine")
     # The one rule of the three that has to ask this, and the reason is the next guard but
     # one: a change touching no routine must not be told that the declaring-class tally is
     # missing, because a rule with nothing to judge did not need it. Its two siblings read
@@ -283,14 +300,14 @@ def find_unused_parameters(
         return LeanOutcome(findings=[])
     routines = _routine_facts(records)
     if routines is None:
-        return _unavailable(PARAMETER_RULE, _NO_ROUTINE_FACTS)
+        return unavailable(PARAMETER_RULE, _NO_ROUTINE_FACTS, _UNUSED)
     declarations = after.method_declarations
     if declarations is None:
-        return _unavailable(PARAMETER_RULE, _NO_TALLY)
-    gate = _TrustGate(after, PARAMETER_RULE, trust)
+        return unavailable(PARAMETER_RULE, _NO_TALLY, _UNUSED)
+    gate = TrustGate(after, PARAMETER_RULE, trust)
     judged = [item for item in routines if _judged(item, declarations, gate)]
     return LeanOutcome(
-        findings=_parameter_findings(judged, _compiled(ignore), severity),
+        findings=_parameter_findings(judged, compiled_patterns(ignore), severity),
         unavailable=gate.messages,
     )
 
@@ -308,13 +325,13 @@ def find_unused_classes(
     neighbourhood (requirement 1.3), so a class used from a file this commit never touched is
     referenced. ``ignore`` is a list of regular expressions over class long names.
     """
-    records = _affected(after, affected, "class")
+    records = affected_records(after, affected, "class")
     classes = _class_facts(records)
     if classes is None:
-        return _unavailable(CLASS_RULE, _NO_CLASS_FACTS)
-    gate = _TrustGate(after, CLASS_RULE, trust)
+        return unavailable(CLASS_RULE, _NO_CLASS_FACTS, _UNUSED)
+    gate = TrustGate(after, CLASS_RULE, trust)
     return LeanOutcome(
-        findings=_class_findings(classes, gate, _compiled(ignore), severity),
+        findings=_class_findings(classes, gate, compiled_patterns(ignore), severity),
         unavailable=gate.messages,
     )
 
@@ -336,15 +353,15 @@ def find_unused_variables(
     """
     bindings = _affected_bindings(after, affected_files)
     if any(definition.referenced is None for definition, _ in bindings):
-        return _unavailable(VARIABLE_RULE, _NO_BINDING_FACTS)
-    gate = _TrustGate(after, VARIABLE_RULE, trust)
+        return unavailable(VARIABLE_RULE, _NO_BINDING_FACTS, _UNUSED)
+    gate = TrustGate(after, VARIABLE_RULE, trust)
     return LeanOutcome(
-        findings=_variable_findings(bindings, gate, _compiled(ignore), severity),
+        findings=_variable_findings(bindings, gate, compiled_patterns(ignore), severity),
         unavailable=gate.messages,
     )
 
 
-def _affected(
+def affected_records(
     after: ProjectSnapshot, affected: Collection[EntityKey], scope: str
 ) -> list[tuple[EntityKey, EntityRecord]]:
     """The affected records of one scope, in file order, from the after side alone (req 1.7).
@@ -455,7 +472,7 @@ def _sole_language(after: ProjectSnapshot) -> str:
     return UNKNOWN_LANGUAGE
 
 
-def _judged(item: _Routine, declarations: Mapping[str, int], gate: _TrustGate) -> bool:
+def _judged(item: _Routine, declarations: Mapping[str, int], gate: TrustGate) -> bool:
     """Whether this routine's parameters may be reported at all (req 1.4, 1.8, 1.9).
 
     The gate is asked first and asked for every candidate, whatever the facts say, because a
@@ -479,13 +496,13 @@ def _parameter_findings(
         _parameter_finding(item, name, severity)
         for item in routines
         for name in item.parameters
-        if not _matches(excused, name)
+        if not name_excused(excused, name)
     ]
 
 
 def _class_findings(
     classes: Sequence[_Class],
-    gate: _TrustGate,
+    gate: TrustGate,
     excused: Sequence[re.Pattern[str]],
     severity: Severity,
 ) -> list[Finding]:
@@ -495,18 +512,18 @@ def _class_findings(
     ]
 
 
-def _reported_class(item: _Class, gate: _TrustGate, excused: Sequence[re.Pattern[str]]) -> bool:
+def _reported_class(item: _Class, gate: TrustGate, excused: Sequence[re.Pattern[str]]) -> bool:
     """Whether this class may be reported: the floors, the measurement, the ignore list."""
     if not gate.allows(item.record.language):
         return False
     if item.referenced:
         return False
-    return not _matches(excused, item.longname)
+    return not name_excused(excused, item.longname)
 
 
 def _variable_findings(
     bindings: Sequence[tuple[Definition, str]],
-    gate: _TrustGate,
+    gate: TrustGate,
     excused: Sequence[re.Pattern[str]],
     severity: Severity,
 ) -> list[Finding]:
@@ -521,7 +538,7 @@ def _variable_findings(
 def _reported_binding(
     definition: Definition,
     language: str,
-    gate: _TrustGate,
+    gate: TrustGate,
     excused: Sequence[re.Pattern[str]],
 ) -> bool:
     """Whether this binding may be reported: the floors, the measurement, the ignore list."""
@@ -529,15 +546,19 @@ def _reported_binding(
         return False
     if definition.referenced:
         return False
-    return not _matches(excused, definition.name)
+    return not name_excused(excused, definition.name)
 
 
-def _compiled(patterns: Sequence[str]) -> tuple[re.Pattern[str], ...]:
-    """The ignore list, compiled. Invalid patterns are refused by the settings model."""
+def compiled_patterns(patterns: Sequence[str]) -> tuple[re.Pattern[str], ...]:
+    """A name ignore list, compiled. Invalid patterns are refused by the settings model.
+
+    Public because every lean rule with a name-pattern list asks it, this module's three and
+    the layering module's two alike.
+    """
     return tuple(re.compile(pattern) for pattern in patterns)
 
 
-def _matches(excused: Sequence[re.Pattern[str]], subject: str) -> bool:
+def name_excused(excused: Sequence[re.Pattern[str]], subject: str) -> bool:
     """Whether a name is one the operator excused.
 
     ``search`` and not ``match``, like every other ignore list in this project: a pattern
@@ -612,14 +633,32 @@ def _variable_finding(definition: Definition, severity: Severity) -> Finding:
     )
 
 
-def _unavailable(rule: str, missing: str) -> LeanOutcome:
-    """The rule's one message for a run that could not measure what it reads (req 1.6)."""
+def unavailable(rule: str, missing: str, verdict: str) -> LeanOutcome:
+    """One rule's one message for a run that could not measure what it reads (req 1.6, 2.5).
+
+    ``verdict`` is the only part that differs between the rules of this family -- the three
+    here judge a name *unused*, and :mod:`scitools_hook.analysis.lean.layering` judges a
+    routine or a class without a word for it -- so the sentence and the remediation behind it
+    are written once and asked for rather than copied. The remediation is the half that would
+    drift: a second copy naming the wrong command is a run told to do nothing about a stale
+    analysis cache.
+
+    **It carries no default, and that is the lesson task 4.2's review taught.** A plausible
+    default (``"judged"``) let every one of the four call sites *in this module* be deleted
+    with the whole suite green, because the three rules here would then have silently swapped
+    the sentence their users read -- "so nothing was judged unused" for "so nothing was
+    judged" -- with no test standing on the difference. Required, each caller states the word
+    it means, and ``test_every_dead_rule_says_what_it_did_not_judge`` stands on the three that
+    say "unused". Four and not six: :mod:`~scitools_hook.analysis.lean.layering` calls this
+    twice more, and both of those pass ``"judged"`` already, so the default would change
+    nothing a user reads there.
+    """
     return LeanOutcome(
         findings=[],
         unavailable=(
-            f"{rule} is on, but this snapshot carries no {missing}, so nothing was judged "
-            f"unused; the analysis cache predates the rule -- run `scitools-hook db rebuild`, "
-            f"or make one change to force a fresh extraction",
+            f"{rule} is on, but this snapshot carries no {missing}, so nothing was "
+            f"{verdict}; the analysis cache predates the rule -- run `scitools-hook db "
+            f"rebuild`, or make one change to force a fresh extraction",
         ),
     )
 

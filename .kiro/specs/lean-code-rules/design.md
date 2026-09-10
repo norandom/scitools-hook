@@ -250,7 +250,7 @@ flowchart TD
     B -- yes --> C{overrides or ignored}
     C -- yes --> S[skip]
     C -- no --> D{callers equals 1 and callees equals 1 and CountStmt within budget}
-    D -- yes --> F[pass_through finding naming caller and callee]
+    D -- yes --> F[pass_through finding naming the callee]
     D -- no --> S
 ```
 
@@ -268,8 +268,8 @@ flowchart TD
 | 1.8 | resolution floor before any dead-code finding | runner/lean, `CallResolution` | `lean.resolution_floor` | check flow |
 | 1.9 | interface methods excluded without an inheritance edge | worker_lean.method_declarations, dead | declaring-class count per method name | |
 | 1.10 | each dead-code rule measured on two repositories before shipping enabled | tasks 6.3, 6.4 | | |
-| 2.6 | pass-through gated on the same floor | runner/lean | `CallResolution` | |
-| 2.1 | pass-through with caller and callee named | layering | `LeanFacts.callers/callees/forwards_to`, `pass_through_max_statements` | layering flow |
+| 2.6 | pass-through gated on the same two floors, applied in the rule as the dead-code rules apply them | layering (`dead.TrustGate`), runner/lean | `CallResolution`, `Trust` | |
+| 2.1 | pass-through naming the callee it forwards to (amended: the snapshot keeps a caller *count*, never a name) | layering | `LeanFacts.callers/callees/forwards_to`, `pass_through_max_statements` | layering flow |
 | 2.2 | one caller alone is not a finding | layering | `callees == 1` and statement budget | layering flow |
 | 2.3 | external caller, overrides, ignore | worker_lean, layering | `overrides`, `pass_through_ignore` | |
 | 2.4 | off, warning | `LeanRules.pass_through` | | |
@@ -332,8 +332,8 @@ flowchart TD
 | LinesPerStatement and floor | config, understand, analysis | verbosity metric with a statement floor | 6.3, 6.4 | SYNTHETIC_METRICS (P0) | Service |
 | worker_lean | understand | every lean measurement | 1.1–1.4, 2.1, 2.3, 3.1, 5.1, 5.2, 5.4, 5.8, 9.4, 9.7 | understand API (P0), worker walk (P0) | Batch |
 | Snapshot lean fields | models | carry the facts | 1.6, 2.5 | ProjectSnapshot (P0) | State |
-| analysis/lean/dead | analysis | three dead-code rules | 1.1–1.7 | LeanFacts, Definition (P0) | Service |
-| analysis/lean/layering | analysis | pass_through, single_implementation, over_export | 2.x, 3.x, 4.x | LeanFacts, file_edges (P0) | Service |
+| analysis/lean/dead | analysis | three dead-code rules, and the family's shared primitives: `LeanOutcome`, `Trust`, `UNMEASURED`, `TrustGate`, `unavailable`, `affected_records`, `compiled_patterns`, `name_excused` | 1.1–1.7 | LeanFacts, Definition (P0) | Service |
+| analysis/lean/layering | analysis | pass_through, single_implementation, over_export | 2.x, 3.x, 4.x | LeanFacts, file_edges (P0), analysis/lean/dead's shared primitives (P0) | Service |
 | analysis/lean/duplicates | analysis | duplicate_block | 5.1, 5.3, 5.5 | TokenIndex (P0) | Service |
 | analysis/lean/similar | analysis | similar_routine | 5.2, 5.3, 5.5 | TokenIndex (P0) | Service |
 | analysis/lean/net | analysis | NetDelta and net_growth | 7.1–7.5 | ratchet.record_of pairing (P1) | Service |
@@ -762,15 +762,21 @@ def find_unused_variables(after: ProjectSnapshot, affected_files: Collection[str
 | Requirements | 2.1–2.5, 3.1–3.4, 4.1–4.3 |
 
 ```python
+class PassThroughLimits(NamedTuple):   # max_statements: int, ignore: Sequence[str]
+
 def find_pass_through(after: ProjectSnapshot, affected: Collection[EntityKey], severity: Severity,
-                      max_statements: int, ignore: Sequence[str]) -> LeanOutcome
+                      limits: PassThroughLimits, trust: Trust) -> LeanOutcome
 def find_single_implementations(after: ProjectSnapshot, affected: Collection[EntityKey],
                                 severity: Severity, ignore: Sequence[str]) -> LeanOutcome
 def find_over_exports(after: ProjectSnapshot, affected_files: Collection[str], severity: Severity,
                       ignore: Sequence[str]) -> list[Finding]
 ```
-- `pass_through`: `lean.callers == 1 and lean.callees == 1 and metrics["CountStmt"] <= max_statements and not lean.overrides`; the finding names `forwards_to` and the caller in `details`; a routine with a body of its own is never reported because `callees == 1` with a budget of 2 leaves no room for one (2.2). Hint `yagni:`.
-- `single_implementation`: for every class `c` such that `c` or one of `c.lean.derived` is affected (3.2): `len(derived) == 1 and referrers == 0` (3.1); names the derived class. Hint `yagni:`.
+- `pass_through`: `lean.callers == 1 and lean.callees == 1 and metrics["CountStmt"] <= max_statements and not lean.overrides`, each guard a statement of its own so branch coverage sees it, and `TrustGate` asked **before** any of them (2.6); the finding names `forwards_to` in `details` and **not** the caller, which is requirement 2.1 as task 4.2 amended it — `LeanFacts.callers` is a count, so no name exists to publish, and the caller is the edit site rather than half of the cut-and-replace the hint states. A routine with a body of its own is never reported because `callees == 1` with a budget of 2 leaves no room for one (2.2). A record whose `CountStmt` is absent is unmeasured rather than empty and is not judged, as `over_export` treats its declaration counts. Hint `yagni:`.
+  - **`PassThroughLimits` is a grouping this project's own gate forced, not a preference.** The budget and the ignore list started as two parameters, which put `find_pass_through` at **six** against the parameter maximum of five, and `scitools-hook check --worktree` exited 1 on it. They are the two halves of one decision — how short a body must be before it counts as forwarding, and which routines forward on purpose — and both are read from the same two lines of `[lean]`, so they travel as one object. `severity` and `trust` stay parameters of their own: severity says how loud the answer is rather than which routines qualify, and `trust` is the run's, not the operator's.
+- `single_implementation`: for every class `c` such that `c` or one of `c.lean.derived` is affected (3.2): `len(derived) == 1 and referrers == 0` (3.1); names the derived class under `details["derived_class"]`, a scalar key of its own rather than `derived`, which `LeanFacts` already publishes as a *list*. The walk is over **every** recorded class rather than the affected ones, because the base a commit should hear about may sit in a file that commit never touched; it follows that an unmeasured class anywhere makes the rule unavailable for the run. **It ships with no floor, and exactly one of the two floors has been argued.** Requirement 2.6 gives the pass-through rule requirement 1.8's floors in as many words and requirement 3 names neither, so no floor is *specified* here. On the merits, the two floors do not stand or fall together:
+  - The **call-resolution** floor is not the bounding quantity. `referrers` counts use, type and inheritance references rather than call edges, so a partly resolved *call graph* does not bound it. That much is settled.
+  - The **accuracy** floor plausibly is. Requirement 1.8's amendment says analysis accuracy bounds whether a file was read at all, and this repository's own measurement is of exactly this shape: sixteen module bindings reported unreferenced while every one of them is read, because the use sites sit in regions Understand's analysis errored on. `referrers == 0` is an absence-of-references claim of that same shape, so a low-accuracy run can produce it for a class with users. Nothing here refutes that, and no corpus has paired an accuracy figure with a false-positive count for this rule.
+  - So the rule ships **off** (3.4) and takes no gate, the question is open rather than settled, and **task 6.4 owns the measurement** that would decide whether an accuracy floor belongs here. Hint `yagni:`.
 - `over_export`: from today's snapshot: file record with `CountDeclFunction + CountDeclClass == 1`, no other module-level `Definition` in that file, and exactly one inbound `file_edges` source (4.1); initialisers and ignored paths excluded (4.2). Hint `yagni:`. Needs `definitions` recorded: the extractor sets `include_definitions` when `over_export` is on.
 
 #### analysis/lean/duplicates and analysis/lean/similar

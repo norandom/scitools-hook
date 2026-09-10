@@ -323,6 +323,39 @@ def test_nothing_affected_is_nothing_said_at_all() -> None:
     assert find_unused_parameters(after, set()) == ([], ())
 
 
+# --- the sentence all three rules share -------------------------------------------
+
+
+def test_every_dead_rule_says_what_it_did_not_judge() -> None:
+    """Requirement 1.6: the verdict in the message is "judged **unused**", for all three.
+
+    ``dead.unavailable`` writes this sentence once for the whole lean family, and the verb
+    phrase is the only part that differs between its callers -- these three judge a name
+    unused, the layering rules judge a shape and have no adjective for it. That makes the
+    word a parameter, and a parameter is exactly what nothing else here stands on: with the
+    argument dropped at all four call sites below, or its constant reworded, every one of
+    these rules would tell its user "so nothing was judged" instead, and the rest of the
+    suite would not notice. This test is the thing that notices.
+    """
+    unmeasured_routine = routine("app.Service.run", None)
+    unmeasured_class = klass("app.Report", None)
+    unmeasured_binding = snapshot((file_record(),), definitions=(binding("TIMEOUT", None),))
+
+    messages = [
+        find_unused_parameters(
+            snapshot((unmeasured_routine,)), {unmeasured_routine.key}, trust=TRUSTED
+        ).unavailable[0],
+        find_unused_classes(
+            snapshot((unmeasured_class,)), {unmeasured_class.key}, trust=TRUSTED
+        ).unavailable[0],
+        find_unused_variables(unmeasured_binding, {PATH}, trust=TRUSTED).unavailable[0],
+    ]
+
+    assert len(messages) == 3
+    for message in messages:
+        assert "so nothing was judged unused;" in message
+
+
 # --- the parameter rule's three unmeasured facts ----------------------------------
 
 
