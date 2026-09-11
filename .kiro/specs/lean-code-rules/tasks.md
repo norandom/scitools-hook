@@ -234,7 +234,7 @@
   - _Depends: 5.5_
   - _Requirements: 5.4, 5.7, 6.5_
 
-- [ ] 6.3 Measure every default on this repository and the cost of a warm check with everything on
+- [x] 6.3 Measure every default on this repository and the cost of a warm check with everything on
   - A whole-project run of this repository with every lean rule on, printing the count each rule produces at its shipped numbers and the first ten findings of each so they can be read; a warm check with one changed line, timed with every rule on and with every rule off
   - The counts and timings go into the research log as a dated table
   - Done when the research log carries the table and the cost test asserts the with-everything time within one half of today's warm check on this repository
@@ -438,6 +438,8 @@ carries them under "The resolution gate".
 - **6.1** Measure the kind set, do not reason it. `setby` in the parameter-use set was defended as reasoning since task 3.1; on Build 1262 a defaulted parameter carries `Definein` only and a reassigned one carries `Setby`, so the set is right and now has a test. The design's claim that Ada and Pascal invert `Derive` was reasoning too, and it was false: both put `Derive` on the base naming the derived type. Two claims, one confirmed and one refuted, both by the same ten-line fixture.
 - **6.2** A docstring in `layering.py` states that Understand reports a multi-line module docstring as code lines, inferred from a dependency count moving eight to seven. Measured on the exact text under both Python grammars: `CountLineCode` 0, `CountLineComment` 13. The count moved for some other reason. The test is written to fail if a build ever answers the paragraph's way; the paragraph itself is follow-up 12.
 - **6.1/6.2** The parent made the mistake its own note 4.2 records: two new test modules were dogfooded while untracked, passed, and were blocked at commit for nine and ten new dependencies against seven and two routines of 79 and 85 lines against 60. Both were split by subject rather than exempted, every assertion intact, 33 and 5 tests before and after. Two further rules for parallel agents: the full gate is the parent's to run once after they land, since two concurrent suites each take ten minutes instead of one; and `git stash` is forbidden while another agent has intent-to-add files, which the index refused on its own but which would otherwise have swept a sibling's work.
+- **6.3** A cost measurement on a repository you do not own can WRITE to it. `check --all` on facdrone rewrote its adaptive baseline file, twice, and had to be restored by checkout after each manual run. The harness now points `[baseline] file` into the scratchpad. Anyone measuring a foreign repository read-only should assume the tool's own state files are in scope of "read-only" and route them elsewhere first.
+- **6.3** The first ten findings per rule, read by a person, are worth more than the counts. Two rules whose counts looked healthy are mostly noise on inspection: `pass_through` is met by comprehensions and expressions holding one project call rather than by the statement count, and `unused_parameter` is dominated by overload stubs, protocol methods and pytest fixture parameters. Both counts would have passed a threshold review; neither survives being read.
 
 ## Found while reviewing 4.2, owned by no task yet
 
