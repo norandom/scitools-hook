@@ -60,6 +60,8 @@ CountLineCode = 60
 CountStmt = 40
 CountParams = 5
 CountPath = 100
+CountLineComment = { max = 20, severity = "warning" }
+LinesPerStatement = { max = 4, severity = "warning" }
 
 [thresholds.class]
 CountDeclMethod = { max = 20, ratchet = false }
@@ -305,6 +307,139 @@ default because reference-based dead-code detection cannot see an entry point na
 packaging metadata, a handler a decorator registers, a dunder the interpreter calls or a test
 pytest collects — the four shapes `unused_ignore` excuses out of the box. Add your own
 patterns rather than adding a caller.
+
+## The lean-code family: `[lean]`
+
+Every rule in this table is **off by default**, and the table is the one place the family is
+configured: code an agent left behind, layers that forward and nothing else, abstractions
+with one implementation, files that export one name, copies and near-copies, and the length
+of the change itself. What each rule reports and how to read a finding is on
+[Lean code](lean-code.md); the measurement behind each default is in the
+[rules reference](../reference/rules.md). This section is the keys.
+
+This is the excerpt `scitools-hook init` writes. Each commented line is both the switch and
+the documentation of one rule: uncomment it to enable the rule, with `"warning"` as the value
+to start from. Every set line belongs to one rule and does nothing until that rule is on, with
+three exceptions the comment names: the two floors, which are read on every run, and
+`verbosity_min_statements`, which `routine.LinesPerStatement` reads and which ships on.
+
+```toml
+# The lean-code family: code an agent left behind, layers that forward and nothing else,
+# abstractions with one implementation, files that export one name, copies and near-copies.
+# Every rule below SHIPS OFF, and each commented line is both the switch and the
+# documentation: uncomment it to enable the rule, and "warning" -- report it, do not refuse
+# the commit -- is the value to start from. Findings carry the `structure.` category, so
+# [ignore], the scope overrides, the severity map and the ratchet reach them like any other
+# structural rule. The *_ignore lists are regular expressions over entity names, except
+# over_export_ignore, duplicates_ignore and similar_ignore, which are path globs.
+# The two *_floor keys are the only set lines here that no rule owns, which is why they ship
+# SET while every rule in this block ships off: runner.lean.evaluate reads them on every run,
+# whatever these switches say. Every other key that ships set here belongs to one rule -- it
+# is that rule's limit, its exception list or its severity -- and does nothing until that rule
+# is on, with one exception: verbosity_min_statements is read by [thresholds.routine]
+# LinesPerStatement, which does ship on. The floors say how much of the analysis has to have
+# worked before a rule may claim a name is unused: below either one the dead-code and
+# pass_through rules evaluate nothing and say which floor stopped them at what measured
+# value. [lean] accuracy_floor REFUSES to judge below it; the separate [analysis]
+# accuracy_floor only REPORTS a poorly resolved run and silences nothing.
+# Measured on two repositories (research.md, task 6.4): similar_routines and duplicates
+# report copies at these numbers; unused_parameters and pass_through mostly report test
+# fixtures, overload stubs and one-line comprehensions -- enable those two last, and read
+# their first ten findings before trusting their count.
+[lean]
+# unused_parameters = "warning"  # unset: off. Reports parameters a routine never reads
+unused_parameters_ignore = ["^(self|cls|this)$", "^_", "^(args|kwargs)$"]
+# unused_classes = "warning"  # unset: off. Reports classes nothing in the project references
+unused_classes_ignore = ["(^|\\.)Test", "Error$", "Exception$"]
+# unused_variables = "warning"  # unset: off. Reports module-level names nothing references
+unused_variables_ignore = ["^__\\w+__$", "^(log|logger|pytestmark)$", "^_$"]
+resolution_floor = 0.75  # below this share of resolved calls the rules above say nothing
+accuracy_floor = 0.75  # the parse floor; NOT [analysis] accuracy_floor, which only reports
+# pass_through = "warning"  # unset: off. Reports a routine with one caller that only forwards
+pass_through_max_statements = 2
+pass_through_ignore = ["\\.__\\w+__$", "(^|\\.)test_", "(^|\\.)(setup|teardown)(_\\w+)?$", "(^|\\.)main$"]
+# single_implementation = "warning"  # unset: off. Reports a base class only one subclass uses
+single_implementation_ignore = ["Error$", "Exception$"]
+# over_export = "warning"  # unset: off. Reports files defining one name for one importer
+over_export_ignore = ["**/__init__.py", "**/index.*", "**/mod.rs", "**/__main__.py"]
+# duplicates = "warning"  # unset: off. Reports copies of duplicates_min_lines lines or more
+duplicates_min_lines = 12
+duplicates_ignore = []
+# similar_routines = "warning"  # unset: off. Reports routines whose tokens twin another's
+similar_min_statements = 6
+similar_threshold = 0.9  # 1.0 is an identical token run
+similar_min_family = 2  # 2 keeps a plain twin
+similar_ignore = []
+similar_name_ignore = ["(^|[.:])__\\w+__$", "(^|[.:])(setUp|tearDown|setup|teardown)(_\\w+)?$"]
+verbosity_min_statements = 5  # below this a routine is not judged by LinesPerStatement
+# max_net_growth = 50  # unset: off. Reports a change adding more than N net lloc
+net_growth_severity = "warning"  # how a max_net_growth finding is reported
+```
+
+The keys, in the five groups the excerpt is written in. A switch takes `"warning"` or
+`"error"`; leaving it unset is off. **The switch and the rule it enables are not spelled the
+same**: the finding is named after what it reports, in the singular, and the switch after the
+table it configures.
+
+| Key | Enables or bounds | Notes |
+| --- | --- | --- |
+| `unused_parameters` | `structure.unused_parameter` | A parameter the routine never reads, sets or modifies, and that no signature it overrides asks for. |
+| `unused_parameters_ignore` | its exceptions | Regular expressions over parameter names. Ships excusing `self`, `cls`, `this`, a leading underscore, `args` and `kwargs`. |
+| `unused_classes` | `structure.unused_class` | A class nothing in the project references. |
+| `unused_classes_ignore` | its exceptions | Regular expressions over class names. Ships excusing `Test*`, `*Error` and `*Exception`. |
+| `unused_variables` | `structure.unused_variable` | A module-level name nothing in the project reads. |
+| `unused_variables_ignore` | its exceptions | Regular expressions over binding names. Ships excusing dunders, `log`, `logger`, `pytestmark` and `_`. |
+| `resolution_floor` | the four rules above and `pass_through` | The share of a language's call sites that resolved to a project routine, below which those rules evaluate nothing and say so once per run. Read on every run, whatever the switches say. |
+| `accuracy_floor` | the same five rules | The share of the analysis Understand parsed without an error, below which those rules refuse. **Not** `analysis.accuracy_floor`, which reports and silences nothing. |
+| `pass_through` | `structure.pass_through` | A routine with one project caller and one project callee that only forwards. |
+| `pass_through_max_statements` | its bound | Understand's `CountStmt` counts the `def` line, so the shipped `2` means a body of one statement; a guard clause would need `3` (measured, task 6.4). |
+| `pass_through_ignore` | its exceptions | Regular expressions over routine long names. Ships as `structure.unused_ignore` does: dunders, `test_*`, `setup`/`teardown`, `main`. |
+| `single_implementation` | `structure.single_implementation` | A base class exactly one subclass derives from and nothing else names. |
+| `single_implementation_ignore` | its exceptions | Regular expressions over class names. Ships excusing `*Error` and `*Exception`. |
+| `over_export` | `structure.over_export` | A file defining one name that one other file imports. |
+| `over_export_ignore` | its exceptions | **Path globs**, relative to the repository root. Ships excusing `__init__.py`, `index.*`, `mod.rs` and `__main__.py`. |
+| `duplicates` | `structure.duplicate_block` | A run of lines the project holds elsewhere, whitespace and comments absent. |
+| `duplicates_min_lines` | its window | The shortest run reported, in code lines. Measured on two repositories (task 6.4): a window of 15 would have cost 26 of 42 and 63 of 122 code findings. |
+| `duplicates_ignore` | its exceptions | Path globs, for a fixture or generated tree that is copies by design. |
+| `similar_routines` | `structure.similar_routine` | A family of routines whose token streams match above the threshold, identifiers and literals interchangeable; one finding per family, never one per member. |
+| `similar_min_statements` | its population | A routine below this many statements is in no family. |
+| `similar_threshold` | its bound | Token similarity holding a family together; `1.0` is an identical token run. |
+| `similar_min_family` | its size | `2` keeps a plain twin; a family of one is every routine in the project. |
+| `similar_ignore` | its exceptions | Path globs, as `duplicates_ignore`. |
+| `similar_name_ignore` | its exceptions | Regular expressions over routine long names, for the shapes a family is idiomatic rather than duplicated. Ships excusing dunders and `setUp`/`tearDown`/`setup`/`teardown`. |
+| `verbosity_min_statements` | `routine.LinesPerStatement` | Below this many statements the ratio is not judged: a two-statement routine over six lines scores 3.0 by arithmetic. The metric itself is a threshold under `[thresholds.routine]` and ships on. |
+| `max_net_growth` | `structure.net_growth` | Unset, the net line never blocks. Set, a change adding more net logical lines than this is a finding; `0` is legal and means "may not make the project longer". |
+| `net_growth_severity` | its severity | `"warning"` by default. |
+
+Four things that are easy to get wrong:
+
+- **Lists replace, they do not merge.** Setting `unused_parameters_ignore` replaces the
+  shipped three patterns; repeat the ones you want to keep, as with `[project] exclude`.
+- **Six lists are regular expressions and three are globs.** `over_export_ignore`,
+  `duplicates_ignore` and `similar_ignore` name files, in the glob language `[project]`
+  speaks; writing `.*\.py$` there is a literal that matches nothing, and the loader says so.
+  The other six match entity names.
+- **A path scope does not reach this table.** `[scope.*]` holds thresholds, so it can raise,
+  demote or switch off `LinesPerStatement` and `CountLineComment` for a region and nothing
+  under `[lean]`; the structural rules and their lists are repository-wide. The tests policy
+  that follows from that is on [Lean code](lean-code.md#tests).
+- **The floors are not a rung of adaptation.** Both measured repositories sit below them
+  (19.1% and 25.9% accuracy, task 6.4), and with the floors forced to zero the rules they
+  guard were right in 0 to 8 of their first ten. A floor moves when a repository above it is
+  measured, not to make a rule speak.
+
+The family reads Understand's references and its lexer, and `doctor` prints a row for each:
+the reference walk the dead-code and layering rules need, the lexer the two duplication rules
+need, and the optional duplicate-lines metric. As with the Understand 8.0 keys above, a switch
+the installed build cannot honour stops the run rather than measuring something else, with
+the key, the capability and the build named:
+`lean.duplicates needs lean tokens, which <build> does not offer`.
+
+What enabling the family costs, measured with everything on (task 6.3): a warm check gained
+4.2 s on a 14.7 s run, 3.8 s of it the after-side snapshot, and a whole-project `check --all`
+with `similar_routines` on compares every routine with every other, 43.7 s on a 319-file
+repository and 85.7 s on a 945-file one. Off, the family extracts nothing and a warm check
+costs what it costs today.
 
 ## Severities
 

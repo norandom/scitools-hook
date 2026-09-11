@@ -47,12 +47,14 @@ the gate will actually enforce. It cannot drift.
     ### Routines (functions and methods)
 
     - `CountLineCode`: at most 60 (error)
+    - `CountLineComment`: at most 20 (warning)
     - `CountParams`: at most 5 (error)
     - `CountPath`: at most 100 (error)
     - `CountStmt`: at most 40 (error)
     - `CyclomaticModified`: at most 8 (error)
     - `CyclomaticStrict`: at most 10 (error)
     - `Essential`: at most 4 (warning)
+    - `LinesPerStatement`: at most 4 (warning)
     - `MaxNesting`: at most 3 (error)
 
     ### Classes
@@ -93,6 +95,42 @@ the gate will actually enforce. It cannot drift.
     - Fan-out of a class (the classes it depends on): at most 12 (warning)
     - One file may gain at most 5 new dependencies in a single change (error)
 
+    ## Lean code
+
+    Every limit above asks whether a piece of code is too complex. None of them asks whether it
+    should exist at all: a routine nothing calls once its replacement landed, a parameter nothing
+    reads, a wrapper that only forwards, an abstraction with one implementation, a file that
+    exports one name, the same twelve lines in three places. Each of those is inside every limit
+    above and costs a reader anyway, so this section is about cutting rather than simplifying.
+
+    ### Before you write it
+
+    Walk these in order and stop at the first that answers; only the last one writes code.
+
+    1. Does this need to exist at all?
+    2. Does it already exist in this codebase?
+    3. Does the standard library do it?
+    4. Does a native platform feature cover it?
+    5. Does an already-installed dependency solve it?
+    6. Can it be one line?
+    7. Then write the minimum that works.
+
+    Rungs 3, 4 and 5 are yours alone. No finding will ever carry either `stdlib:` or `native:`:
+    whether the standard library, the platform or a dependency this project already installs
+    would have done the job is a semantic question a reference database cannot ask. Their
+    absence from a report is not a clearance -- nobody checked them but you.
+
+    ### The net line
+
+    A check with a before side ends with one line for the whole change:
+    `net: +12 lloc (+30 lines) over 7 routines`. That is logical lines added minus logical lines
+    removed, the source-line delta beside it, and the number of routines it was summed over.
+    `--all` has no before side, so it prints no net line.
+
+    A positive number is not a violation -- a feature costs code -- but it is the figure to argue
+    with. The usual reason it is positive is that the path the change replaced is still there:
+    delete that, and the tests that only covered it, before you accept the number.
+
     ## The ratchet
 
     A metric may not get worse than it was, even when it stays inside its limit. Taking
@@ -103,10 +141,7 @@ the gate will actually enforce. It cannot drift.
     Strict mode is off: a violation that was already there before your change is reported
     but does not block, as long as you do not make it worse.
 
-    These limits are not ratcheted, so a value inside them may move: `class.CountClassCoupled`,
-    `class.CountClassDerived`, `class.CountDeclInstanceVariable`, `class.CountDeclMethod`,
-    `class.CountDeclMethodNonStub`, `file.CountDeclClass`, `file.CountDeclFunction`,
-    `file.CountLineCode`.
+    These limits are not ratcheted, so a value inside them may move: `class.CountClassCoupled`, `class.CountClassDerived`, `class.CountDeclInstanceVariable`, `class.CountDeclMethod`, `class.CountDeclMethodNonStub`, `file.CountDeclClass`, `file.CountDeclFunction`, `file.CountLineCode`.
 
     ## Check your own work
 
@@ -154,7 +189,7 @@ the gate will actually enforce. It cannot drift.
     file nobody checked.
     ```
 
-Three things about that block are worth pointing out, because they are the parts that
+Four things about that block are worth pointing out, because they are the parts that
 actually change agent behaviour.
 
 **It says what to run, and when.** `--worktree` while editing, `--staged` before committing.
@@ -172,6 +207,36 @@ from the length of `findings`.
 do not re-capture the baseline to make a finding disappear — those change the rules, not the
 code."* That is the failure mode a capable agent will otherwise find on its own, because it
 is the cheapest way to make the command exit 0.
+
+**It carries the ladder and the net line even when every lean rule is off.** The `## Lean
+code` section prints on the shipped defaults, because rungs 3, 4 and 5 of the ladder are the
+agent's own work whatever the configuration says, and the net line is printed by every check
+with a before side whether or not a `[lean]` rule is on. A line the report prints and the
+document declines to explain would be the worse failure. What it does not print on the
+defaults is a rule nobody enabled: naming one is what teaches an agent to distrust the
+document. Where the repository has rules on, a list appears between the ladder and the net
+line, one line per enabled rule with its severity and the tag its hint opens with. With the
+two duplication rules on as warnings:
+
+```markdown
+### The rules in force
+
+The rules this repository has enabled: the severity each reports at, and the tag its hint
+opens with. The tag is the edit being asked for -- `delete:` it is not used, `yagni:` it
+should not have been written, `shrink:` the same work fits in less code.
+
+- `structure.duplicate_block` (warning), `delete:` -- keep one copy of these lines, call it
+  from the others and delete the rest -- the finding names where every copy is
+- `structure.similar_routine` (warning), `delete:` -- keep one routine of the family, pass what
+  differs as an argument, and delete the others -- they are the same code under different names
+```
+
+The hint is quoted whole rather than cut to its first sentence, because three of the family's
+hints carry a behavioural exclusion in their second sentence: an overridden signature keeps
+its parameter, a constant read by an importer outside the project stays, a class a registry
+reaches is not dead. Only the clause naming an ignore list is dropped, since a list is a
+configuration decision and this document is read before any code is written. The ladder, the
+tags and how to read the net line are on [Lean code](lean-code.md).
 
 ## The JSON contract
 
@@ -192,6 +257,7 @@ One document, `schema_version: 2`. The keys:
 | `unavailable_metrics` | Keyed **language &rarr; metrics**. Rules that were not evaluated. |
 | `ignored_counts`, `tightened`, `highest`, `analyzed_files` | Skipped entities, baseline movements, worst values, and how much was analysed. |
 | `understand_sarif` | Understand's own SARIF documents, one entry per kind: `written` where it went beside `--sarif`, `source` where it was prepared, `problem` why there is none. Empty unless `understand.sarif` is on. |
+| `net_delta` | The change's net LLOC delta as an object, `statements`, `lines` and `routines`; `null` when the run has no before side (`--all`). How to read it is on [Lean code](lean-code.md#how-to-read-the-net-line). |
 
 One finding:
 
