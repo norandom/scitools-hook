@@ -163,11 +163,15 @@ def test_population_metrics_keep_their_stats_prefixes() -> None:
     assert request.population_metrics["project"] == sorted(request.population_metrics["project"])
 
 
+DELTA_COUNTS: Final = ["CountLineCode", "CountStmt"]
+"""The two routine counts the net delta is summed over, in the request's sorted order."""
+
+
 def test_a_stats_prefixed_element_threshold_asks_for_a_population_not_for_entities() -> None:
     request = an_extractor({}, only("routine", "AVG:CyclomaticStrict")).request()
 
     assert request.population_metrics["routine"] == ["AVG:CyclomaticStrict"]
-    assert "routine" not in request.metrics_by_scope
+    assert request.metrics_by_scope["routine"] == DELTA_COUNTS
 
 
 def test_a_plain_project_threshold_asks_for_the_project_population() -> None:
@@ -176,7 +180,7 @@ def test_a_plain_project_threshold_asks_for_the_project_population() -> None:
     request = an_extractor({}, only("project", "MaxCyclomaticStrict")).request()
 
     assert request.population_metrics["project"] == ["MaxCyclomaticStrict"]
-    assert request.metrics_by_scope == {}
+    assert request.metrics_by_scope == {"routine": DELTA_COUNTS}
 
 
 def test_an_architecture_scope_threshold_asks_for_neither() -> None:
@@ -184,7 +188,7 @@ def test_an_architecture_scope_threshold_asks_for_neither() -> None:
     # entity or population vectors; asking for them would only produce an empty vector.
     request = an_extractor({}, only("arch", "CountLineCode")).request()
 
-    assert request.metrics_by_scope == {}
+    assert request.metrics_by_scope == {"routine": DELTA_COUNTS}
     assert request.population_metrics == {}
 
 
@@ -675,52 +679,61 @@ def test_a_reference_rule_alone_asks_for_no_token_pass(settings: Settings) -> No
     assert an_extractor({}, settings).request().lean_tokens is False
 
 
-def test_the_pass_through_rule_alone_asks_for_the_statement_count() -> None:
-    """Follow-up 11 of the lean-code family: the rule reads ``CountStmt`` off the entity
-    record, and a configuration with no ``routine.CountStmt`` threshold used to leave it
-    unmeasured -- every routine unjudged, no unavailable note, the silent no-op this project
-    refuses. The rule now asks for the metric itself, the way ``wants_tokens`` asks for the
-    index, so an operator learns nothing new to configure it (requirement 9.6).
+EVERY_LEAN_RULE: Final = LeanRules(
+    unused_parameters="warning",
+    unused_classes="warning",
+    unused_variables="warning",
+    pass_through="warning",
+    single_implementation="warning",
+    over_export="warning",
+    duplicates="warning",
+    similar_routines="warning",
+    max_net_growth=0,
+)
+"""Every switch of the ``[lean]`` section on at once, the far end from ``LeanRules()``."""
 
-    Written with **no thresholds at all**, so the metric can only have come from the rule.
-    The other choice -- refusing the rule at configuration time without the threshold --
-    fails this test at ``Settings(...)``.
+
+@pytest.mark.parametrize(
+    "lean",
+    [LeanRules(), LeanRules(pass_through="warning"), EVERY_LEAN_RULE],
+    ids=["shipped", "pass_through", "every_rule"],
+)
+def test_the_delta_asks_for_both_of_its_counts_whatever_the_lean_section_says(
+    lean: LeanRules,
+) -> None:
+    """Follow-ups 11 and 14 of the lean-code family, one request. The net delta sums
+    ``CountStmt`` and ``CountLineCode`` off every routine record on every check that has a
+    before side, whatever ``[lean]`` says (requirement 7.1), and the pass-through rule judges
+    a routine by the first of the two (requirement 2.2). Until follow-up 11 the pass-through
+    count reached the record only because the shipped ``routine.CountStmt`` threshold asked
+    for it, and until follow-up 14 the delta's two counts reached it only because the shipped
+    thresholds asked for both: drop those thresholds and the delta summed zeros without a
+    word. So the extractor asks for both counts on the routine scope itself.
+
+    Written with **no thresholds at all**, so the counts can only have come from that request,
+    and parametrised from the shipped ``[lean]`` section to every switch on, so the request
+    is shown not to depend on the section.
+
+    No fingerprint key answers for this. ``config.fingerprint`` keys the snapshot cache on
+    what a configuration makes the request ask for, and a request that does not vary by
+    configuration has nothing for a key to tell apart.
     """
-    settings = Settings(thresholds=[], lean=LeanRules(pass_through="warning"))
+    request = an_extractor({}, Settings(thresholds=[], lean=lean)).request()
 
-    request = an_extractor({}, settings).request()
-
-    assert request.metrics_by_scope == {"routine": ["CountStmt"]}
+    assert request.metrics_by_scope == {"routine": DELTA_COUNTS}
 
 
-def test_no_other_lean_rule_asks_for_the_statement_count() -> None:
-    """Only the one rule reads the record's ``CountStmt``; the family rule takes its floor off
-    the token index, where the worker records the count itself."""
-    every_other = LeanRules(
-        unused_parameters="warning",
-        unused_classes="warning",
-        unused_variables="warning",
-        single_implementation="warning",
-        over_export="warning",
-        duplicates="warning",
-        similar_routines="warning",
-        max_net_growth=0,
-    )
-
-    request = an_extractor({}, Settings(thresholds=[], lean=every_other)).request()
-
-    assert request.metrics_by_scope == {}
-
-
-def test_the_statement_count_joins_the_thresholds_metrics_once_and_sorted() -> None:
-    """With the shipped ``routine.CountStmt`` threshold the request is exactly what it was."""
+def test_the_delta_counts_join_the_thresholds_metrics_once_and_sorted() -> None:
+    """With the shipped thresholds, which ask for both counts, the request is exactly what
+    it was before the extractor asked for them itself."""
     settings = default_settings()
     asked = settings.model_copy(update={"lean": LeanRules(pass_through="warning")})
 
     before = an_extractor({}, settings).request().metrics_by_scope
     after = an_extractor({}, asked).request().metrics_by_scope
 
-    assert "CountStmt" in before["routine"]
+    assert set(DELTA_COUNTS) <= set(before["routine"])
+    assert before["routine"] == sorted(set(before["routine"]))
     assert after == before
 
 

@@ -154,8 +154,8 @@ def _feature_rows(report: FeatureReport | None) -> list[tuple[str, str]]:
 
     Read from what ``doctor`` measured on this build, not from its version number. No rows at
     all when the analysis probe never got far enough to ask: there is nothing to say about the
-    features of a build that cannot analyse a one-file project, and six ``unknown`` rows would
-    say it six times.
+    features of a build that cannot analyse a one-file project, and nine ``unknown`` rows, one
+    per member of :class:`~scitools_hook.models.understand.Feature`, would say it nine times.
     """
     if report is None:
         return []

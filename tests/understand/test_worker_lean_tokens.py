@@ -36,12 +36,30 @@ import pytest
 from api_fakes import FakeEnt, FakeRef
 from worker_projects import FILE_KIND, a_context, a_file, a_routine
 
+from scitools_hook.config import models
 from scitools_hook.config.metric_names import SCOPE_KINDS
 from scitools_hook.models.snapshot import TokenIndex
 from scitools_hook.understand import worker_lean
 
 RECORDED_ELSEWHERE: Final = "some/other/declaration.h"
 """The path half of the extractor's routine map, which the index must never read."""
+
+
+# --- the one metric name this file must not spell differently from the gate ----------------
+
+
+def test_the_statement_metric_is_spelled_the_way_the_gate_spells_it() -> None:
+    """``worker_lean.STATEMENT_METRIC`` is a literal by necessity: the file may import
+    nothing of this package (``test_import_direction`` holds it to ``frozenset()``), so it
+    cannot read :data:`scitools_hook.config.models.STATEMENT_METRIC`, which the extractor
+    requests under and the pass-through rule and the net delta read under. Bound here the
+    way ``test_worker_lean`` binds ``MEMBER_KINDS`` to ``worker.MEMBER_REFS``, and for the
+    same reason: a name that drifted would match nothing rather than raise, the index would
+    record every routine as unmeasured, and the similar-routine rule would judge none of
+    them, on every project, with every test green.
+    """
+    assert worker_lean.STATEMENT_METRIC == models.STATEMENT_METRIC
+
 
 DEF_RUN: Final = [
     ("Keyword", "def", 1),

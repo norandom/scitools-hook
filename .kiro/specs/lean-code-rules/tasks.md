@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Foundation: configuration, models, metric declarations, the floor guard, and the test seams every later group needs
+- [x] 1. Foundation: configuration, models, metric declarations, the floor guard, and the test seams every later group needs
 - [x] 1.1 Add the `[lean]` configuration section with every rule off
   - One settings section holding the nine rule switches as severity-or-off, their ignore lists with the shipped defaults from the design (receivers and underscore-prefixed parameters, error and exception classes, module idioms, initialiser paths), the three numbers of the duplication rules, the pass-through statement budget and the optional net-growth maximum, with the same validation the existing ignore lists get
   - Two derived answers on the section saying whether any reference rule and whether any token rule is on
@@ -60,7 +60,7 @@
   - _Requirements: none of its own; it unblocks 3.1 and 5.1_
   - _Boundary: tests/understand/api_fakes.py, scitools-hook.toml_
 
-- [ ] 2. Rules that need no new extraction, and the net delta
+- [x] 2. Rules that need no new extraction, and the net delta
 - [x] 2.1 (P) The over-export rule from today's snapshot
   - A file defining exactly one routine or class, holding no other module-level definition, and depended on by exactly one project file is reported against the affected file, naming the dependant; initialisers and ignored paths are excluded; a file nothing depends on is not this rule's finding
   - Done when unit tests cover the finding, the initialiser exclusion, the zero-dependant case and the two-dependant case, and the rule is off by default
@@ -105,7 +105,7 @@
   - _Requirements: 1.6, 2.5, 7.1, 9.4, 9.6_
   - _Boundary: runner/lean, CheckPipeline, Snapshot request and feature probes_
 
-- [ ] 3. Reference-based measurement in the worker sibling
+- [x] 3. Reference-based measurement in the worker sibling
 - [x] 3.1 Routine facts: callers, callees, forwarding target, overrides and unused parameters
   - Distinct project routines calling and called by a routine, the callee's long name when there is exactly one, whether the routine overrides, and the names of parameters no project reference uses, sets or modifies
   - Done when unit tests over the API fakes show a parameter used only through a set counted as used, a receiver counted as unused by the worker (the exclusion is the rule's), a caller in an excluded path not counted, and an overriding routine flagged
@@ -127,7 +127,7 @@
   - _Depends: 3.1, 3.2_
   - _Requirements: 1.6, 2.5, 9.4_
 
-- [ ] 4. The reference rules
+- [x] 4. The reference rules
 - [x] 4.1 (P) Dead parameters, classes and module variables
   - Three rules over the after side: a parameter of an affected routine that the routine never references, located at the routine and naming the parameter, unless the routine overrides or the name matches the ignore list; an affected class nothing references unless ignored; an affected file's module variable nothing references unless ignored; a missing fact on any affected record yields the rule's unavailable message and nothing else; a deleted entity cannot appear
   - Done when unit tests cover each finding, the override exclusion, the receiver exclusion by default ignore, the unavailable message, and an unreferenced class in an unaffected file not reported
@@ -152,7 +152,7 @@
   - _Depends: 2.6, 3.3, 4.1, 4.2_
   - _Requirements: 1.6, 2.5, 9.2, 9.3_
 
-- [ ] 5. Token measurement and the duplication rules
+- [x] 5. Token measurement and the duplication rules
 - [x] 5.1 The token index in the worker sibling
   - Per project file: one hash per code line from lexeme texts with whitespace, comment, newline, indent and dedent tokens dropped, keeping original line numbers; per recorded routine with a start and an end reference in the same file: a shape mapping identifiers and literals to two classes and keeping keyword, operator and punctuation text, encoded through a vocabulary; a file whose lexer raises is listed as unreadable and contributes nothing
   - Done when unit tests over the lexer fake show the five token classes dropped, line numbers preserved, a renamed copy producing the same shape, a routine without an end reference absent, and an unreadable file listed
@@ -220,7 +220,7 @@
   - _Requirements: 9.5_
   - _Boundary: tests/contract/test_plugin_metrics_contract.py_
 
-- [ ] 6. Contract measurements on the licensed install
+- [x] 6. Contract measurements on the licensed install
 - [x] 6.1 Reference kinds and counts on the contract project
   - On the extended fixture: the Python and C++ inheritance kinds answer the derived class; overrides are flagged on both; the caller count agrees with the plugin caller metric for every routine of the fixture, and any disagreement is recorded with its cause; each reference rule reports its planted case and nothing else
   - **From task 3.1's review:** `setby`'s place in the parameter-use set is reasoned rather than measured, unlike `callby`, which the fixture forced. Measure whether Understand records a `Set Init` against a defaulted parameter's own declaration. If it does, every defaulted parameter reads as used and requirement 1.2 under-reports in silence, which is the quietest failure this family can have
@@ -251,7 +251,7 @@
   - _Requirements: 5.7, 9.1_
   - _Boundary: config defaults_
 
-- [ ] 7. End-to-end behaviour and the shipped skills
+- [x] 7. End-to-end behaviour and the shipped skills
 - [x] 7.1 End-to-end checks through the installed command
   - A repository fixture with lean rules on: the human report shows the net line and, with nothing to cut, the lean-already line; JSON carries the delta and an example; SARIF carries the run property; the agent-rules snippet carries the lean section; `doctor` prints the three rows; a check with every rule off produces a report identical to today's apart from the net delta
   - **Make the verbose human output reachable, because today it is not, and task 2.5's review found nothing owns it.** Requirement 8.2 asks for the worked example in the verbose human output; task 2.5 renders it correctly at that verbosity and no invocation can produce that verbosity, because the option resolver answers only quiet or normal. Half of 8.2 therefore ships unmet with every check green. The shape that keeps the documented precedence is quiet first, then verbose, then normal. Note that `--verbose` currently means stderr command logs, timings and tracebacks for every subcommand, so this changes what an existing option does to standard output and needs saying in the CLI documentation
@@ -267,7 +267,7 @@
   - _Requirements: 8.7_
   - _Boundary: skills_
 
-- [ ] 8. Documentation (Requirement 10 mandates it; the code-only rule yields to the requirement, as the previous specification's plan did)
+- [x] 8. Documentation (Requirement 10 mandates it; the code-only rule yields to the requirement, as the previous specification's plan did)
 - [x] 8.1 (P) The rules reference, the feature list and the CLI reference
   - Every lean rule with what it reports, what it does not, its default and the measurement behind it; the per-language blind spots of reference-based detection beside the routine rule's; the feature-list rows; the doctor rows and the net line in the CLI page
   - **From task 2.2's review:** requirement 7.2 says deleted files count as negative contributions, and the delta measures routines only, so a deleted file that held no routines reads as a net of zero. That follows the design exactly and is broader than the requirement's wording, so the documentation must say it rather than let an agent meet it and conclude the number is broken
@@ -455,11 +455,11 @@ carries them under "The resolution gate".
 5. **`_reads_in` records the LAST guard a key is read under, not that it is read under exactly one.** A second read under a wrong guard survives when the correct read comes later in the same function body. The reader errs toward red, so it is not urgent, but tasks 5.1-5.5 wire the token keys through that path.
 6. **The five token keys are bound to their rule by shared name stem**, which is uniquely determining only because no other `[lean]` switch begins `duplicates` or `similar`. Three switches share the stem `unused`. The exemption list must shrink when 5.1-5.5 wire those rules, and a test asserts it.
 7. **A duplicate-block finding can still suppress a distinct file.** With `a.py` and `b.py` holding thirty identical lines and `z_real.py` holding twelve of them, nineteen window offsets of the `b.py` copy consume all three named slots and `z_real.py` never appears in the message or in `details`. Structurally it is finding 1 one file over, but the reader is still carried to a true location and the "and N more" tail claims no completeness, so it was not blocked. The cheap mitigation needs no general rule about what "the same copy" means across files: collapse a path's locations to one per contiguous window run before the cap is applied.
-8. **`cli/doctor.py`'s comment says six unknown rows where the enum has nine**, and the restored test mirroring it now says nine. Stale at HEAD rather than introduced, so task 5.5 left it to keep the byte-identity its review was asked to confirm. Fix it alongside task 5.8.
-9. **`worker_lean.py`'s header says worker.py measures 119 of its 130 functions**; task 5.2 measured 130 of 130. Pre-existing, and the paragraph's argument only strengthens with the true number.
+8. **[CLOSED] `cli/doctor.py`'s comment says six unknown rows where the enum has nine**, and the restored test mirroring it now says nine. Stale at HEAD rather than introduced, so task 5.5 left it to keep the byte-identity its review was asked to confirm. Fix it alongside task 5.8. Closed at feature validation: the comment now says nine, one per `Feature` member.
+9. **[CLOSED] `worker_lean.py`'s header says worker.py measures 119 of its 130 functions**; task 5.2 measured 130 of 130. Pre-existing, and the paragraph's argument only strengthens with the true number. Closed at feature validation: corrected to 130 of 130 functions, counted with `ast`, and 1 182 of 1 200 code lines.
 10. **Two contract tests fail against the installed build for reasons outside this feature.** `test_metrics_contract`'s list of languages without class metrics no longer matches Build 1262, which now offers them for Ada, Fortran, VHDL, Jovial and Assembly. Found by task 5.7; pre-existing and not this family's to fix.
 11. **Resolved by task 7.1, request rather than refuse:** `LeanRules.wants_statements` is true when `pass_through` is on, the extractor merges `CountStmt` into the routine request from it, and the fingerprint keys the cache on it. Original finding: the pass-through rule silently depended on a `routine.CountStmt` threshold being configured. It reads the statement count off the entity record, and that metric is requested only because a threshold asks for it. The shipped default carries one at 40, so today it works; a configuration that drops that threshold makes the rule judge nothing with no unavailable note, which is the silent no-op this project refuses. Found by task 6.1's contract test, which adds the threshold and records why. Task 7.1 should either make the lean step request `CountStmt` when `pass_through` is on, the way `wants_tokens` requests the index, or refuse the rule at configuration time without it.
-12. **`analysis/lean/layering.py` claims a multi-line module docstring is reported as code lines.** Task 6.2 measured the exact text of `analysis/lean/__init__.py` under both Python grammars on Build 1262: `CountLineCode` 0, `CountLineComment` 13. The paragraph was inferred from a dependency count moving and does not reproduce. Correct or delete it, and re-examine the "docstring-only package initialiser charged as a dependency" base-gate defect recorded from dogfooding, which may share the misreading.
+12. **[CLOSED] `analysis/lean/layering.py` claims a multi-line module docstring is reported as code lines.** Task 6.2 measured the exact text of `analysis/lean/__init__.py` under both Python grammars on Build 1262: `CountLineCode` 0, `CountLineComment` 13. The paragraph was inferred from a dependency count moving and does not reproduce. Correct or delete it, and re-examine the "docstring-only package initialiser charged as a dependency" base-gate defect recorded from dogfooding, which may share the misreading. Closed at feature validation: the docstring-as-code explanation is refuted in `layering.py` by task 6.2's measurement, and what stands is the count alone, cause still unfound.
 13. **Three rules' noise lives in the rule, not the default, and is recorded in research.md under task 6.4 with counts.** `unused_parameters`: 56 of 68 findings here and 39 of 58 on facdrone are pytest fixture parameters of `test_` functions, 4 and 16 are `@overload` stubs; a fixture-aware or decorator-aware exclusion belongs in the rule. `pass_through`: comprehensions and expressions holding one project call satisfy the predicate at the statement count; the rule needs a body-shape test, not a budget. `duplicate_block`: 6 of 48 and 30 of 152 findings are `__all__` lists and import blocks; a token-class test on the window would exclude them where a higher minimum cannot.
-14. **The net delta has the latent shape follow-up 11 had.** `analysis/lean/net.py` reads `CountStmt` and `CountLineCode` off entity records, and both are requested only because thresholds ask for them; a configuration dropping both would sum zeros silently. Found by task 7.1 and out of its scope. The same fix applies: request them when the delta is wanted, which is every check with a before side.
+14. **[CLOSED] The net delta has the latent shape follow-up 11 had.** `analysis/lean/net.py` reads `CountStmt` and `CountLineCode` off entity records, and both are requested only because thresholds ask for them; a configuration dropping both would sum zeros silently. Found by task 7.1 and out of its scope. The same fix applies: request them when the delta is wanted, which is every check with a before side. Closed at feature validation: `_element_metrics` requests both counts on every routine record of every run, `net.py` reads the two names from `config.models`, and a test pins the request against an empty threshold list.
 15. **Base-gate defect, for its own spec: the after-side database keeps stale entities for a file removed from the shadow.** An untracked test module was swept into the index by `git add -A tests`, unstaged, and rewritten in place by its agent from eleven first-party imports to three. Three consecutive commit attempts then reported it with the OLD eleven, while the working tree had three, the shadow directory held no copy, `und list` on the after database did not name it, and no cached snapshot did. Incremental re-analysis had kept the entities of a file that no longer existed in the tree it analysed. Deleting `after/` and `after.und` under the cache fixed it. The sync that removes a vanished file from the shadow must also remove it from the database, or the database must be rebuilt when a file leaves.

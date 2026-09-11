@@ -915,14 +915,26 @@ facts as "not asked" and reports itself unavailable on every run.
 """
 
 STATEMENT_METRIC: Final = "CountStmt"
-"""The metric the pass-through rule judges a routine's body by (requirement 2.2).
+"""The metric the pass-through rule judges a routine's body by and the net delta leads with
+(requirements 2.2 and 7.1).
 
-Here rather than in ``analysis.lean.layering``, which reads it, because the extractor has
-to *ask* for it: :attr:`LeanRules.wants_statements` turns the request on, and
-``understand.snapshot`` may import ``config`` but not ``analysis``. One spelling, two readers;
-``analysis.lean.net.STATEMENTS`` and ``understand.worker_lean.STATEMENT_METRIC`` are the
-same name again for the delta and the token index, the second by necessity (that module may
-import nothing of this package).
+Here rather than in ``analysis.lean``, which reads it, because the extractor has to *ask*
+for it: ``understand.snapshot._element_metrics`` requests it on every routine record of every
+run, and that module may import ``config`` but not ``analysis``. One spelling, three readers
+-- the request, the pass-through rule and the delta. ``understand.worker_lean.STATEMENT_METRIC``
+is the same name once more, for the token index, by necessity: that module may import nothing
+of this package, and ``tests/understand/test_worker_lean_tokens.py`` holds the two spellings
+equal.
+"""
+
+LINE_METRIC: Final = "CountLineCode"
+"""The source-line count the net delta carries beside :data:`STATEMENT_METRIC` (req 7.1).
+
+Here for the same reason: the extractor requests it on every routine record of every run,
+because the delta is summed on every check that has a before side, whatever ``[lean]`` says.
+Until lean-code follow-up 14 the count reached the record only because the shipped
+``routine.CountLineCode`` threshold asked for it, and a configuration that dropped that
+threshold had the delta sum zeros without a word.
 """
 
 TOKEN_RULES: Final[tuple[str, ...]] = ("duplicates", "similar_routines")
@@ -1150,10 +1162,13 @@ class LeanRules(StrictModel):
         ``routine.CountStmt`` threshold asked for it. A configuration that dropped that
         threshold left every routine unmeasured -- unjudged, with no unavailable note, because
         an unmeasured count is a record the rule declines rather than a run it cannot judge.
-        That is the silent no-op this project refuses, so the rule now asks for the metric
-        itself, the way :attr:`wants_tokens` asks for the index: the extractor merges it into
-        the request and ``config.fingerprint`` keys the snapshot cache on it, and an operator
-        learns nothing new to configure the rule (requirement 9.6).
+        That is the silent no-op this project refuses, so the rule asked for the metric
+        itself, the way :attr:`wants_tokens` asks for the index, and an operator learns
+        nothing new to configure the rule (requirement 9.6). Since follow-up 14 the extractor
+        requests :data:`STATEMENT_METRIC` and :data:`LINE_METRIC` on every routine record of
+        every run, because the net delta sums both whatever this section says, so the request
+        no longer reads this property. ``config.fingerprint`` still keys the snapshot cache on
+        it, which can only invalidate a cached document that would have served.
 
         The other choice -- refusing the rule at configuration time without the threshold --
         would tie a structural rule to a limit an operator may have good reason to drop, and

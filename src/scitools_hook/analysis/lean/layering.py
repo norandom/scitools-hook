@@ -13,17 +13,22 @@ changed to the key it had before; that join already exists, is the only identity
 layer that is not local to one snapshot, and a second copy of it would drift.
 
 *Why it is here and not in* ``analysis/lean/__init__.py``, *because it is a finding about the
-gate itself.* ``analysis.structure.coupling.namespace_targets`` drops a dependency on a package
-initialiser that holds no code, on the stated ground that "importing through it couples the
-importer to nothing" -- and it reads emptiness off ``CountLineCode == 0``. Understand reports a
-**multi-line module docstring as code lines**, so an initialiser whose whole content is a
-paragraph of prose is charged as a real dependency while every one-line-docstring initialiser
-in this package is correctly dropped. Measured on Build 1262 while task 2.6 was landing:
-``runner/lean.py`` names six modules and was charged eight dependencies against
-``max_new_dependencies_per_file = 7``, and shortening this package's initialiser to one line --
-with no other change anywhere -- took the figure to seven. The defect belongs to the base gate
-and is reported rather than absorbed; the prose belongs with the code it describes, which is
-here, where the family's other cross-rule conventions are already recorded.
+gate itself, and one whose cause is still open.* ``analysis.structure.coupling.namespace_targets``
+drops a dependency on a package initialiser that holds no code, on the stated ground that
+"importing through it couples the importer to nothing" -- and it reads emptiness off
+``CountLineCode == 0``. Measured on Build 1262 while task 2.6 was landing: ``runner/lean.py``
+names six modules and was charged eight dependencies against
+``max_new_dependencies_per_file = 7``, and shortening this package's initialiser's docstring
+to one line -- with no other change anywhere -- took the figure to seven. An earlier version
+of this paragraph explained that by Understand charging a multi-line module docstring as code
+lines. Task 6.2 refuted it: the exact text of that initialiser, built on Build 1262 under
+both Python grammars, measures ``CountLineCode`` 0 and ``CountLineComment`` 13, and the
+docstring-only initialiser test in ``tests/contract/test_docstring_lines_contract.py`` holds
+it there. What stands is the count alone: a docstring-only initialiser was charged as a
+dependency and stopped being charged when its docstring was shortened, for a reason not yet
+identified. The defect belongs to the base gate and is reported rather than absorbed, with
+its cause still to be found; the prose belongs with the code it describes, which is here,
+where the family's other cross-rule conventions are already recorded.
 
 This module holds three rules -- the over-exporting file, the pass-through routine and the
 single-implementation abstraction -- because all three answer one question: does this piece of
@@ -253,9 +258,10 @@ it is unmeasured rather than empty and is not judged, for the reason
 default of zero reports every routine whose body was never counted.
 
 Read from ``config.models`` rather than spelled here, because the extractor asks for the
-metric under the same name whenever the rule is on (``LeanRules.wants_statements``): a
-second spelling would let the request and the reader drift apart, and the reader would then
-find no count on any record and judge nothing.
+metric under that name on every routine record of every run
+(``understand.snapshot._element_metrics``, follow-ups 11 and 14): a second spelling would let
+the request and the reader drift apart, and the reader would then find no count on any
+record and judge nothing.
 """
 
 DEFAULT_MAX_STATEMENTS: Final = LeanRules().pass_through_max_statements

@@ -10,7 +10,10 @@ subtract from and says so -- which is what makes it worth the arithmetic here.
 statements` is Understand's ``CountStmt``: the logical lines, the figure formatting cannot
 move. ``CountLineCode`` travels beside it because the two disagreeing is information -- a
 change that removes statements while adding source lines has spread the same logic wider --
-and neither one is a judgement on its own.
+and neither one is a judgement on its own. Both names are read from ``config.models``,
+where ``understand.snapshot`` reads them to request the two counts on every routine record
+of every run (follow-up 14): a spelling of its own here would let the request and this
+reader drift apart, and the delta would then sum zeros without a word.
 
 **The population is the change's own files, on either side.** Every routine record whose path
 is in ``affected.files | affected.deleted_files``, in the after snapshot *or* the before one.
@@ -53,18 +56,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from scitools_hook.analysis.ratchet import pair_changed_signatures
-from scitools_hook.config.models import Severity
+from scitools_hook.config.models import LINE_METRIC, STATEMENT_METRIC, Severity
 from scitools_hook.models.change import AffectedSet, NetDelta
 from scitools_hook.models.findings import Finding, structure_rule
 from scitools_hook.models.snapshot import EntityKey, EntityRecord, ProjectSnapshot
 
 _NET_GROWTH_RULE = structure_rule("net_growth")
-
-STATEMENTS = "CountStmt"
-"""The logical-line count the delta leads with, and the one the maximum is judged against."""
-
-LINES = "CountLineCode"
-"""The source-line count carried beside it, so a change that spread logic wider is visible."""
 
 _Pair = tuple[EntityRecord | None, EntityRecord | None]
 """One routine as the change left it and as it was, either side possibly absent."""
@@ -86,8 +83,8 @@ def net_delta(
         _routines(after, paths), _routines(before, paths), pair_changed_signatures(after, before)
     )
     return NetDelta(
-        statements=sum(_movement(now, was, STATEMENTS) for now, was in pairs),
-        lines=sum(_movement(now, was, LINES) for now, was in pairs),
+        statements=sum(_movement(now, was, STATEMENT_METRIC) for now, was in pairs),
+        lines=sum(_movement(now, was, LINE_METRIC) for now, was in pairs),
         routines=len(pairs),
     )
 

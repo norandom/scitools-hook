@@ -18,9 +18,11 @@ measurement of a project at all: it opens a scratch database of its own and asks
 *build* yields a lexeme stream, which is what a configuration enabling either rule needs
 answered before a check runs.
 
-**Why a second file rather than more of `worker.py`.** `worker.py` measures 1 060 of its
-1 200 permitted code lines and 119 of its 130 functions, and six lean extractions do not fit
-in what is left. The alternatives were both worse: raising the ceiling would be adapting the
+**Why a second file rather than more of `worker.py`.** `worker.py` measures 130 of its 130
+permitted functions (every `def`, counted with `ast`; task 5.5 saw the gate block the commit
+that made it 132) and, by a `tokenize` count of the lines that carry a code token, 1 182 of
+its 1 200 permitted code lines, and six lean extractions do not fit in what is left. The
+alternatives were both worse: raising the ceiling would be adapting the
 tool's own limits to fit a feature it is measuring, and a second *op* would open the database
 and walk every entity a second time against a 6.5 s budget. So the measurements sit here, and
 `worker.py` calls them from the walk it already makes (design.md, *Architecture Pattern

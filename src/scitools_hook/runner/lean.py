@@ -40,9 +40,14 @@ whenever there is a before side to subtract from, whatever the ``[lean]`` sectio
 Requirement 7.1 prints it "when a check has a before side" and attaches no condition about the
 lean rules; requirement 7.6, the "nothing to cut" line, scopes itself explicitly with "when
 lean-code rules are enabled", which is the author scoping by enablement in the one place they
-meant it. It costs no extraction of its own -- both sides' ``CountStmt`` and ``CountLineCode``
-are already in the snapshots the ratchet reads -- so requirement 9.4's cost rule does not reach
-it either. The *maximum* on the delta is a different thing and is off by default (7.5).
+meant it. It asks for its two counts itself: ``understand.snapshot._element_metrics`` requests
+``CountStmt`` and ``CountLineCode`` on every routine record of every run, whatever the
+thresholds or ``[lean]`` say (follow-up 14), because until then both reached the record only
+through the shipped thresholds, and a configuration that dropped them had the delta sum zeros
+without a word. With the shipped thresholds the request is byte for byte what it was, so
+requirement 9.4's cost rule does not reach it; without them the two reads per routine are the
+price of requirement 7.1, which attaches no condition. The *maximum* on the delta is a
+different thing and is off by default (7.5).
 """
 
 from __future__ import annotations

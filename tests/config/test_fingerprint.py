@@ -155,10 +155,13 @@ def test_switching_on_a_token_rule_changes_the_fingerprint(rule: str) -> None:
 
 
 def test_the_pass_through_rule_asks_for_a_metric_the_fingerprint_sees() -> None:
-    """Follow-up 11: the rule requests ``CountStmt`` on its own, so a snapshot cached by a
-    configuration with the reference walk on and the rule **off** must not serve a run that
-    switched it on -- that document has no statement count on any record, and the rule would
-    judge nothing without a word. Both configurations below share ``wants_references`` and a
+    """Follow-up 11 keyed the cache on the pass-through rule's own request for ``CountStmt``:
+    a snapshot cached with the reference walk on and the rule **off** carried no statement
+    count on any record, and served to a run that switched the rule on, the rule judged
+    nothing without a word. Since follow-up 14 the extractor requests the count on every
+    routine record of every run, for the net delta, so the two configurations below describe
+    the same document and the key only invalidates in the safe direction; it is kept, and
+    this test holds it in the payload. Both configurations share ``wants_references`` and a
     threshold list with no ``CountStmt`` in it, so only the rule's own key can tell them apart.
     """
     walking = changed(thresholds=[], lean=LeanRules(unused_parameters="warning", pass_through=None))

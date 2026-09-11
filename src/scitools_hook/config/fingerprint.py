@@ -66,12 +66,14 @@ def analysis_fingerprint(settings: Settings) -> str:
         "definitions": settings.wants_definitions,
         "lean_references": settings.lean.wants_references,
         "lean_tokens": settings.lean.wants_tokens,
-        # The pass-through rule asks for `CountStmt` on every routine record by itself
-        # (`LeanRules.wants_statements`, follow-up 11). It is its own key rather than an
-        # entry in "metrics" below because that list is read off the thresholds, and a
-        # snapshot cached with the reference walk on and this rule off carries no statement
-        # count on any record -- served to a run that switched the rule on, every routine
-        # would go unjudged without a word.
+        # Follow-up 11 keyed the cache on the pass-through rule's own request for `CountStmt`
+        # (`LeanRules.wants_statements`): a snapshot cached with the rule off carried no
+        # statement count on any record unless a threshold asked for one, and served to a run
+        # that switched the rule on, every routine went unjudged without a word. Since
+        # follow-up 14 the extractor requests `CountStmt` and `CountLineCode` on every routine
+        # record of every run, for the net delta, so the request no longer varies with this
+        # rule and the key tells apart two documents that are the same. It is kept: a key that
+        # invalidates too often is the safe direction of a cache key.
         "lean_statements": settings.lean.wants_statements,
         "ignore": {
             "files": sorted(settings.ignore.files),
