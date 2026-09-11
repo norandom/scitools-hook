@@ -150,8 +150,19 @@ nothing.
 - **Rules an agent reads.** `scitools-hook agent-rules --write AGENTS.md` writes the
   effective limits into your agent instructions file, so the agent knows the numbers before
   it writes the code rather than after the commit is refused.
+- **Rules that point at code to delete.** The lean-code family, nine rules that answer the
+  question an agent's output raises: what here is redundant, and what is longer than it needs
+  to be. Two of them read a token index and need no reference resolution, so they are the
+  reliable half: repeated blocks of lines, and families of near-identical routines reported
+  once per family rather than once per pair. Five more read the reference database and sit
+  behind two floors, because below them the analyser and not the code decides what looks
+  dead. Every one ships off, and [the guide](guide/lean-code.md) says which to turn on first.
+- **A net line on every check.** `net: +95 lloc (+176 lines) over 129 routines`. An agent
+  that replaced forty lines with sixty learns it from the gate rather than from a reviewer
+  three days later.
 - **A warm check in 13 seconds** on this repository, down from 27.7 in `0.1.0a8`: one
   snapshot extraction per side instead of four, with the before side served from a cache.
+  Turning every lean rule on adds 3.6 seconds to that, measured against 7.6 allowed.
 
 The full list, with what ships on and what ships off, is
 [Every feature](reference/features.md).

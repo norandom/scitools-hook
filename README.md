@@ -9,6 +9,14 @@ Debt that was already there reports as `pre-existing` and does not block; only r
 blocks. Because the analysis is Understand's, it covers twelve languages, not just the one
 the tool is written in.
 
+Since `0.1.0a10` it also answers the question an agent's output raises, which is not "is this
+too complex" but "how much of this is redundant". The lean-code family reports repeated blocks
+of lines, families of near-identical routines, and code the database says nothing reaches, and
+prints a net logical-lines delta on every check so an agent sees whether its change made the
+project longer. Every one of those rules ships off; the
+[lean-code guide](https://norandom.github.io/scitools-hook/guide/lean-code/) says which two
+the measurement supports turning on first, and why the rest sit behind a floor.
+
 **Documentation: <https://norandom.github.io/scitools-hook/>**
 
 ## Install
