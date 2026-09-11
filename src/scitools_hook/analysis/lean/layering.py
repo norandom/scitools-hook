@@ -229,6 +229,7 @@ from scitools_hook.analysis.lean.dead import (
     name_excused,
     unavailable,
 )
+from scitools_hook.config import models
 from scitools_hook.config.models import LeanRules, Severity, matching_pattern
 from scitools_hook.models.findings import Finding, structure_rule
 from scitools_hook.models.snapshot import (
@@ -242,7 +243,7 @@ _OVER_EXPORT_RULE = structure_rule("over_export")
 PASS_THROUGH_RULE: Final = structure_rule("pass_through")
 SINGLE_IMPLEMENTATION_RULE: Final = structure_rule("single_implementation")
 
-STATEMENT_METRIC: Final = "CountStmt"
+STATEMENT_METRIC: Final = models.STATEMENT_METRIC
 """The metric that says how much body a routine has, and the one requirement 2.1 budgets.
 
 Understand's logical-line count, which is what the whole family means by a line: ``net``
@@ -250,6 +251,11 @@ sums it and ``LinesPerStatement`` divides by it. A routine whose record does **n
 it is unmeasured rather than empty and is not judged, for the reason
 :data:`DECLARATION_METRICS` records one metric family over -- a rule reading it with a
 default of zero reports every routine whose body was never counted.
+
+Read from ``config.models`` rather than spelled here, because the extractor asks for the
+metric under the same name whenever the rule is on (``LeanRules.wants_statements``): a
+second spelling would let the request and the reader drift apart, and the reader would then
+find no count on any record and judge nothing.
 """
 
 DEFAULT_MAX_STATEMENTS: Final = LeanRules().pass_through_max_statements

@@ -190,6 +190,55 @@ reported as two groups, which is correct: one name, two meanings, and `grep` ans
 whichever it meets first. Unifying them is a quantitative decision, not a refactor. Leave it
 visible and say so.
 
+### 4c. A lean rule that is right about the code and wrong about this repository
+
+Every `[lean]` rule ships off. The two duplication rules are the half that measured well:
+on the two repositories this family was measured on (research.md, tasks 6.3 and 6.4) the
+family rule's first tens were 6 and 7 genuine with no noise, the block rule's 8 and 5. So a
+finding from either is usually wrong about the code, which is `scitools-improve`'s work.
+The finding is named `structure.similar_routine` or `structure.duplicate_block`; the switch
+it is configured under is `similar_routines` or `duplicates`, and the keys below sit beside
+the switch.
+When it is wrong about the repository, these are the rungs, cheapest and most honest first,
+each with the number that ships and what 6.4 measured moving it would cost:
+
+1. **`similar_name_ignore`** -- name patterns, for a family that is an idiom: one
+   `__post_init__` per dataclass, one `setUp` per test class, the same on purpose. A name
+   the language or a framework fixes belongs here; a name the project chose does not.
+2. **`similar_ignore` and `duplicates_ignore`** -- path globs, for a *region* that is copies
+   by design: a fixture tree, a port whose test calls itself an independent transcription
+   (6.3 found one on the second repository). Never a source tree, and never the file the
+   finding is in.
+3. **`duplicates_min_lines = 12`** -- raise it only when this repository's copies are
+   measurably longer, and never to lose name lists. 6.4: a window of 15 would have removed 4
+   and 17 `__all__` and import-block findings at the cost of 26 of 42 and 63 of 122 code
+   findings. The name-list exclusion belongs to the rule, not to this number.
+4. **`similar_min_statements = 6`** -- the floor under which a routine is in no family. 6.4
+   recorded no cost for moving it; count yours before you do.
+5. **`similar_threshold = 0.9`** -- last of the numbers. Neither first ten held noise at 0.9,
+   and the genuine ones matched between 0.92 and 1.00, so every step towards 1.0 drops merges
+   a reviewer would make and keeps only verbatim copies.
+6. **`similar_min_family = 2`** -- never for noise. 2 is what keeps a plain twin, and a twin
+   was most of what 6.3 called genuine.
+
+Write the measurement beside the line, as everywhere else, and re-count: a rung that took the
+count to zero hid the rule.
+
+**The dead-code rules and the two floors are not on this ladder.** `unused_parameters`,
+`unused_classes`, `unused_variables` and `pass_through` refuse below
+`resolution_floor = 0.75` and `accuracy_floor = 0.75`, and both floors are measured, not
+placeholders: both repositories 6.4 measured sit below them (19.1% and 25.9% accuracy) and
+with the floors forced to zero those rules were right in 0 to 8 of their first ten. A floor
+moves when a repository above it is measured, not to license a run. Their ignore lists
+(`unused_parameters_ignore`, `unused_classes_ignore`, `unused_variables_ignore`,
+`pass_through_ignore`, `single_implementation_ignore`, `over_export_ignore`) are for the case
+each hint names -- a caller Understand cannot see, a registry, an importer outside the
+project. 6.4's finding is that the parameter rule's noise is routine *shapes* (`test_`
+fixtures and `@overload` stubs: 60 of 68 findings here and 55 of 58 there), which a list of
+parameter names cannot reach. Do not spell a shape as a list of names; leave it and say so.
+`[lean] accuracy_floor` refuses; the separate `[analysis] accuracy_floor` only reports, and
+lowering that one licenses nothing.
+
 ### 5. A project-scope rule a commit cannot act on
 
 `[thresholds.project]` reduces over the whole repository — `AVG:CyclomaticStrict`,
@@ -240,6 +289,7 @@ Two rules on what you take from it:
 | Re-running `baseline` to clear findings | It **replaces** the file with today's values, worse ones included. During refinement, tighten with `check --all` and `adaptive = true`, which can only narrow. |
 | Acknowledging a parse error without a reason, or with a reason that says "clean" | The file was measured only up to the construct that stopped the parse. |
 | Deleting a rule you have not counted | See the first section. Every line is a decision; a decision without a number is a preference. |
+| Lowering `lean.resolution_floor` or `lean.accuracy_floor` to make a dead-code rule speak | Below the floors those rules were right in 0 to 8 of ten (research.md, task 6.4). A finding licensed that way reports the analysis, not the code. |
 
 ## Write the reason down, every time
 
@@ -296,7 +346,7 @@ Per decision:
 ## Decision
 - FINDING: <rule>, <n> occurrences, <where they cluster>
 - QUESTION: wrong about the code, or wrong about the repository?
-- RUNG: <1 parse | 2 not source | 3 owned elsewhere | 4 region | 5 project-scope | 6 limit>
+- RUNG: <1 parse | 2 not source | 3 owned elsewhere | 4 region | 4b rule worth turning on | 4c lean list or number | 5 project-scope | 6 limit>
 - CHANGE: <the exact TOML lines, with the reason comment>
 - COST: <findings before -> after; blocking before -> after>
 - STILL VISIBLE: <yes/no -- a demoted finding must still be reported>

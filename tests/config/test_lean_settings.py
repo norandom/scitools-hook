@@ -424,6 +424,22 @@ def test_a_net_growth_maximum_asks_for_nothing_extra() -> None:
 
     assert lean.wants_references is False
     assert lean.wants_tokens is False
+    assert lean.wants_statements is False
+
+
+def test_the_pass_through_rule_alone_asks_for_the_statement_count() -> None:
+    """Follow-up 11: the rule judges a routine by its ``CountStmt`` and must ask for it
+    itself rather than lean on a ``routine.CountStmt`` threshold happening to be configured.
+    """
+    assert LeanRules.model_validate({"pass_through": "warning"}).wants_statements is True
+
+
+@pytest.mark.parametrize("switch", [name for name in LEAN_RULE_SWITCHES if name != "pass_through"])
+def test_no_other_switch_asks_for_the_statement_count(switch: str) -> None:
+    """One reader of the record's ``CountStmt``; the family rule reads the token index."""
+    value: object = 0 if switch == "max_net_growth" else "warning"
+
+    assert LeanRules.model_validate({switch: value}).wants_statements is False
 
 
 def test_an_ignore_list_alone_asks_for_nothing() -> None:

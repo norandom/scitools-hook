@@ -1,0 +1,86 @@
+{
+  "side": "before",
+  "languages": [
+    "Python"
+  ],
+  "entities": [
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "pkg/deep.py",
+          "longname": "pkg.deep.walk",
+          "parameters": "rows"
+        },
+        "kind": "Function",
+        "name": "walk",
+        "line": 1
+      },
+      "language": "Python",
+      "metrics": {
+        "CountStmt": 2,
+        "CountLineCode": 2,
+        "MaxNesting": 1,
+        "CyclomaticStrict": 1
+      },
+      "archs": [],
+      "is_new": false,
+      "lean": {
+        "callers": 1,
+        "callees": 0,
+        "forwards_to": null,
+        "overrides": false,
+        "unused_parameters": []
+      }
+    },
+    {
+      "ref": {
+        "key": {
+          "scope": "routine",
+          "path": "pkg/other.py",
+          "longname": "pkg.other.scan",
+          "parameters": "items"
+        },
+        "kind": "Function",
+        "name": "scan",
+        "line": 1
+      },
+      "language": "Python",
+      "metrics": {
+        "CountStmt": 3,
+        "CountLineCode": 4,
+        "MaxNesting": 1,
+        "CyclomaticStrict": 1
+      },
+      "archs": [],
+      "is_new": false,
+      "lean": {
+        "callers": 1,
+        "callees": 1,
+        "forwards_to": "pkg.deep.walk",
+        "overrides": false,
+        "unused_parameters": []
+      }
+    }
+  ],
+  "file_edges": [
+    {
+      "src": "pkg/other.py",
+      "dst": "pkg/deep.py",
+      "refs": 1
+    }
+  ],
+  "class_edges": [],
+  "call_resolution": {
+    "Python": {
+      "resolved": 2,
+      "external": 0,
+      "unresolved": 0
+    }
+  },
+  "arch_nodes": [],
+  "arch_edges": [],
+  "populations": {},
+  "unavailable": {},
+  "parse_errors": []
+}

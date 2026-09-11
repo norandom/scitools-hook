@@ -401,6 +401,36 @@ def test_quiet_reaches_the_renderer(assembler: StubAssembler) -> None:
     assert result.stdout == expected + "\n"
 
 
+WITH_EXAMPLE = (a_finding(details={"example": "app.py:L12: shrink: one line\n\n  after   x"}),)
+"""A finding carrying a worked example, so the verbose rendering differs from the normal one.
+
+Without it ``--verbose`` has **no observable effect** on stdout -- the same lesson
+:data:`fakes.cli.HIGHEST` records for ``--show-highest`` -- and a test comparing the two
+renderings would pass against a resolver that never answered ``VERBOSE`` at all.
+"""
+
+
+def test_verbose_reaches_the_renderer(assembler: StubAssembler) -> None:
+    """Lean-code requirement 8.2: the worked example prints under the hint at ``--verbose``."""
+    assembler.assembly.check_pipeline.findings = WITH_EXAMPLE
+    result = run("--verbose", "check", "--all")
+    expected = render_human(
+        a_result("all", WITH_EXAMPLE), Verbosity.VERBOSE, ColorMode.OFF, True, ReportSettings()
+    )
+    assert result.stdout == expected + "\n"
+    assert "example: app.py:L12: shrink: one line" in result.stdout
+
+
+def test_quiet_and_verbose_together_render_quiet(assembler: StubAssembler) -> None:
+    assembler.assembly.check_pipeline.findings = WITH_EXAMPLE
+    result = run("--quiet", "--verbose", "check", "--all")
+    expected = render_human(
+        a_result("all", WITH_EXAMPLE), Verbosity.QUIET, ColorMode.OFF, True, ReportSettings()
+    )
+    assert result.stdout == expected + "\n"
+    assert "example:" not in result.stdout
+
+
 # --- the exit codes are the contract (req 7.9, 1.6, 12.5) ------------------------
 
 

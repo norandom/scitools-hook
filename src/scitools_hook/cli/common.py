@@ -319,8 +319,24 @@ class GlobalOptions:
 
     @property
     def verbosity(self) -> Verbosity:
-        """How much of a run to print (req 7.8)."""
-        return Verbosity.QUIET if self.quiet else Verbosity.NORMAL
+        """How much of a run to print on stdout: quiet first, then verbose, then normal.
+
+        ``--quiet`` is requirement 7.8 and ``--verbose`` is lean-code requirement 8.2, the
+        worked example under each lean finding's hint. The precedence is the **opposite** of
+        the one :meth:`progress` and :meth:`command_log` apply to stderr, and deliberately so:
+        on the diagnostic stream an explicit request for detail beats an implicit request for
+        less, while ``--quiet`` on stdout is a promise about what a caller has to read -- the
+        summary and the blocking findings -- and five lines of example under a warning would
+        break it. So ``--quiet --verbose`` is loud on stderr and quiet on stdout.
+
+        Two guards rather than one conditional expression, because they are separately
+        observable and each has a test that fails with it removed.
+        """
+        if self.quiet:
+            return Verbosity.QUIET
+        if self.verbose:
+            return Verbosity.VERBOSE
+        return Verbosity.NORMAL
 
     @property
     def cli_overrides(self) -> dict[str, object]:

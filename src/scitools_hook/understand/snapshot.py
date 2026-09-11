@@ -48,7 +48,7 @@ from scitools_hook.config.metric_names import (
     Scope,
     format_metric_name,
 )
-from scitools_hook.config.models import Settings, ThresholdSpec
+from scitools_hook.config.models import STATEMENT_METRIC, LeanRules, Settings, ThresholdSpec
 from scitools_hook.errors import AnalysisFailedError
 from scitools_hook.models.snapshot import ParseError, ProjectSnapshot, Side
 from scitools_hook.models.understand import ExtractRequest
@@ -90,7 +90,7 @@ class SnapshotExtractor:
         return ExtractRequest(
             files=set(files),
             kinds_by_scope=dict(SCOPE_KINDS),
-            metrics_by_scope=_element_metrics(self.settings.thresholds),
+            metrics_by_scope=_element_metrics(self.settings.thresholds, self.settings.lean),
             synthetic=_synthetic_ids(self.settings.thresholds),
             population_metrics=_population_metrics(self.settings.thresholds),
             plugin_metrics=_plugin_metrics(self.settings.thresholds),
@@ -142,18 +142,30 @@ class SnapshotExtractor:
 # --- what the settings ask for ---------------------------------------------------
 
 
-def _element_metrics(specs: Iterable[ThresholdSpec]) -> dict[Scope, list[str]]:
+def _element_metrics(specs: Iterable[ThresholdSpec], lean: LeanRules) -> dict[Scope, list[str]]:
     """The metrics each element scope's entities are judged by, prefix stripped (req 5.1-5.3).
 
     Only these count towards the ``unavailable`` report of requirement 5.5: they are what an
     entity is measured against. A metric collected purely to build a population vector is a
     project-level threshold, and an empty vector is reported once by the evaluator instead of
     once per entity of the wrong language.
+
+    The pass-through rule is the one structural rule that judges an entity by a metric off
+    its record, so it asks for that metric here (``LeanRules.wants_statements``, lean-code
+    follow-up 11) rather than relying on a ``routine.CountStmt`` threshold happening to be
+    configured. A configuration that already thresholds the metric produces exactly the
+    request it always did. What this does **not** buy is a sentence in the report for a build
+    that lacks the count: the worker records such a metric under ``snapshot.unavailable`` as
+    it does any requested one, but ``analysis.thresholds._seed_unavailable`` keeps the run's
+    own list to thresholded metrics, and the rule declines an unmeasured record without a
+    note (``layering._within_budget``).
     """
     found: dict[Scope, set[str]] = {}
     for spec in specs:
         if spec.scope in SCOPE_KINDS and not spec.ref.is_population:
             found.setdefault(spec.scope, set()).add(spec.ref.metric)
+    if lean.wants_statements:
+        found.setdefault("routine", set()).add(STATEMENT_METRIC)
     return {scope: sorted(names) for scope, names in found.items()}
 
 

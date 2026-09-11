@@ -66,6 +66,13 @@ def analysis_fingerprint(settings: Settings) -> str:
         "definitions": settings.wants_definitions,
         "lean_references": settings.lean.wants_references,
         "lean_tokens": settings.lean.wants_tokens,
+        # The pass-through rule asks for `CountStmt` on every routine record by itself
+        # (`LeanRules.wants_statements`, follow-up 11). It is its own key rather than an
+        # entry in "metrics" below because that list is read off the thresholds, and a
+        # snapshot cached with the reference walk on and this rule off carries no statement
+        # count on any record -- served to a run that switched the rule on, every routine
+        # would go unjudged without a word.
+        "lean_statements": settings.lean.wants_statements,
         "ignore": {
             "files": sorted(settings.ignore.files),
             "classes": sorted(settings.ignore.classes),

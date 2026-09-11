@@ -118,7 +118,13 @@ def root(
     ] = None,
     verbose: Annotated[
         bool,
-        typer.Option(common.VERBOSE_FLAG, help="Print external commands, timings and tracebacks."),
+        typer.Option(
+            common.VERBOSE_FLAG,
+            help=(
+                "Print external commands, timings and tracebacks; on check, the worked "
+                "example under each lean-code finding."
+            ),
+        ),
     ] = False,
     color: Annotated[
         bool | None,

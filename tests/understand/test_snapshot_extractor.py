@@ -675,6 +675,55 @@ def test_a_reference_rule_alone_asks_for_no_token_pass(settings: Settings) -> No
     assert an_extractor({}, settings).request().lean_tokens is False
 
 
+def test_the_pass_through_rule_alone_asks_for_the_statement_count() -> None:
+    """Follow-up 11 of the lean-code family: the rule reads ``CountStmt`` off the entity
+    record, and a configuration with no ``routine.CountStmt`` threshold used to leave it
+    unmeasured -- every routine unjudged, no unavailable note, the silent no-op this project
+    refuses. The rule now asks for the metric itself, the way ``wants_tokens`` asks for the
+    index, so an operator learns nothing new to configure it (requirement 9.6).
+
+    Written with **no thresholds at all**, so the metric can only have come from the rule.
+    The other choice -- refusing the rule at configuration time without the threshold --
+    fails this test at ``Settings(...)``.
+    """
+    settings = Settings(thresholds=[], lean=LeanRules(pass_through="warning"))
+
+    request = an_extractor({}, settings).request()
+
+    assert request.metrics_by_scope == {"routine": ["CountStmt"]}
+
+
+def test_no_other_lean_rule_asks_for_the_statement_count() -> None:
+    """Only the one rule reads the record's ``CountStmt``; the family rule takes its floor off
+    the token index, where the worker records the count itself."""
+    every_other = LeanRules(
+        unused_parameters="warning",
+        unused_classes="warning",
+        unused_variables="warning",
+        single_implementation="warning",
+        over_export="warning",
+        duplicates="warning",
+        similar_routines="warning",
+        max_net_growth=0,
+    )
+
+    request = an_extractor({}, Settings(thresholds=[], lean=every_other)).request()
+
+    assert request.metrics_by_scope == {}
+
+
+def test_the_statement_count_joins_the_thresholds_metrics_once_and_sorted() -> None:
+    """With the shipped ``routine.CountStmt`` threshold the request is exactly what it was."""
+    settings = default_settings()
+    asked = settings.model_copy(update={"lean": LeanRules(pass_through="warning")})
+
+    before = an_extractor({}, settings).request().metrics_by_scope
+    after = an_extractor({}, asked).request().metrics_by_scope
+
+    assert "CountStmt" in before["routine"]
+    assert after == before
+
+
 @pytest.mark.parametrize("settings", [Settings(), *TOKENS_ASKED_BY, *REFERENCES_ASKED_BY])
 def test_the_request_asks_for_tokens_exactly_when_the_settings_want_them(
     settings: Settings,

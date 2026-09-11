@@ -109,6 +109,54 @@ another.
 
 Re-run `scitools-hook check --worktree` after each edit.
 
+### 2b. Read the net line and the lean findings before you stage
+
+A check with a before side ends with one line for the whole change:
+
+```text
+net: +12 lloc (+30 lines) over 7 routines
+```
+
+Logical lines added minus logical lines removed, the source-line delta beside it, and the
+number of routines it was summed over. Read it before `git add`, whichever way it points:
+
+- **A positive number is not a violation** -- a feature costs code -- but it is the figure
+  to argue with. The usual reason it is positive is that the path the change replaced is
+  still there. Delete that, and the tests that only covered it, before you accept the number.
+- **The sum is over routines** in the change's files, on either side. A deleted file that
+  held no routines -- constants, a data module, an `__init__.py` of imports -- contributes
+  nothing, so a change that is only such a deletion reads
+  `net: +0 lloc (+0 lines) over 0 routines`. That is a genuine zero, not a missing
+  measurement: those lines were never counted as logic on either side.
+- `--all` has no before side and prints no net line at all.
+- `lean already: nothing to cut, net -4 lloc` beneath it means a lean rule is on, the change
+  is no longer, and none of those rules found anything. It is printed only when all three
+  hold; do not report "nothing to cut" from a run that did not print it.
+- It never blocks unless the operator set `max_net_growth`; then it is one more finding.
+
+The lean rules (`structure.unused_parameter`, `structure.pass_through`,
+`structure.duplicate_block`, `structure.similar_routine` and their kin) ship off; where the
+repository has one on, its findings carry a hint that opens with one tag naming the edit:
+`delete:` it is not used, `yagni:` it should not have been written, `shrink:` the same work
+fits in less code. With `scitools-hook --verbose check --staged` (the flag goes before the
+subcommand) each carries a worked before-and-after example beneath the hint. Two tags the Gate never emits: `stdlib:` and `native:`. Whether the standard
+library, the platform or an installed dependency would have replaced the code is a question
+a reference database cannot ask; their absence from a report is not a clearance, and
+`scitools-hook agent-rules` prints the ladder that puts those two rungs on you.
+
+One line to take at its word, printed once per rule and floor per run, not per entity:
+
+```text
+structure.unused_parameter was not evaluated: Understand parsed 19% of this analysis
+without an error, below the accuracy floor of 75%; ...
+```
+
+The three dead-code rules and `structure.pass_through` refuse below two floors, and a
+repository below either gets no findings from them **by design**. Both repositories this
+family was measured on sit below (19.1% and 25.9% accuracy, research.md task 6.3), so a
+run that printed that line says nothing about the repository's dead code. Do not report
+"no unused code" from it.
+
 ### 3. Understand what a change did
 
 ```bash
@@ -184,6 +232,8 @@ Every finding carries: `rule`, `scope`, `path`, `line`, `value`, `before`, `limi
 | `pre-existing` | The violation was already there before this change and did not get worse. **Does not block.** |
 | `warning` | Reported and counted. **Never blocks, in any mode.** |
 | `analysis.parse_error` | A file in the selection could not be read. Nothing after the named line was measured and no rule ran on it. This blocks. |
+| `net: +12 lloc (+30 lines) over 7 routines` | The whole change's logical-line delta. Not a finding; never blocks on its own. See 2b. |
+| `structure.<rule> was not evaluated: ...` | A lean rule refused below a floor. Not a clean answer: nothing was judged. |
 
 An `analysis.parse_error` is not a limit at all and must not be silenced. Its hint names the
 construct to rewrite. On Python, the most common cause is PEP 695 syntax (`def f[T](...)`,
@@ -233,6 +283,8 @@ and let a human decide. Do not make the change and report success.
 | "The file has no findings, so it is clean." | Not if it is named in `parse_errors`. A file the analyser could not read has no findings *because it was never read*. |
 | "`check --all` reported 231 errors, so this repository fails the gate." | `--all` is an inventory with no before side. A commit is gated by `--staged`, where those are `pre-existing` and do not block. |
 | "I ran the check before my last edit and it passed." | Re-run it. Evidence must be fresh. |
+| "The net line is positive, so the change is refused." | It never blocks unless `max_net_growth` is set. It is the figure to argue with: is the path this change replaced still there? |
+| "No lean findings, so nothing here is dead." | Not if the run printed `was not evaluated`. Below the floors those rules judge nothing, by design. |
 
 ## Output Format
 
@@ -245,6 +297,8 @@ and let a human decide. Do not make the change and report success.
 - PRE_EXISTING: <count -- reported, not blocking>
 - WARNINGS: <count>
 - PARSE_ERRORS: <files in the selection that were not read, or "none">
+- NET: <the net line as printed, or "none" for a run with no before side>
+- NOT_EVALUATED: <lean rules the floors refused, or "none">
 - ACTION: <what was changed in the code, or what a human must decide>
 ```
 

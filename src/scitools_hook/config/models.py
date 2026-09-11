@@ -914,6 +914,17 @@ never again, and the failure is silent -- a rule missing from the extractor's li
 facts as "not asked" and reports itself unavailable on every run.
 """
 
+STATEMENT_METRIC: Final = "CountStmt"
+"""The metric the pass-through rule judges a routine's body by (requirement 2.2).
+
+Here rather than in ``analysis.lean.layering``, which reads it, because the extractor has
+to *ask* for it: :attr:`LeanRules.wants_statements` turns the request on, and
+``understand.snapshot`` may import ``config`` but not ``analysis``. One spelling, two readers;
+``analysis.lean.net.STATEMENTS`` and ``understand.worker_lean.STATEMENT_METRIC`` are the
+same name again for the delta and the token index, the second by necessity (that module may
+import nothing of this package).
+"""
+
 TOKEN_RULES: Final[tuple[str, ...]] = ("duplicates", "similar_routines")
 """The two ``[lean]`` switches answered from the worker's whole-project token pass (req 9.4).
 
@@ -1128,6 +1139,30 @@ class LeanRules(StrictModel):
         is asked in one place and answered in one place.
         """
         return any(getattr(self, rule) is not None for rule in TOKEN_RULES)
+
+    @property
+    def wants_statements(self) -> bool:
+        """Whether the pass-through rule is on, so every routine record must carry its
+        :data:`STATEMENT_METRIC` (requirement 2.2, follow-up 11).
+
+        The rule judges a routine by its statement count and reads it off the entity record,
+        and until this property the metric reached the record only because the shipped
+        ``routine.CountStmt`` threshold asked for it. A configuration that dropped that
+        threshold left every routine unmeasured -- unjudged, with no unavailable note, because
+        an unmeasured count is a record the rule declines rather than a run it cannot judge.
+        That is the silent no-op this project refuses, so the rule now asks for the metric
+        itself, the way :attr:`wants_tokens` asks for the index: the extractor merges it into
+        the request and ``config.fingerprint`` keys the snapshot cache on it, and an operator
+        learns nothing new to configure the rule (requirement 9.6).
+
+        The other choice -- refusing the rule at configuration time without the threshold --
+        would tie a structural rule to a limit an operator may have good reason to drop, and
+        would be the first rule in the family to need a threshold beside its own switch.
+
+        Only this rule: the similar-routine rule takes the same metric off the token index,
+        where the worker records it for every routine of the project without being asked.
+        """
+        return self.pass_through is not None
 
 
 class Settings(StrictModel):

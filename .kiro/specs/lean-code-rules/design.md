@@ -200,7 +200,10 @@ tests/
 ├── runner/test_lean_step.py                # NEW
 ├── contract/contract_project.py            # + cases per rule, Python and C++
 ├── contract/test_lean_contract.py          # NEW: kinds, counts, cost
-├── e2e/test_lean_rules.py                  # NEW
+e2e/lean_fixture.py  # NEW
+e2e/test_lean_human_report.py  # NEW
+e2e/test_lean_machine_output.py  # NEW
+e2e/test_lean_doctor_and_all_off.py  # NEW
 └── test_import_direction.py                # + worker_lean entry and isolated-interpreter test
 ```
 

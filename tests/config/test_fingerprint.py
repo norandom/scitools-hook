@@ -21,7 +21,7 @@ from fixtures.constants import LEAN_REFERENCE_RULES, LEAN_TOKEN_RULES
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.fingerprint import analysis_fingerprint
-from scitools_hook.config.models import ParseAcknowledgement, Settings
+from scitools_hook.config.models import LeanRules, ParseAcknowledgement, Settings
 
 
 def changed(**overrides: object) -> Settings:
@@ -152,6 +152,22 @@ def test_switching_on_a_token_rule_changes_the_fingerprint(rule: str) -> None:
     switched = changed(lean=base.lean.model_copy(update={rule: "warning"}))
 
     assert analysis_fingerprint(switched) != analysis_fingerprint(base)
+
+
+def test_the_pass_through_rule_asks_for_a_metric_the_fingerprint_sees() -> None:
+    """Follow-up 11: the rule requests ``CountStmt`` on its own, so a snapshot cached by a
+    configuration with the reference walk on and the rule **off** must not serve a run that
+    switched it on -- that document has no statement count on any record, and the rule would
+    judge nothing without a word. Both configurations below share ``wants_references`` and a
+    threshold list with no ``CountStmt`` in it, so only the rule's own key can tell them apart.
+    """
+    walking = changed(thresholds=[], lean=LeanRules(unused_parameters="warning", pass_through=None))
+    asking = changed(
+        thresholds=[], lean=LeanRules(unused_parameters="warning", pass_through="warning")
+    )
+
+    assert walking.lean.wants_references and asking.lean.wants_references
+    assert analysis_fingerprint(asking) != analysis_fingerprint(walking)
 
 
 def test_over_export_alone_turns_on_the_definitions_walk_and_not_the_reference_walk() -> None:

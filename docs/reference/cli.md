@@ -44,10 +44,18 @@ scitools-hook --verbose check --staged
 | `--scitools-home DIR` | The Understand installation to use. Highest precedence in the locator order. |
 | `--config PATH` | Read this configuration file instead of the discovered one. |
 | `--api-mode <auto\|inprocess\|upython>` | How to reach Understand's Python API. See [Operations](operations.md#api-modes). |
-| `--verbose` | Print external commands, timings and tracebacks. |
+| `--verbose` | Print external commands, timings and tracebacks on standard error; on `check`, also print the worked before-and-after example under each lean-code finding's hint on standard output. |
 | `--color` / `--no-color` | Force colour on or off, whatever stdout is. |
 | `--quiet` | Print only the summary and blocking findings. |
 | `--version` | Print the installed version and exit. |
+
+`--quiet` and `--verbose` meet on two streams with opposite precedence. On standard error
+`--verbose` wins: `--quiet --verbose` still prints every command and timing, because an
+explicit request for detail beats an implicit request for less. On standard output `--quiet`
+wins: the report stays the summary and the blocking findings, and no lean-code example is
+printed under a warning. `--verbose` changes standard output for `check` only, and only by
+adding the example under a lean-code finding's hint (the JSON output carries the same example
+beside the hint at every verbosity).
 
 ## Exit codes
 

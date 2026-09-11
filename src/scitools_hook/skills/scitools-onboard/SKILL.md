@@ -122,6 +122,49 @@ hint asks for extraction and extraction raises the file counts — **the file-le
 yields**. A file of twelve small named helpers is the outcome the routine limits are asking
 for.
 
+## Step 3b — the lean rules: proposed from measurement, none enabled blindly
+
+Every `[lean]` rule ships off. Two of them are worth proposing on the first day, and the
+proposal is a first-ten reading, not a paste:
+
+```toml
+[lean]
+similar_routines = "warning"
+duplicates = "warning"
+```
+
+Put those two lines in, count, and read the first ten of each rule in the source:
+
+```bash
+scitools-hook check --all --format json > /tmp/lean.json
+jq -r '[.findings[] | select(.rule=="structure.similar_routine" or .rule=="structure.duplicate_block")]
+       | group_by(.rule) | .[] | "\(length)\t\(.[0].rule)"' /tmp/lean.json
+```
+
+On the two repositories this family was measured on
+(research.md, tasks 6.3 and 6.4) the family rule's first tens were 6 and 7 genuine, the rest
+twins kept apart on purpose, none noise; the block rule's were 8 and 5, the noise being
+`__all__` lists and import blocks of twelve or more names. Propose the two lines with your
+own reading beside them, and price them: the reference and token extraction the family
+needs adds to every warm check (6.3, everything on: 4.2 s on a 14.7 s check, 3.8 s of it the
+after-side snapshot), and a whole-project `check --all` with the family rule on compares
+every routine with every other (6.3, everything on: 43.7 s on a 319-file repository and
+85.7 s on a 945-file one, about 27 s and 56 s of it that comparison).
+
+**Never enable a dead-code rule blindly.** `unused_parameters`, `unused_classes`,
+`unused_variables` and `pass_through` refuse to judge below two floors,
+`resolution_floor = 0.75` and `accuracy_floor = 0.75`. Read `after accuracy` in
+`scitools-hook doctor` first. A repository below either floor gets **no findings from them by
+design** -- the run prints one `was not evaluated` line per rule and nothing else -- and both
+measured repositories were below (19.1% and 25.9%). Enabling one there writes a line that
+does nothing and looks like a decision. Above the floor, propose one only after reading its
+first ten: with the floors forced to zero, 6.4 found the parameter rule's findings were 56 of
+68 and 39 of 58 pytest fixtures plus 4 and 16 `@overload` stubs, and the pass-through rule
+right once and twice in ten. `single_implementation` found nothing on either repository and
+`over_export` one genuine file; propose them only with a count of your own. Do not lower a
+floor to make a rule speak: on the measured repositories that licenses the pass-through rule
+at one right answer in ten.
+
 ## Step 4 — record where you are
 
 ```bash
@@ -178,6 +221,8 @@ has a clean before side.
 | Add `[ignore]` | It removes entities from judgement entirely. A `[scope]` keeps them measured against different numbers; that is almost always what was meant. |
 | Acknowledge a parse error to make it quiet | The file is measured only up to the construct that stopped the parse. `reason` is required and is quoted in the report. |
 | Skip the baseline | Without it every pre-existing violation is a blocking one, and the first commit meets all of them at once. |
+| Enable a dead-code rule without reading `after accuracy` | Below the floors it judges nothing, by design. The line is a decision that decides nothing. |
+| Lower a lean floor to get findings | Below the floors the gated rules were right in 0 to 8 of ten (research.md, task 6.4). |
 
 ## Output Format
 
@@ -188,6 +233,7 @@ has a clean before side.
 - MEASURED: <routines, classes, files; which ceilings the report proposed moving>
 - CHANGED: <one line per deviation, each with its measurement>
 - KEPT: <ceilings reported `keep` that were left alone -- name them, it is the point>
+- LEAN: <the two duplication rules proposed with your first-ten reading, or why not; `after accuracy` against the floors, and which dead-code rules that refuses>
 - BASELINE: <limits recorded, and whether adaptive is on>
 - VERIFIED: <check --all inventory; check --staged blocking count>
 - LEFT FOR A HUMAN: <anything the evidence did not settle>

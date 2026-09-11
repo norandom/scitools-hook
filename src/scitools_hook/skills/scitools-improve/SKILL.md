@@ -162,6 +162,69 @@ Do not pick:
   that stopped the parse, so a clean check on one is not evidence its code is fine. Fixing
   the construct itself is a good separate commit; its hint names it.
 
+## Phase 3b — The lean findings, largest reduction first
+
+The limits above ask whether code is too complex. The `[lean]` rules ask whether it should
+exist: the same routine written twelve times, thirteen lines held in six places. Every one
+ships off; where `scitools-hook config` shows one on, work its findings **before** the
+routine metrics. Deleted code needs no simplifying, and every cut moves the net line down.
+
+Order them by the reduction each buys, not by count. The two duplication rules carry most of
+it, and their messages carry the number:
+
+- `structure.similar_routine` -- `pkg.f is 1 of 12 routines this project holds in
+  near-identical form, the weakest pair matching at 0.93; the others are ...`. **One family
+  is one task, worth its size**: merging a family of twelve deletes eleven routines. Take the
+  largest family first.
+- `structure.duplicate_block` -- `d.py:40-52 repeats 13 code lines this project also holds at
+  e.py:10, f.py:70, and 3 more`. **A block is worth its length times its copies**: the lines
+  named, times this copy plus `details.also_at` plus the "and N more". Every copy is reported
+  from its own end (6.3: 48 findings about 24 places); count places, not findings.
+
+The ranked list, largest reduction first:
+
+```bash
+scitools-hook check --all --format json \
+  | jq -r '.findings[]
+      | select(.rule=="structure.similar_routine" or .rule=="structure.duplicate_block")
+      | (if .rule=="structure.similar_routine"
+         then (.message | capture("is 1 of (?<n>[0-9]+) routines").n | tonumber)
+         else (.message | capture("repeats (?<l>[0-9]+) code lines").l | tonumber)
+              * ((.details.also_at | length) + 1
+                 + ((.message | capture(", and (?<m>[0-9]+) more") | .m | tonumber) // 0))
+         end) as $worth
+      | "\($worth)\t\(.rule)\t\(.path):\(.line)"' \
+  | sort -rn | head -15
+```
+
+For each family or block, top down:
+
+1. **Read every copy before merging.** The rule sees that the token streams match; it cannot
+   see whether the copies are kept apart on purpose. On the repository this family was
+   measured on, 6 of the family rule's first ten were merges a reviewer would make and 4
+   were twins with the same skeleton over different facts (research.md, task 6.3); the block
+   rule's noise was `__all__` lists and import blocks, which repeat by design. A copy kept
+   apart on purpose is a line in `NOT FIXED`, not an ignore-list entry -- that is
+   `scitools-adapt`'s decision, not yours.
+2. **Read the hint and its example** (`scitools-hook --verbose check --worktree`; the flag
+   goes before the subcommand). `delete:` keep one routine, pass what
+   differs as an argument, delete the others; `shrink:` when the whole family is in one file,
+   one routine with a parameter. The example shows the shorter form.
+3. **Merge, run the tests, and read the net line.** `net: -38 lloc (-71 lines) over 5
+   routines` is the merge; a net line that stayed positive kept the copies.
+4. **Commit one family or one block**, with the net line in the message:
+   ```
+   refactor(cache): merge the four _replay_module copies into one loader
+
+   net: -38 lloc (-71 lines) over 5 routines
+   ```
+
+The dead-code rules (`structure.unused_parameter`, `structure.unused_class`,
+`structure.unused_variable`, `structure.pass_through`) are worth one routine or one name
+each, so they come after the copies. They refuse below the two accuracy floors and say so
+with `was not evaluated`; a run that printed that line has no dead-code findings **by
+design**, and a `NOT FIXED` list must not claim it looked.
+
 ## Phase 4 — The loop: one entity, one commit
 
 For each chosen entity:
@@ -267,6 +330,8 @@ the specific failure this skill exists to avoid.
 | "This file has no findings, so it is clean." | Not if it is named under `parse_errors`. It has no findings because it was never fully read. |
 | "The gate passes, so the change is good." | The gate measures shape, not behaviour. Run the repository's tests. |
 | "I improved the metric by moving the branches into a helper called `_helper2`." | The metric moved; the working set did not. Name what you extract after what it does, or the commit is a no-op with a green tick. |
+| "A family of twelve is a big refactor; I'll start with the pairs." | A family is one task, worth its size. Twelve routines deleted for one written is the largest reduction on the list; start there. |
+| "The block rule reports 48 findings, so there are 48 copies." | Every copy is reported from its own end. 48 findings are about 24 places; rank by lines times copies. |
 
 ## Output Format
 
@@ -278,6 +343,7 @@ Per commit:
 - RULE: <rule>
 - BEFORE -> AFTER: <value> -> <value>  (limit <limit>)
 - TESTS: <command run, and its result>
+- NET: <the net line of the staged check, or "none">
 - COMMIT: <hash>
 ```
 
@@ -287,6 +353,7 @@ At the end of a session:
 ## Session
 - COMMITS: <n>, one entity each
 - TIGHTENED: <rule: previous -> current, per baseline value that dropped>
+- CUT: <families merged and blocks collapsed, largest first, with each net line>
 - NOT FIXED: <entity, metric, and why -- one line each>
 - FOR A HUMAN: <any limit you believe is wrong, with its measurement>
 ```
