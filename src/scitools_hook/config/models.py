@@ -1098,11 +1098,23 @@ class Settings(StrictModel):
     def wants_definitions(self) -> bool:
         """Whether any rule needs the worker's module-level definitions walk.
 
-        Two rules do, and they live in different sections, which is why this sits on
+        Three rules do, and they live in different sections, which is why this sits on
         ``Settings`` rather than beside ``LeanRules.wants_references`` and ``wants_tokens``:
-        ``structure.duplicate_definitions`` compares one value written out in many files, and
+        ``structure.duplicate_definitions`` compares one value written out in many files,
         ``lean.over_export`` needs the same walk to tell "one routine and nothing else" from
-        "one routine beside a module constant".
+        "one routine beside a module constant", and ``lean.unused_variables`` reads the
+        ``referenced`` flag the walk writes on each binding, so without it that rule has
+        nothing to judge.
+
+        **The third was missing, and task 6.1 measured what that costs.** With
+        ``unused_variables`` on and neither of the other two, the request asked for no
+        definitions, the snapshot carried an empty list, and the rule reported nothing -- and
+        said nothing, because an empty list is indistinguishable from a project without
+        module bindings, so its unavailable-note guard saw no ``None`` to object to. On the
+        contract project that is both planted cases lost in silence, which is exactly the
+        failure requirement 1.6 exists to make audible. The rule being in
+        :data:`REFERENCE_RULES` was no protection: that list turns on the per-entity walk,
+        and the definitions walk is a different question.
 
         **It is a property rather than an expression at each site because the two sites
         disagreeing is a defect this project has already shipped.** The extractor builds the
@@ -1115,7 +1127,11 @@ class Settings(StrictModel):
         rule needing the walk would have to be remembered in both places. Read from here, it
         cannot be remembered in only one.
         """
-        return self.structure.duplicate_definitions is not None or self.lean.over_export is not None
+        return (
+            self.structure.duplicate_definitions is not None
+            or self.lean.over_export is not None
+            or self.lean.unused_variables is not None
+        )
 
 
 class Provenance(StrictModel):

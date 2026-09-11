@@ -498,7 +498,7 @@ REFERENCE_KINDS = (                                              # what counts a
 CALLER_KINDS = "callby"
 CALLEE_KINDS = "call"
 OVERRIDE_KINDS = "overrides"
-DERIVED_KINDS = "derive, inheritby, extendby, implementby"        # 6.1 decides Java, Ada, Pascal
+DERIVED_KINDS = "derive, inheritby, extendby, implementby"        # 6.1 measured all eight languages
 PARAMETER_KINDS = "parameter ~catch"
 PARAMETER_USE = "useby, setby, modifyby, callby"                 # a called parameter is used
 
@@ -559,6 +559,30 @@ def routine_facts(ent, ctx: LeanContext) -> dict[str, object]:
 # for Fortran and Web only and `Implementby` for Basic, C#, Pascal, Rust, VHDL and Web, with
 # Objective-C carrying its own `ObjC Extendby` / `ObjC Implementby` pairs under the C
 # section -- NEITHER is offered for C or C++ itself.
+#
+# **Measured 2026-09-11 by task 6.1, and the inverted reading above is false.** The contract
+# test built Ada, C#, Fortran, Java, Pascal and TypeScript on Build 1262 and read every
+# reference on a base, its one derived type and, where the language has one, an interface
+# and its implementer (`tests/contract/test_lean_references_contract.py`). `Ada Derive` and
+# `Pascal Derive` sit ON THE BASE naming the derived type, as `C Public Derive` does; the
+# derived type carries `Derivefrom`, which the word `derive` does not match. The kind list's
+# pair order varies by language -- `<on the base> (<on the derived>)` for Ada and Pascal,
+# `<on the derived> (<on the base>)` for C and C# -- and the direction of `Derive` does not.
+# Java's base carries `Java Extendby Coupleby` and its interface `Java Implementby Coupleby`,
+# both matched by the members already in the set; C# answers `Derive` and `Implementby`,
+# Fortran `Extendby`, TypeScript `Extendby` and `Implementby`. No per-language spelling is
+# needed, and DERIVED_KINDS is unchanged. `overrides` fires on the overriding method in Ada,
+# C#, Java, Pascal and a TypeScript `extends`; it does NOT fire on a TypeScript `implements`,
+# where the method-declaration tally (1.9) is the only exclusion. Two limits: the extractor's
+# class kinds record neither an Ada tagged type nor a Fortran derived type, so `class_facts`
+# never runs on them; and an Ada primitive operation's `Self` parameter is `Typedby` the type
+# and counts as a referrer, so an Ada base with an operation is never a single implementation.
+#
+# **`setby` in PARAMETER_USE, measured the same day.** A defaulted parameter's own declaration
+# records `Definein` and nothing else in Python and C++; there is no `Set Init` against it, so
+# a defaulted, never-read parameter is reported and requirement 1.2 does not under-report. A
+# parameter the body reassigns carries `Setby` and is not reported, which is what the member
+# is for.
 
 def class_facts(ent, ctx: LeanContext) -> dict[str, object]:
     """{'referenced': bool, 'derived': list[str], 'referrers': int} -- derived are the

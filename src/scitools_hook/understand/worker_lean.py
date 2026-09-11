@@ -123,6 +123,14 @@ callback parameter as dead. ``setby`` counts although a write is not a read -- t
 decision the design records for ``variable_referenced``, where a write is deliberately not a
 use. The two differ because a parameter's defining assignment is the call site's rather than
 the body's, so no reference here is the declaration's own.
+
+**Measured, not reasoned, since task 6.1.** Task 3.1's review asked whether Understand records
+a ``Set Init`` against a *defaulted* parameter's own declaration -- if it did, ``setby`` would
+make every ``def f(x, verbose=False)`` read as using ``verbose``. On Build 1262 it does not, in
+Python or C++: the declaration of a defaulted parameter the body never reads carries
+``Definein`` and nothing else, and the parameter is reported; a parameter the body reassigns
+carries ``Setby`` and is not, which is the shape ``setby`` is here for
+(``tests/contract/test_lean_references_contract.py``, the defaulted-parameter tree).
 """
 
 ROUTINE_KINDS: Final = (
@@ -179,8 +187,13 @@ for Fortran and Web, ``Implement (Implementby)`` for Basic, C#, Pascal, Rust, VH
 and Objective-C carries its own ``ObjC Extend (ObjC Extendby)`` and ``ObjC Implement (ObjC
 Implementby)`` pairs under the C section -- **neither kind is offered for C or C++ itself**.
 Java is not in either list: it pairs its inheritance references under ``Couple (Coupleby)``
-as ``Java Extend Couple`` and ``Java Implement Couple``, so the inverse spelling a Java base
-class carries is unverified here and task 6.1's contract test owns it.
+as ``Java Extend Couple`` and ``Java Implement Couple``. Measured by task 6.1 on Build 1262
+(``tests/contract/test_lean_references_contract.py``): a Java base class carries ``Java
+Extendby Coupleby`` and an interface ``Java Implementby Coupleby``, both naming the derived
+class, and the filter words ``extendby`` and ``implementby`` match them, so Java is answered
+by the two members carried for it. The same run measured C# (``c# csharp Derive`` /
+``Implementby``), Fortran (``Fortran Extendby``) and TypeScript (``web Javascript Extendby``
+/ ``Implementby``), each on the base naming the derived type.
 
 The cost of the fix, recorded so it is not mistaken for none: ``unused_class`` can never reach
 a base class that has any subclass, including an abstract base whose whole subtree is dead.
@@ -199,21 +212,24 @@ coincide there.
 neither set. It would make a subclass count as a *user* of its base and take every base class
 out of ``single_implementation``, which is the rule this set exists to serve.
 
-**``derive`` is not one direction, and for two languages this set reads inverted.** The kind
-documentation carries it in two different pairs: ``Base (Derive)`` for Basic, C/C++ and C#,
-where ``Derive`` is the inverse recorded on the base and naming the derived type -- which is
-the reading everything above assumes and task 1.7 measured on C++ -- and ``Derive
-(Derivefrom)`` for **Ada and Pascal**, where ``Derive`` is the *forward* reference a derived
-type carries to its base. In those two languages this set therefore hands ``derived`` the
-class's own base, which is exactly the effect excluding ``base`` prevents elsewhere, and
-``single_implementation`` would name the wrong end of the pair. Pascal is affected twice over,
-since it also carries the Python-style ``Inherit (Inheritby)``.
-
-Scoped rather than fixed, and recorded rather than asserted away: the contract project builds
-neither language, so nothing here can measure the correction, and the candidates -- qualifying
-the string by language, or reading ``derivefrom`` in place of ``derive`` where the pair is
-inverted -- are both spellings this machine cannot verify. Task 6.1 prints the per-language
-kind table and owns the decision.
+**``derive`` is one direction in every language this build parses, and the reading that it
+was not has been measured false.** The kind documentation carries it in two different pairs
+-- ``Base (Derive)`` for Basic, C/C++ and C#, and ``Derive (Derivefrom)`` for Ada and Pascal
+-- and task 3.2's review read the second pair as ``Derive`` being the *forward* reference a
+derived type carries to its base, which would have handed ``derived`` the class's own base
+in those two languages. Task 6.1 built both languages on Build 1262
+(``tests/contract/test_lean_references_contract.py``, the six-language scratch project) and
+measured the opposite: ``Ada Derive`` and ``Pascal Derive`` sit on the **base** naming the
+derived type, exactly as ``C Public Derive`` does, and what the derived type carries back is
+``Ada Derivefrom`` / ``Pascal Derivefrom``, which the word ``derive`` does not match. The
+documentation's pairs are written ``<on the base> (<on the derived>)`` for Ada and Pascal and
+``<on the derived> (<on the base>)`` for C and C#, and it is the pair order that varies, not
+the direction of ``Derive``. Nothing in this set needs a per-language spelling. Two limits
+of that measurement, recorded rather than implied: the extractor's class kinds (``class``,
+``interface``, ``struct``) record neither an Ada tagged type nor a Fortran derived type, so
+neither language reaches ``class_facts`` today; and an Ada tagged type's primitive operation
+declares a ``Self`` parameter of the type, whose ``Typedby`` reference is outside
+:func:`_own_ids` and so counts as a referrer.
 """
 
 VARIABLE_USE: Final = "useby, callby, typedby"

@@ -504,7 +504,7 @@ def test_a_root_that_names_no_file_of_the_database_is_a_configuration_error(
         real_extractor().extract(wrong)
 
 
-# --- the definitions walk, asked for by two rules ---------------------------------
+# --- the definitions walk, asked for by three rules -------------------------------
 
 
 def test_the_definitions_walk_is_asked_for_by_the_duplicate_definition_rule() -> None:
@@ -526,17 +526,36 @@ def test_the_over_export_rule_alone_asks_for_the_definitions_walk() -> None:
     assert an_extractor({}, settings).request().include_definitions is True
 
 
+def test_the_unused_variable_rule_alone_asks_for_the_definitions_walk() -> None:
+    """The third rule that reads the walk, found missing by task 6.1's contract test.
+
+    ``lean.unused_variables`` judges ``Definition.referenced``, which only the definitions
+    walk writes. Being one of ``REFERENCE_RULES`` turned on the per-entity reference walk and
+    nothing else, so a configuration enabling this rule alone got a snapshot whose
+    ``definitions`` list was empty -- and an empty list is a project with no module bindings
+    as far as the rule can tell, so it reported nothing and raised no unavailable note. On the
+    contract project that lost both planted cases in silence.
+    """
+    settings = Settings(lean=LeanRules(unused_variables="warning"))
+
+    assert settings.structure.duplicate_definitions is None
+    assert settings.lean.over_export is None
+    assert an_extractor({}, settings).request().include_definitions is True
+
+
 def test_a_configuration_that_needs_no_definitions_does_not_walk_them() -> None:
     settings = Settings()
 
     assert settings.structure.duplicate_definitions is None
     assert settings.lean.over_export is None
+    assert settings.lean.unused_variables is None
     assert an_extractor({}, settings).request().include_definitions is False
 
 
 DEFINITIONS_ASKED_BY: Final[tuple[Settings, ...]] = (
     Settings(structure=StructureRules(duplicate_definitions=3)),
     Settings(lean=LeanRules(over_export="warning")),
+    Settings(lean=LeanRules(unused_variables="warning")),
 )
 """One configuration per rule that needs the definitions walk, each on **alone**.
 

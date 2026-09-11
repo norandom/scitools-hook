@@ -319,3 +319,290 @@ probed before the feature existed)"). And facdrone's analysis resolves at 26% ag
 repository's 19%, which matters for the false structural finding recorded in `tasks.md`: that
 artefact was attributed to an under-resolved before side, and a second repository at a
 different resolution is where to reproduce it deliberately.
+
+
+---
+
+# Reference kinds and counts on the contract project, measured 2026-09-11 (task 6.1)
+
+Understand 8.0 Build 1262. Everything between the two rules below is the output of
+`tests/contract/test_lean_references_contract.py::test_contract_the_kind_table_is_printed_for_the_record`
+on this machine, pasted rather than typed, so the log and the run cannot disagree; the module
+is 33 tests and runs in 17.9 s serially (`-n 0`). Three databases are read: the contract
+project's `alpha` side with every reference rule on, a scratch tree with three shapes of a
+parameter in Python and C++, and a scratch tree in the six languages the contract project does
+not build (Ada, C#, Fortran, Java, Pascal, TypeScript), each with one base, one derived type
+and, where the language has one, an interface and its implementer.
+
+---
+
+und: /home/mc/scitools/bin/linux64/und
+
+| figure | value |
+| --- | --- |
+| accuracy (`und analyze -accuracy`, alpha) | 61.9% |
+| call resolution, C++ | 7 of 9 call sites resolved (77.8%) |
+| call resolution, Python | 6 of 13 call sites resolved (46.2%) |
+
+| language | on the base | on the derived class | override | callby kinds seen |
+| --- | --- | --- | --- | --- |
+| C++ | C Public Derive | C Public Base | C Overrides | C Callby, C Callby Implicit |
+| Python | Python Inheritby | Python Inherit | Python Overrides | Python Callby |
+| Ada (scratch) | Ada Derive | Ada Derivefrom | Ada Overrides | n/a |
+| C# (scratch) | c# csharp Derive; interface: c# csharp Implementby / implementer: c# csharp Implement, c# csharp Base, c# csharp Couple | c# csharp Base, c# csharp Couple | c# csharp Overrides | n/a |
+| Fortran (scratch) | Fortran Extendby | Fortran Extend | (none) | n/a |
+| Java (scratch) | Java Extendby Coupleby; interface: Java Implementby Coupleby / implementer: Java Implement Couple | Java Extend Couple | Java Overrides | n/a |
+| Pascal (scratch) | Pascal Derive | Pascal Derivefrom | Pascal Overrides | n/a |
+| Web (scratch) | web Javascript Extendby; interface: web Javascript Implementby / implementer: web Javascript Implement | web Javascript Extend | web Javascript Overrides | n/a |
+
+| language | parameter | every reference on its declaration | reported unused |
+| --- | --- | --- | --- |
+| Python | `defaulted(verbose)` | Python Definein | yes |
+| Python | `defaulted_read(verbose)` | Python Definein, Python Useby | no |
+| Python | `reassigned(verbose)` | Python Definein, Python Setby | no |
+| C++ | `defaulted(verbose)` | C Definein | yes |
+| C++ | `defaulted_read(verbose)` | C Definein, C Useby | no |
+| C++ | `reassigned(verbose)` | C Definein, C Setby | no |
+
+callers: 36 routines probed; `LeanFacts.callers` == `CountCallbyUnique` on every one, and `CountCallby` == `CountCallbyUnique` on 36 of 36
+
+---
+
+## What the run established
+
+- **Inheritance (req 3.1).** `Python Inheritby` and `C Public Derive` fire on the base naming
+  the derived class; `LeanFacts.derived` is `[layers.OnlyChannel]` and `[OnlyNativeChannel]`.
+  The derived class carries `Python Inherit` / `C Public Base` back, which neither set matches,
+  so a subclass is not a user of its base.
+- **Overrides (req 1.4).** `Python Overrides` and `C Overrides` on the two overriding `send`
+  methods, `overrides=True`; both base methods `False`. The C++ half was the one the fixture
+  could not assume (a virtual member with no `override` keyword); this build records it.
+- **Callers (req 2.1).** `LeanFacts.callers` equals `CountCallbyUnique` on all 36 routines the
+  fixture records, and `CountCallby` equals it too, so there is no disagreement to record with
+  a cause. The two shapes where the worker and the plugin would part -- a call from module
+  scope, which the plugin counts and the worker does not, and a caller outside the analysis
+  root -- do not occur in the fixture. The C++ constructor call `Shape shape(side)` is recorded
+  as `C Callby Implicit`, which the `callby` filter matches; it is the one caller kind beyond
+  plain `Callby` this fixture produces.
+- **The floors (req 1.8) on this database.** Accuracy 61.9% (13 of 21 files; each of the eight
+  C++ translation units carries clang's libstdc++ note, which `-accuracy` counts against it),
+  Python call resolution 46.2% (6 of 13), C++ 77.8% (7 of 9). At the shipped floors of 75%
+  the contract project itself is refused on accuracy, and a test asserts exactly that. The
+  rule tests pass the measured accuracy with both floors at zero, and say so.
+- **Each reference rule reports its planted case and nothing else**, with the shipped ignore
+  lists: `unused_parameters` -> `dead.advance(verbose)`, `native_advance(verbose)`;
+  `unused_classes` -> `dead.ForgottenReport`, `ForgottenNativeReport`; `unused_variables` ->
+  `RETRY_LIMIT`, `kRetryLimit`; `pass_through` -> `layers.display_name` forwarding to
+  `layers.canonical_name`, `display_native_name` to `canonical_native_name`;
+  `single_implementation` -> `layers.BaseChannel` with `layers.OnlyChannel`,
+  `BaseNativeChannel` with `OnlyNativeChannel`. No unavailable note from any of the five.
+- **`setby` in `PARAMETER_USE` (task 3.1's review).** Understand records **no** `Set Init`
+  against a defaulted parameter's own declaration, in either language: `defaulted(verbose)`
+  carries `Definein` and nothing else and is reported unused. `reassigned(verbose)` carries
+  `Setby` and is not reported, which is what the member is for. The set is unchanged, and the
+  claim now has a test behind it rather than reasoning.
+- **`derive` direction (task 3.2's review, the design's open item).** The reading that
+  `Derive (Derivefrom)` means `Derive` is the forward reference for Ada and Pascal is **false
+  on this build**: `Ada Derive` and `Pascal Derive` sit on the base naming the derived type,
+  as `C Public Derive` and `c# csharp Derive` do, and the derived type carries `Derivefrom`,
+  which the word `derive` does not match. The kind list's pair order varies per language
+  section; the direction does not. Java, filed under `Couple`, answers `Java Extendby Coupleby`
+  on the base and `Java Implementby Coupleby` on the interface, both matched by members already
+  in the set. Fortran answers `Extendby`, TypeScript `Extendby` and `Implementby`.
+  `DERIVED_KINDS` needs no per-language spelling and is unchanged; the design and the worker
+  docstring are corrected.
+- **Overrides per language.** `Overrides` fires on the overriding method in Ada, C#, Java,
+  Pascal and a TypeScript `extends`. It does **not** fire on a TypeScript `implements`
+  (`TsSquare.area` carries no override reference), so for that shape requirement 1.4's
+  exclusion rests on the method-declaration tally (1.9) alone.
+
+## Two dependencies the run found, one fixed
+
+- **`Settings.wants_definitions` did not know `lean.unused_variables`** (fixed here). The
+  property switched the definitions walk on for `structure.duplicate_definitions` and
+  `lean.over_export` only. A configuration with `unused_variables` on and neither of those got
+  a snapshot whose `definitions` list was empty; the rule walked nothing, reported nothing and
+  raised no unavailable note, because an empty list is a project without module bindings as
+  far as it can tell. On the contract project that is both planted cases lost in silence --
+  the failure this task was sent to look for in `setby`, found one rule over. The RED run of
+  the new module shows it (`set() == {RETRY_LIMIT, kRetryLimit}` with `unavailable == ()`);
+  the fix adds the third rule to the property and a unit test beside the two existing ones
+  (`tests/understand/test_snapshot_extractor.py`).
+- **The pass-through rule reads `CountStmt` off the record and asks for nothing** (not
+  changed). Under the contract project's fixed threshold list, which carries no
+  `routine.CountStmt`, the rule judged nothing and said nothing, by task 4.2's decision that a
+  routine without a statement count is a record the rule does not judge. The shipped defaults
+  carry `routine.CountStmt = 40`, so a real run has it; an operator who deletes that threshold
+  silences the rule without a note. The contract test adds the threshold as the defaults do
+  and records why. Whether the extractor should ask for `CountStmt` whenever `pass_through`
+  is on is a follow-up for the parent, not decided here.
+
+## Limits of the measurement
+
+- The extractor's class kinds (`class`, `interface`, `struct`) record neither an Ada tagged
+  type nor a Fortran derived type, so `class_facts` does not run on either language today;
+  the direction result above is about the reference kinds, not about a rule reaching them.
+- An Ada primitive operation declares a `Self` parameter of the tagged type, and its `Typedby`
+  reference is outside `_own_ids`, so an Ada base with an operation would count one referrer
+  and never be a single implementation. Recorded, not addressed.
+- A plain `.js` file holding an ES6 `class ... extends` produced no entities at all on this
+  build in a scratch probe; only the `.ts` file is measured and asserted. Observed, not
+  asserted.
+- The per-language table is what this build records for one base, one derived type and one
+  override; multiple inheritance, generics and nested types were not planted.
+
+## Mutation evidence (`__pycache__` cleared before each trial and after the copy-restore)
+
+- `derive` removed from `DERIVED_KINDS`: 4 failed, 9 passed of the inheritance tests --
+  the C++ fixture base, and Ada, C# and Pascal in the scratch tree.
+- `setby` removed from `PARAMETER_USE`: 2 failed, 2 passed -- `reassigned(verbose)` reported
+  unused in both languages.
+- `wants_definitions` without the third rule (the RED run): the variable-rule test fails with
+  an empty finding set and no unavailable note; the other ten tests of that run pass.
+
+---
+
+# Task 6.2: the token index on the contract project, measured 2026-09-11
+
+Build 1262, `tests/contract/test_token_index_contract.py`. Every table below is printed by the
+test that asserts it, so this section and a run of the module cannot disagree; the module runs
+in about 17 s and the whole contract suite is the gate.
+
+## Coverage (requirement 5.4)
+
+`routines: 36 recorded, 36 spanned by the API, 36 indexed; 741 routine entities in the
+database`. "Spanned" is read off the raw API under `upython` with the kind strings spelled in
+the test rather than imported: `ent.ref("definein")` and `ent.ref("end")` both present and in
+one file under the analysis root. The index equals that set in both directions, and on this
+fixture that set is every recorded routine; the other 705 routine entities are the library
+routines Understand injects outside the root, which the extractor never records.
+
+## The duplication findings at the shipped numbers (requirement 5.7)
+
+The whole fixture as the affected set, `duplicates_min_lines = 12`, `similar_threshold = 0.9`,
+`similar_min_statements = 6`, both rules called with their shipped defaults (which the test
+asserts are the `LeanRules()` values). The **exact** finding set, asserted as a list:
+
+```
+duplicate_block at min_lines 12:
+  ('lean/table_left.py', 11, 24, 14.0, ('lean/table_right.py:10', 'lean/table_right.py:11', 'lean/table_right.py:12'))
+  ('lean/table_right.py', 10, 23, 14.0, ('lean/table_left.py:11', 'lean/table_left.py:12', 'lean/table_left.py:13'))
+  ('native/lean_table_left.cpp', 13, 28, 16.0, ('native/lean_table_right.cpp:7', 'native/lean_table_right.cpp:8', 'native/lean_table_right.cpp:9'))
+  ('native/lean_table_right.cpp', 7, 22, 16.0, ('native/lean_table_left.cpp:13', 'native/lean_table_left.cpp:14', 'native/lean_table_left.cpp:15'))
+similar_routine at threshold 0.9, min_statements 6:
+  ('lean/twin_left.py', 9, 'twin_left.summarise_orders', 2.0, 1.0, ('twin_right.summarise_invoices (lean/twin_right.py:9)',), None)
+  ('native/lean_twin_left.cpp', 13, 'summarise_native_orders', 2.0, 1.0, ('summarise_native_invoices (native/lean_twin_right.cpp:4)',), None)
+```
+
+Columns: path, start line, end line, code lines / family size, other locations; and for a
+family: path, line, anchor longname, size, weakest similarity, other members, construct.
+
+- Four blocks and two families, nothing else: the planted block per language reported from
+  both ends, the planted twin per language as one family of two at exactly 1.0. The
+  cross-language pairs (fixture: 0.63) form no family and no window crosses languages.
+- **Each block names three locations and all three are windows of the one other copy**
+  (`:10`, `:11`, `:12` of a fourteen-line block at twelve). That is item 7 of the
+  "found while reviewing 4.2" list above, now measured on the real build: the message says
+  `also holds at lean/table_right.py:10, lean/table_right.py:11, lean/table_right.py:12` for
+  one copy. The test pins the shape as measured so that the fix, when it comes, is shown to
+  change the output on the real build. Not fixed here: it is owned by no task and is not this
+  task's subject.
+- Mutation evidence for the pin, each trial with `__pycache__` cleared before and after and
+  the file restored by copy and verified by SHA-256: scaling `similar._score`'s ratio by 0.95
+  (families still form, similarity 0.95), keeping only the first location in
+  `duplicates._block`, and replacing the shipped `similar_min_statements` with 20 -- all three
+  fail the exact-set test. `worker_lean.py` was deliberately not mutated: task 6.1 was editing
+  it concurrently.
+
+## Docstring accounting (requirement 6.5), re-confirmed on the fixture's Python
+
+Per routine, `CountLine` / `CountLineCode` / `CountLineComment` / `CountStmt` from Understand
+against the index (span, indexed lines in the span, `LIT` tokens in the shape,
+`RoutineShape.statements`). The first four carry a one-line docstring; the last two none.
+
+| routine | CountLine | CountLineCode | CountLineComment | CountStmt | span | indexed lines | LIT tokens | shape.statements |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| layers.canonical_name | 4.0 | 3.0 | 1.0 | 3.0 | 26-29 | 4 | 1 | 3 |
+| layers.display_name | 3.0 | 2.0 | 1.0 | 2.0 | 32-34 | 3 | 1 | 2 |
+| layers.open_channel | 4.0 | 3.0 | 1.0 | 3.0 | 37-40 | 4 | 1 | 3 |
+| dead.advance | 4.0 | 3.0 | 1.0 | 3.0 | 26-29 | 4 | 1 | 3 |
+| layers.BaseChannel.send | 2.0 | 2.0 | 0.0 | 2.0 | 14-15 | 2 | 0 | 2 |
+| twin_left.summarise_orders | 9.0 | 9.0 | 0.0 | 9.0 | 9-17 | 9 | 6 | 9 |
+
+Per file, against a line budget read off the fixture text with Python's own `tokenize`
+(blank lines outside docstrings; docstring count; non-blank docstring lines; blank lines inside
+docstrings; plain code lines), and the index's line count and first indexed line:
+
+| file | CountLine | CountLineCode | CountLineComment | CountStmt | lines | blank | docstrings | docstring prose | docstring blank | plain code | indexed lines | first indexed |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| app/entry.py | 10.0 | 5.0 | 1.0 | 5.0 | 10 | 4 | 1 | 1 | 0 | 5 | 6 | 1 |
+| lean/dead.py | 29.0 | 7.0 | 13.0 | 7.0 | 29 | 7 | 3 | 13 | 2 | 7 | 10 | 1 |
+| lean/exported.py | 10.0 | 2.0 | 5.0 | 2.0 | 10 | 2 | 1 | 5 | 1 | 2 | 3 | 1 |
+| lean/layers.py | 40.0 | 15.0 | 12.0 | 15.0 | 40 | 12 | 6 | 12 | 1 | 15 | 21 | 1 |
+| lean/table_left.py | 24.0 | 15.0 | 6.0 | 2.0 | 24 | 2 | 1 | 6 | 1 | 15 | 16 | 1 |
+| lean/table_right.py | 23.0 | 15.0 | 5.0 | 2.0 | 23 | 2 | 1 | 5 | 1 | 15 | 16 | 1 |
+| lean/twin_left.py | 17.0 | 9.0 | 5.0 | 9.0 | 17 | 2 | 1 | 5 | 1 | 9 | 10 | 1 |
+| lean/twin_right.py | 17.0 | 9.0 | 5.0 | 9.0 | 17 | 2 | 1 | 5 | 1 | 9 | 10 | 1 |
+| main.py | 7.0 | 3.0 | 1.0 | 3.0 | 7 | 3 | 1 | 1 | 0 | 3 | 4 | 1 |
+| pkg/core.py | 20.0 | 13.0 | 1.0 | 11.0 | 20 | 6 | 1 | 1 | 0 | 13 | 14 | 1 |
+| pkg/inner/leaf.py | 6.0 | 3.0 | 1.0 | 3.0 | 6 | 2 | 1 | 1 | 0 | 3 | 4 | 1 |
+
+| class | CountLine | CountLineCode | CountLineComment | CountStmt |
+| --- | --- | --- | --- | --- |
+| dead.ForgottenReport | 2.0 | 1.0 | 1.0 | 1.0 |
+| layers.OnlyChannel | 6.0 | 4.0 | 1.0 | 4.0 |
+
+And three docstring-only initialisers beside a module with code, in a project of their own
+built once per Python grammar with `und settings -PythonSetVersion` pinned and read back --
+`old/__init__.py` is `analysis/lean/__init__.py` at commit `acd741c`, byte for byte:
+
+| grammar | file | CountLine | CountLineCode | CountLineComment | CountStmt | docstring prose | plain code | indexed lines |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Python2 | line/__init__.py | 1.0 | 0.0 | 1.0 | 0.0 | 1 | 0 | 1 |
+| Python2 | old/__init__.py | 15.0 | 0.0 | 13.0 | 0.0 | 13 | 0 | 1 |
+| Python2 | prose/__init__.py | 4.0 | 0.0 | 3.0 | 0.0 | 3 | 0 | 1 |
+| Python2 | prose/module.py | 5.0 | 2.0 | 1.0 | 2.0 | 1 | 2 | 3 |
+| Python3 | line/__init__.py | 1.0 | 0.0 | 1.0 | 0.0 | 1 | 0 | 1 |
+| Python3 | old/__init__.py | 15.0 | 0.0 | 13.0 | 0.0 | 13 | 0 | 1 |
+| Python3 | prose/__init__.py | 4.0 | 0.0 | 3.0 | 0.0 | 3 | 0 | 1 |
+| Python3 | prose/module.py | 5.0 | 2.0 | 1.0 | 2.0 | 1 | 2 | 3 |
+
+What the tables say, each line asserted by the test:
+
+1. **To Understand, a non-blank docstring line is a comment line, never a code line and never
+   a statement**, at routine, class and file level, for one-line and multi-line docstrings,
+   for a file that is nothing but a docstring, and under both Python grammars. `CountLineCode`
+   equals the plain code lines and `CountLineComment` the non-blank docstring lines on all 11
+   fixture files and all 8 initialiser rows. A blank line inside a docstring is neither: it is
+   in `CountLine` and in nothing else (`lean/dead.py`: 15 docstring lines, 13 comment lines).
+   This confirms the design-phase entry above ("docstrings are comment lines") with the
+   sample it lacked.
+2. **`CountStmt` counts the `def` line**: a routine of `def` plus one `return` measures 2, and
+   a docstring adds nothing to it (`display_name`: `def`, docstring, `return` measure 2). So
+   `similar_min_statements = 6` is a body of five statements, and the fixture's twins clear it
+   at 9. `RoutineShape.statements` carries the same number.
+3. **To the index a docstring is one line and one token.** The lexer yields one `String`
+   lexeme for the whole docstring, so `tokens.files` holds one code line at the line it opens
+   on -- every Python file is indexed from line 1, and a file's indexed lines are its plain
+   code lines plus one per docstring -- and the shape holds one `LIT` for it whatever its
+   length. A C++ `//` comment is `Comment` and dropped: `native/lean_twin_left.cpp` is indexed
+   from line 13 and its twin from line 4, past their comment headers. For the rules: a copied
+   docstring contributes at most **one** line to a duplicate window, so twelve identical lines
+   of prose are never a block, and two twins with different docstrings still match at 1.0
+   because both docstrings are `LIT`.
+4. **The `layering.py` claim did not reproduce.** `analysis/lean/layering.py` records that
+   Understand charged this repository's multi-line docstring-only `analysis/lean/__init__.py`
+   as code lines, inferred from a per-file dependency count that fell from eight to seven when
+   the docstring was shortened to one line. Measured on that initialiser's own text under both
+   grammars: `CountLineCode` 0, `CountLineComment` 13. So `coupling.namespace_targets` reads
+   that file as empty either way, and the eight-to-seven change had some other cause. The
+   paragraph in `layering.py` is wrong on Build 1262 as far as this measurement reaches, and the
+   test is written to fail if either grammar ever answers the paragraph's way. **Owned by
+   whoever next touches `layering.py`**; not edited by this task, whose boundary is the test
+   and this record.
+5. **Which grammar the contract databases use is now read rather than assumed.** A scratch
+   database built exactly as `build_database` builds the fixture read back `PythonSetVersion
+   Python2` on this machine even with `uv run`'s `.venv/bin/python` on `PATH`, which agrees
+   with the fixture's own note that Understand falls back to Python 2 here. Nothing in this
+   section depends on the grammar -- every row is the same under both -- but the next
+   measurement that does should pin it the way `grammar_database` does.
