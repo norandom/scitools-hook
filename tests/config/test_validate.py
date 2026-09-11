@@ -86,6 +86,42 @@ def test_population_threshold_is_rejected_for_the_architecture_scope() -> None:
     assert caught.value.key == "thresholds.arch.AVG:CountLineCode"
 
 
+def test_a_plain_threshold_is_rejected_for_the_architecture_scope() -> None:
+    """Task 5.6's decision: an arch-scope metric threshold is refused, not silently ignored.
+
+    Nothing ever asks Understand for an architecture node's metrics --
+    ``understand.snapshot._element_metrics`` keeps only the scopes in ``SCOPE_KINDS`` and
+    ``arch`` is not one of them, ``_population_metrics`` excludes ``arch`` by name, and the
+    worker's ``SNAPSHOT_SCOPES`` walks ``routine``, ``class`` and ``file``. So the threshold
+    used to be accepted by validation and then evaluated against an empty population: one
+    ``reducer_failures`` note during the run and no finding, at exit 0.
+    """
+    spec = ThresholdSpec(scope="arch", metric="DuplicateLinesOfCode", limit=Limit(max=100))
+
+    with pytest.raises(ConfigError) as caught:
+        validate_settings(one(spec), None)
+
+    assert caught.value.key == "thresholds.arch.DuplicateLinesOfCode"
+    assert "thresholds.arch.DuplicateLinesOfCode" in caught.value.message
+    assert "'arch' scope" in caught.value.message
+    assert caught.value.exit_code is ExitCode.CONFIG_ERROR
+
+
+def test_the_architecture_refusal_is_the_scope_and_not_the_metric() -> None:
+    """A catalogue that offers the metric at ``arch`` changes nothing: the scope decides.
+
+    Without this, the refusal could be read as "this build has no such metric", which is a
+    different message with a different fix.
+    """
+    spec = ThresholdSpec(scope="arch", metric="CountEntities", limit=Limit(max=100))
+
+    with pytest.raises(ConfigError) as caught:
+        validate_settings(one(spec, ["Python"]), ArchOnlyCatalogue())
+
+    assert caught.value.key == "thresholds.arch.CountEntities"
+    assert "architecture" in (caught.value.hint or "")
+
+
 def test_metric_grammar_is_rechecked_on_a_hand_built_settings() -> None:
     spec = ThresholdSpec.model_construct(scope="routine", metric="A:B:C", limit=Limit(max=1))
     with pytest.raises(ConfigError) as caught:
@@ -509,6 +545,30 @@ def test_a_misspelled_metric_in_a_configuration_file_stops_the_gate(
     assert located.key == "thresholds.routine.CyclomaticStrickt"
     assert located.file == path
     assert located.exit_code is ExitCode.CONFIG_ERROR
+
+
+def test_an_architecture_threshold_in_a_configuration_file_stops_the_gate(
+    repo: Path, env: dict[str, str]
+) -> None:
+    """The refusal reaches the operator through the loader, at the configuration exit code.
+
+    ``load_settings`` validates what it built, so no Understand install is needed to be told:
+    a ``[thresholds.arch]`` table holding a metric stops the run before any database is read.
+    """
+    path = write_config(
+        repo,
+        """
+        [thresholds.arch]
+        DuplicateLinesOfCode = 100
+        """,
+    )
+
+    with pytest.raises(ConfigError) as caught:
+        load_settings(repo, {}, env)
+
+    assert caught.value.key == "thresholds.arch.DuplicateLinesOfCode"
+    assert caught.value.file == path
+    assert caught.value.exit_code is ExitCode.CONFIG_ERROR
 
 
 def test_a_shipped_default_a_configuration_file_repeats_is_dropped_not_rejected(

@@ -20,10 +20,13 @@ from typing import Annotated
 
 import pytest
 import typer
+from conftest import MakeGitRepo
 from typer.testing import CliRunner
 
 from scitools_hook import errors
+from scitools_hook.cli import app as app_module
 from scitools_hook.cli import common
+from scitools_hook.config.template import CONFIG_FILENAME
 from scitools_hook.errors import (
     AnalysisFailedError,
     ArchitectureNotFoundError,
@@ -248,6 +251,30 @@ def test_a_usage_error_uses_the_configuration_exit_code() -> None:
     assert result.exit_code == int(ExitCode.CONFIG_ERROR)
     assert "--nope" in result.stderr
     assert result.stdout == ""
+
+
+def test_an_architecture_scope_threshold_stops_a_real_command(
+    tmp_path: Path, git_repo: MakeGitRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 5.6, end to end: a ``[thresholds.arch]`` metric exits 2 and names the scope.
+
+    ``config`` needs no Understand, so the operator is told before any database is read --
+    and is told at all: with the guard removed, this same file runs to completion and exits 0
+    (measured 2026-09-11, the RED this test was written against).
+
+    ``HOME`` and ``XDG_CONFIG_HOME`` are built rather than inherited, so the developer's own
+    user configuration cannot decide the answer.
+    """
+    builder = git_repo()
+    builder.write(CONFIG_FILENAME, "[thresholds.arch]\nDuplicateLinesOfCode = 100\n")
+    monkeypatch.chdir(builder.path)
+    env = {"HOME": str(tmp_path / "home"), "XDG_CONFIG_HOME": str(tmp_path / "xdg")}
+
+    result = CliRunner().invoke(app_module.app, ["config"], env=env)
+
+    assert result.exit_code == int(ExitCode.CONFIG_ERROR)
+    assert "thresholds.arch.DuplicateLinesOfCode" in result.stderr
+    assert "'arch' scope" in result.stderr
 
 
 # --- the exact shape of a rendered error -----------------------------------------

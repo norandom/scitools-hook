@@ -195,7 +195,10 @@ _SCOPE_NOTES: Final[dict[str, str]] = {
     "class": "Per class/interface/struct; PercentLackOfCohesion is unavailable for Python.",
     "file": "Per file; RatioCommentToCode is a minimum.",
     "project": "Whole project; AVG:/MEDIAN:/... names reduce over the routine population.",
-    "arch": "Per architecture node.",
+    # Unreachable since task 5.6: `config.validate` refuses every arch-scope threshold, so
+    # no validated settings can carry one and this section is never rendered. The entry stays
+    # so a hand-built `Settings` cannot raise `KeyError` here, and says what the refusal says.
+    "arch": "No metric is evaluated here; architecture nodes carry no metrics.",
 }
 
 

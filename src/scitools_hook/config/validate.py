@@ -19,6 +19,11 @@ would stop the Gate on a Python repository as soon as the operator ran ``init`` 
 ``languages``. :class:`AvailabilityReport` carries the drops out, per language, so the run
 reports that they were never evaluated instead of going quietly green.
 
+One scope is refused outright rather than checked: ``arch``. Nothing in the extraction ever
+asks for an architecture node's metric, so a threshold there was accepted and then evaluated
+against an empty population — configured, never checked, exit 0. :data:`NO_ARCH_METRIC_HINT`
+carries the measurement and the decision requirement 5.6 left to task 5.6.
+
 Dropping has one dangerous edge, which :func:`_check_languages` closes: a misspelt *language*
 makes every question come back empty, so every shipped default would drop and the Gate would
 run green on no rules at all. A configured language the catalogue computes nothing for is
@@ -62,6 +67,54 @@ _LANGUAGE_HINT: Final = (
     "names the languages this Understand build knows"
 )
 """There is no ``und -languages``: that invocation exits 1 with 'No valid command' (measured)."""
+
+NO_ARCH_METRIC_HINT: Final = (
+    "architecture nodes carry no metrics, so the rule would be configured and never "
+    "evaluated; measure the metric per file, or over the whole project"
+)
+"""Task 5.6's decision, and the evidence it was taken on.
+
+**Nothing asks Understand for an architecture node's metric value, and nothing ever did.**
+``understand.snapshot._element_metrics`` keeps a threshold only when its scope is a key of
+``config.metric_names.SCOPE_KINDS``, which holds ``routine``, ``class`` and ``file`` and no
+``arch``; ``_population_metrics`` excludes ``arch`` by name; and the worker's
+``SNAPSHOT_SCOPES`` walks the same three element scopes. An ``arch`` threshold therefore
+reached ``analysis.thresholds._evaluate_population`` — ``_is_population`` sends every
+non-element scope there — found ``populations['arch']`` empty, and became one
+``reducer_failures`` note. Measured on 2026-09-11, before this guard existed, with a
+``DuplicateLinesOfCode`` ceiling of 100 over an empty snapshot: **no finding**, and the note
+``arch.DuplicateLinesOfCode: the arch population of DuplicateLinesOfCode is empty``. The same
+configuration through ``scitools-hook config`` exited **0**. That is the silent no-op this
+project refuses everywhere else, and it is metric-agnostic: as true of ``CountLineCode`` as of
+the duplicate-lines metrics requirement 5.6 names, which is why the refusal is of the scope
+and not of a metric.
+
+The alternative requirement 5.6 left open — extract metrics for architecture nodes — was
+rejected on measurement, not on taste:
+
+* **It is not a configuration change.** A useful architecture finding names the node, as
+  ``structure.arch_cycle`` and the coupling rule do; the population path can only produce a
+  finding with ``entity=None`` and ``path=''``. Naming the node means architecture records in
+  the snapshot model, a branch in the evaluator and in the ratchet, and an affected-set that
+  maps a change to architecture nodes — a feature, not a guard.
+* **The worker has no room.** ``understand/worker.py`` declares 130 functions (counted by
+  ``ast`` on 2026-09-11) against the ceiling ``[scope.worker]`` sets at 130, so an extraction
+  would have to hide inside existing routines or in ``worker_lean``, which is the zero-import
+  measurement sibling and no place for a metric walk.
+* **It could not be verified here.** All 136 contract tests skip in this environment
+  (``SCITOOLS_HOME`` unset, no ``und`` on ``PATH``, measured 2026-09-11), so the acceptance
+  the extraction branch asks for — a finding on the contract project — is unmeasurable, and
+  whether an ``Arch`` answers ``DuplicateLinesOfCode`` at all stays unverified. A rule shipped
+  on that would be a claim with no sample behind it.
+
+``config.models.PathScope`` already refuses an ``arch`` table for its own reason, so with this
+guard there is no way left to write an architecture-scope threshold that is accepted and then
+ignored.
+
+The message the guard raises does not repeat the metric name: ``_threshold_key`` already
+spells it, and a second copy in the text is a claim no test can pin — measured, that mutation
+survived while every other one on this guard was killed.
+"""
 
 
 @runtime_checkable
@@ -138,11 +191,11 @@ def _check_threshold(spec: ThresholdSpec) -> None:
             hint=f"expected one of {', '.join(SCOPES)}",
         )
     ref = _parsed_metric(spec.metric, key)
-    if ref.is_population and spec.scope == "arch":
+    if spec.scope == "arch":
         raise ConfigError(
-            f"{key}: a stats prefix has no population at the 'arch' scope",
+            f"{key}: no metric is evaluated at the 'arch' scope",
             key=key,
-            hint="use the routine, class, file or project scope",
+            hint=NO_ARCH_METRIC_HINT,
         )
     _check_synthetic(spec.scope, ref, key)
 
