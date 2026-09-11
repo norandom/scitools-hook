@@ -113,7 +113,7 @@ def test_default_settings_returns_independent_equal_instances() -> None:
         ("routine.CountParams", Limit(max=5)),
         ("routine.CountPath", Limit(max=100)),
         ("routine.CountLineComment", Limit(max=20)),
-        ("routine.LinesPerStatement", Limit(max=3.0)),
+        ("routine.LinesPerStatement", Limit(max=4.0)),
         ("class.CountDeclMethod", Limit(max=20)),
         ("class.CountDeclMethodNonStub", Limit(max=15)),
         ("class.CountDeclInstanceVariable", Limit(max=10)),

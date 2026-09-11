@@ -741,6 +741,19 @@ method that never touches it still has to declare it. A leading underscore is th
 every linter already reads as "declared and deliberately unused", and ``*args``/``**kwargs``
 are how a signature says it forwards what it was given. Each is a parameter the rule would
 report and no author would delete, which is the definition of noise.
+
+**Measured on two repositories with the floors at zero, 2026-09-11, and kept as it is**
+(research.md, task 6.4). The list is over parameter *names*, and the noise the rule
+produces at the shipped numbers is a property of the *routine*: of this repository's 68
+findings, 56 are pytest fixtures declared by ``test_`` functions and 4 are the two
+``@overload`` stubs of one routine; of facdrone's 58, 39 and 16. What is left -- 8 and 3 --
+holds the genuine ones (facdrone's two already carry ``# noqa: ARG001``). No pattern over a
+parameter name reaches a fixture called ``assembler`` or a stub body of ``...``, so the list
+is confirmed rather than extended, and the remedy is a routine-shape exclusion in the rule
+itself -- the ``test_`` shape :data:`DEFAULT_UNUSED_IGNORE` already names, and a long name
+declared twice in one file -- which is outside a defaults task and recorded there for the
+one that owns it. Until then the rule ships off, as every rule here does, and an operator
+who enables it on Python should read its first ten before trusting its count.
 """
 
 DEFAULT_LEAN_CLASS_IGNORE: Final[tuple[str, ...]] = (
@@ -754,17 +767,34 @@ An exception class is *raised* and *caught*; in most languages neither is a refe
 class from a second file that a caller-based rule can see, so an error hierarchy reads as
 entirely dead code. pytest collects ``Test``-prefixed classes by name discovery, the same
 blind spot ``DEFAULT_UNUSED_IGNORE`` records for ``test_`` functions.
+
+**Confirmed on two repositories, 2026-09-11** (research.md, task 6.4): with the floors at
+zero the rule found 0 of this repository's 338 classes and 18 of facdrone's 1 809, and eight
+of facdrone's first ten are named in no other tracked source file. Nothing in either list
+was an exception or a test class, so the list is neither short nor long by measurement.
 """
 
 DEFAULT_LEAN_VARIABLE_IGNORE: Final[tuple[str, ...]] = (
     r"^__\w+__$",
     r"^(log|logger|pytestmark)$",
+    r"^_$",
 )
 """Module-level names the runtime reads rather than the code (req 1.5).
 
 ``__all__``, ``__version__`` and their kind are read by the interpreter, the packaging tools
 and the documentation build. A module logger is assigned once and used through the logging
 machinery; ``pytestmark`` is collected by pytest. None has a reference to find.
+
+**``^_$`` was added on 2026-09-11 from a measurement** (research.md, task 6.4): with the
+floors at zero, 5 of this repository's 17 unused-binding findings were the module-level
+discard ``_`` -- ``_ = something()`` at import time, the spelling every language uses for
+"bound on purpose, read by nobody" -- and 1 of facdrone's 55. It is ``^_$`` and not the
+parameter list's ``^_``, because a *leading* underscore on a module binding is a private
+constant, and facdrone's ``_SAMPLE_EVERY`` and ``_MAX_LEVERAGE_STEPS`` were bound and never
+mentioned again: the rule's genuine finding, which the wider pattern would have silenced.
+What the list leaves, on both repositories, splits about evenly between bindings named
+nowhere else and bindings named in other files that the analysis did not resolve, which is
+the case the accuracy floor exists for.
 """
 
 DEFAULT_LEAN_IMPLEMENTATION_IGNORE: Final[tuple[str, ...]] = (r"Error$", r"Exception$")
@@ -822,12 +852,16 @@ that is not a file at all.
 DEFAULT_RESOLUTION_FLOOR: Final = 0.75
 """The share of a language's call sites that must resolve before a rule may speak (req 1.8).
 
-**A placeholder. No rate at which these rules become sound has been measured.** It is
-deliberately set where nothing yet measured can reach it, and it is not a calibration: the
-two corpora where the predicate was measured wrong were measured by *accuracy*, not by call
-resolution, and the one call-resolution figure that exists (43% on this repository) has never
-been paired with a false-positive count. Requirement 1.10's two-repository measurement, which
-task 6.4 owns, is what re-derives this number.
+**Measured on two repositories on 2026-09-11 and kept, not calibrated** (research.md, task
+6.4). Requirement 1.10's measurement paired this figure with a false-positive count for the
+first time: this repository resolves 45.9% of its Python call sites (12 861 of 28 029) and
+facdrone 32.0% (16 986 of 53 153), and with both floors at zero the four gated rules answered
+between 0 and 8 genuine findings in their first ten -- the pass-through rule 1 and 2, the
+parameter rule 0 and 2, the class rule none here and 8 there. Neither corpus is above 0.75,
+so neither says what the rules do where they are allowed to run, and no corpus above it has
+been measured. Lowering the floor onto 32% would license the pass-through rule at one right
+answer in ten; the number stays where nothing measured reaches it, and it moves when a
+repository above it is measured, not before.
 
 Silence is not absence: below the floor the rules say what stopped them and at what measured
 value, which is a different product from a rule that is simply off.
@@ -841,11 +875,17 @@ the layer order allows.
 DEFAULT_ACCURACY_FLOOR: Final = 0.75
 """The share of files the analysis must have parsed cleanly before a rule may speak (1.8).
 
-A placeholder on the same terms as :data:`DEFAULT_RESOLUTION_FLOOR` and for the same reason.
-Both corpora that produced a false-positive count report an accuracy far below it -- 19% on
-this repository and 26% on facdrone -- so this floor is silent on both, but no corpus has been
-measured where these rules are right, and no rate has been shown to be the rate at which they
-become so. Task 6.4 re-derives it from two repositories.
+Kept on the same terms as :data:`DEFAULT_RESOLUTION_FLOOR`, from the same measurement
+(research.md, task 6.4, 2026-09-11). Both corpora sit far below it -- 19.1% here, 25.9% on
+facdrone -- and with the floor at zero the rule it exists for, the unused-variable rule,
+answered 5 genuine, 5 discards and 0 misreads in its first ten here, and 3 named nowhere
+else, 4 mentioned once more in their own file and 3 named in four to six other files on
+facdrone. That last third is the failure this floor bounds: a binding whose use sites the
+analysis did not read, reported as unread. At 26% it is three findings in ten. No corpus
+above the floor has been measured, so the rate at which that third vanishes is unknown, and
+a floor lowered to 0.25 would be a claim that it has. The floor stays until a repository
+above it is measured; the discard half of this repository's noise was a list entry, not a
+floor question, and :data:`DEFAULT_LEAN_VARIABLE_IGNORE` now carries it.
 
 **This is not** ``analysis.accuracy_floor``, **and the collision is deliberate rather than an
 oversight**; :attr:`LeanRules.accuracy_floor` argues it where an operator reads it.
@@ -905,13 +945,25 @@ class LeanRules(StrictModel):
     while both are false the extractor asks the worker for nothing on the family's behalf and
     a warm check costs what it costs today.
 
-    **The numbers are starting values with a measurement behind them, not final ones.**
-    Measured on this repository with Python's own tokenizer as a stand-in for Understand's
-    lexer (research.md): exact duplicate windows fall from 641 at 5 lines to 72 at 12, of
-    which 24 are in ``src/`` and 2 were judged genuine; similar routines at ratio >= 0.9
-    number 184, of which 10 are in ``src/`` and all 10 are real copies. Hence 12, 0.9 and a
-    six-statement floor. Requirement 5.7 asks for the same counts under Understand's lexer
-    before the documentation records a default, and that measurement is a later task's.
+    **The numbers were starting values, and on 2026-09-11 they became measured ones.** They
+    were first chosen on this repository with Python's own tokenizer as a stand-in for
+    Understand's lexer (research.md): exact duplicate windows fell from 641 at 5 lines to 72
+    at 12, of which 24 were in ``src/`` and 2 judged genuine; similar routines at ratio >= 0.9
+    numbered 184, of which 10 were in ``src/`` and all 10 real copies. Hence 12, 0.9 and a
+    six-statement floor. Requirement 5.7 asked for the same counts under Understand's own
+    lexer, and tasks 6.3 and 6.4 took them on two repositories (research.md):
+
+    * ``similar_routines`` at 0.9 / 6 statements / a family of 2: 163 families here and 129 on
+      facdrone, and of the first ten on each side 6 and 7 are copies a reviewer would merge,
+      the rest twins kept apart on purpose, **none noise**. Every number kept.
+    * ``duplicates`` at 12 lines: 48 findings here (about 24 places, both ends reported) and
+      152 on facdrone. Over the whole lists, 6 of 48 and 30 of 152 are name lists -- an
+      ``__all__`` or an import block of twelve or more names, which the lexer sees as twelve
+      code lines -- and the rest code. Raising the window to 15 would keep 16 of the 42 code
+      findings here and 59 of the 122 there to lose 4 and 17 lists; a path pattern cannot
+      name an ``__all__``. So 12 stays, the 20% of name lists is recorded, and the exclusion
+      that would remove them -- a window made only of names and commas -- belongs to the
+      rule rather than to a number.
     """
 
     unused_parameters: Severity | None = None
@@ -964,10 +1016,17 @@ class LeanRules(StrictModel):
     """
 
     pass_through: Severity | None = None
-    # At most two statements, because the third is a body: requirement 2.2 draws the line at
-    # "a routine with one caller and a body of its own is a decomposition the Gate's own hints
-    # ask for". One call and a return is the forwarding shape; a guard clause in front of it
-    # is the second statement an operator may want to allow.
+    # At most two statements, and two means a body of ONE: measured on 2026-09-11 (research.md,
+    # task 6.4), Understand's `CountStmt` counts the `def` line, so `return callee(x)` scores 2
+    # and no routine scores 1 -- of the 274 routines here and 459 on facdrone with one project
+    # caller and one project callee, 56 and 86 are at 2 and none below. Requirement 2.2 draws
+    # the line at "a routine with one caller and a body of its own is a decomposition the
+    # Gate's own hints ask for", and 2 is that line; a guard clause would need 3. The number
+    # is confirmed and is not what makes the rule noisy: with the floors at zero its first
+    # ten held one forwarder here and two on facdrone, the rest one-line comprehensions and
+    # expressions holding a single project call, which score 2 exactly as a forwarder does.
+    # That is the predicate -- "one call edge and no more than two statements" -- and it is
+    # the rule's to tighten, not this key's.
     pass_through_max_statements: int = Field(default=2, ge=1)
     pass_through_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_UNUSED_IGNORE))
     single_implementation: Severity | None = None
@@ -979,9 +1038,11 @@ class LeanRules(StrictModel):
         default_factory=lambda: list(DEFAULT_LEAN_OVER_EXPORT_IGNORE)
     )
     duplicates: Severity | None = None
+    # Confirmed on two repositories on 2026-09-11; the whole-list count is in the class docstring.
     duplicates_min_lines: int = Field(default=12, ge=3)
     duplicates_ignore: list[str] = Field(default_factory=list)
     similar_routines: Severity | None = None
+    # Both confirmed on two repositories on 2026-09-11: no noise in either first ten, see above.
     similar_min_statements: int = Field(default=6, ge=2)
     similar_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     # Requirement 5.9's family minimum. Two, so a plain twin is still a family and nothing the

@@ -368,7 +368,7 @@ class LeanRules(StrictModel):
     unused_classes: Severity | None = None
     unused_classes_ignore: list[str]         # default: r"(^|\.)Test", r"Error$", r"Exception$"
     unused_variables: Severity | None = None
-    unused_variables_ignore: list[str]       # default: r"^__\w+__$", r"^(log|logger|pytestmark)$"
+    unused_variables_ignore: list[str]       # default: r"^__\w+__$", r"^(log|logger|pytestmark)$", r"^_$" (the discard, added by task 6.4 from measurement)
     # requirement 1.8's two floors: the only [lean] keys no rule owns, which is why they ship
     # set while every rule in the block ships off -- runner.lean.evaluate reads them on every
     # run whatever the switches say. Every other set key below belongs to one rule (that
@@ -400,7 +400,27 @@ class LeanRules(StrictModel):
     @property
     def wants_tokens(self) -> bool: ...
 ```
-- Invariants: every default severity is `None`; the numbers above are the design's starting values and are re-measured with Understand's lexer before the docs record them (5.7, 9.1).
+- Invariants: every default severity is `None`; the numbers above were the design's starting values and were re-measured with Understand's lexer on two repositories before the docs record them (5.7, 9.1) -- the outcome is the table below.
+
+##### The shipped defaults after the two-repository measurement (task 6.4, 2026-09-11)
+
+Task 6.3 ran every rule at its shipped numbers over this repository (319 files, accuracy 19.1%) and facdrone (945 files, 25.9%), with a second pass at both floors zero; task 6.4 read the whole lists, built whole-project snapshots with the reference walk on for the tally, and decided each default. Every number below is in `research.md` under task 6.4 with its sample and method.
+
+| Default | Measured | Decision |
+| --- | --- | --- |
+| `similar_threshold` 0.9, `similar_min_statements` 6, `similar_min_family` 2 | 163 / 129 families; first ten 6 and 7 genuine, rest same-shape, no noise | kept |
+| `duplicates_min_lines` 12 | 48 / 152 findings; 6 and 30 are name lists (`__all__`, import blocks), the rest code; 15 would keep 16 of 42 and 59 of 122 code findings | kept; name-list exclusion is the rule's, recorded |
+| `pass_through_max_statements` 2 | `CountStmt` counts the `def`: 56 of 274 and 86 of 459 one-caller-one-callee routines at 2, none at 1; first ten 1 and 2 forwarders | kept; the predicate, not the number, is what admits comprehensions |
+| `unused_parameters_ignore` | 68 / 58 findings: 56 and 39 in `test_` routines, 4 and 16 overload stubs, 8 and 3 left | kept; a parameter-name list cannot reach a routine shape |
+| interface-method tally (1.9) | excuses 36 of 95 candidate routines here (3 free functions) and 159 of 193 on facdrone (2 free functions) | kept at 2 declaring classes |
+| `unused_variables_ignore` | 17 / 55 findings: 5 and 1 are the discard `_`; `_SAMPLE_EVERY`, `_MAX_LEVERAGE_STEPS` genuine | **`^_$` added**; not `^_` |
+| `unused_classes_ignore` | 0 of 338 / 18 of 1 809, 8 of 10 named nowhere else | kept |
+| `single_implementation` (no floor) | 5 and 12 classes with one subclass, referrers 3..144 and 3..18, none zero; 0 findings on both | kept off, no floor added: nothing to calibrate one on |
+| `over_export_ignore` | 0 / 1 (genuine, `panel_coverage.py`) | kept |
+| `resolution_floor`, `accuracy_floor` 0.75 | 45.9% / 32.0% resolution, 19.1% / 25.9% accuracy; gated rules 0-8 genuine of first ten; no corpus above the floor | kept, uncalibrated above 26% and said so |
+| `routine.LinesPerStatement` 3.0 | 57 of 3 467 (1.6%) / 442 of 5 085 (8.7%); the 3-4 band is the formatter's wrapping on both | **raised to 4.0**: 13 (0.4%) / 204 (4.0%) |
+| `routine.CountLineComment` 20 | 23 of 6 969 / 11 of 9 450 | kept |
+| `verbosity_min_statements` 5, `max_net_growth` unset | as measured in tasks 1.3-1.4; no number to measure | kept |
 - The five names `wants_references` reads are `config.models.REFERENCE_RULES`, a module constant, and `understand.features.ASKED_BY` builds its five `lean.*` keys from the same tuple. An earlier draft of this document said six in one place and five in another; three written-out copies would agree on the day they were written and never again, and the failure is silent — a rule missing from the extractor's list reads its facts as "not asked" and reports itself unavailable on every run.
 
 ##### The two accuracy floors, and why they are two
@@ -451,7 +471,7 @@ SYNTHETIC_METRICS["LinesPerStatement"] = SyntheticMetric(
 ```
 - Worker: `SYNTHETICS["routine"]["LinesPerStatement"]` answers the ratio, `None` only when `CountStmt` is absent or zero (then the existing unavailable path applies, which is the truthful answer).
 - Guard: `analysis.thresholds._judge` and `analysis.ratchet._compare` call `below_floor(record, metric, minimum) -> bool` from `config.metric_names`, and return without a finding and without an unavailable record when it is true. The `minimum` is resolved from `settings.lean.verbosity_min_statements`, falling back to the declaration's default when no settings are in hand, so an operator whose routines are legitimately small can move it (requirement 6.3). An earlier draft hard-coded it, which task 1.3's review caught: the requirement says *configurable* and a constant would have shipped it unsatisfied.
-- Defaults: `routine.LinesPerStatement = 3.0` and `routine.CountLineComment = 20`, both in `_SOFT_THRESHOLDS` (warnings); `file.RatioCommentToCode` keeps `{"min": 0.1}` and accepts `max` (6.1); no `max` is shipped (docstrings are comment lines, `research.md`).
+- Defaults: `routine.LinesPerStatement = 4.0` (3.0 until task 6.4 measured it on a second repository, see the table under `LeanRules`) and `routine.CountLineComment = 20`, both in `_SOFT_THRESHOLDS` (warnings); `file.RatioCommentToCode` keeps `{"min": 0.1}` and accepts `max` (6.1); no `max` is shipped (docstrings are comment lines, `research.md`).
 
 #### Plugin metric declarations
 
@@ -826,6 +846,7 @@ def find_over_exports(after: ProjectSnapshot, affected_files: Collection[str], s
   - The **call-resolution** floor is not the bounding quantity. `referrers` counts use, type and inheritance references rather than call edges, so a partly resolved *call graph* does not bound it. That much is settled.
   - The **accuracy** floor plausibly is. Requirement 1.8's amendment says analysis accuracy bounds whether a file was read at all, and this repository's own measurement is of exactly this shape: sixteen module bindings reported unreferenced while every one of them is read, because the use sites sit in regions Understand's analysis errored on. `referrers == 0` is an absence-of-references claim of that same shape, so a low-accuracy run can produce it for a class with users. Nothing here refutes that, and no corpus has paired an accuracy figure with a false-positive count for this rule.
   - So the rule ships **off** (3.4) and takes no gate, the question is open rather than settled, and **task 6.4 owns the measurement** that would decide whether an accuracy floor belongs here. Hint `yagni:`.
+  - **Measured 2026-09-11 (task 6.4): 0 findings on both repositories, and the zeros are answers.** This repository holds 5 classes with exactly one derived class and facdrone 12, and every one of them is referenced from outside the pair (referrer counts 3 to 144 here, 3 to 18 there). A rule that has never fired cannot be paired with a false-positive rate, so no floor was added; the question stays open on the terms above until a corpus produces a finding.
 - `over_export`: from today's snapshot: file record with `CountDeclFunction + CountDeclClass == 1`, no other module-level `Definition` in that file, and exactly one inbound `file_edges` source (4.1); initialisers and ignored paths excluded (4.2). Hint `yagni:`. Needs `definitions` recorded: the extractor sets `include_definitions` when `over_export` is on.
 
 #### analysis/lean/duplicates and analysis/lean/similar

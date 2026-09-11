@@ -369,6 +369,10 @@ _LEAN_HELP: Final[tuple[str, ...]] = (
     "pass_through rules evaluate nothing and say which floor stopped them at what measured",
     "value. [lean] accuracy_floor REFUSES to judge below it; the separate [analysis]",
     "accuracy_floor only REPORTS a poorly resolved run and silences nothing.",
+    "Measured on two repositories (research.md, task 6.4): similar_routines and duplicates",
+    "report copies at these numbers; unused_parameters and pass_through mostly report test",
+    "fixtures, overload stubs and one-line comprehensions -- enable those two last, and read",
+    "their first ten findings before trusting their count.",
 )
 
 _LEAN_REPORTS: Final[dict[str, str]] = {

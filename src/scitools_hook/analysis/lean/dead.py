@@ -67,8 +67,15 @@ the tally; the threshold is applied here, as every other threshold over the work
 is. The exclusion is applied by **short name**, so a plain function sharing a name with two
 classes' methods is excused too. That is a false negative, taken deliberately: telling a
 method from a function by Understand's kind string is a language-by-language guess, and for a
-rule whose false positives delete working code the safe direction is silence. How much it
-excuses is task 6.4's measurement.
+rule whose false positives delete working code the safe direction is silence. **How much it
+excuses was measured on 2026-09-11** (research.md, task 6.4), over whole-project snapshots
+with the walk on: of this repository's 95 routines that declare an unread parameter the
+shipped list does not excuse, the tally excuses 36 (62 of 130 parameters), and 3 of the 36
+are free functions -- ``cli.app.root``, a test's nested ``root`` and a contract helper named
+``extract``, sharing a name with two and five classes' methods; of facdrone's 193 routines,
+159 (298 of 356 parameters), and 2 are free functions, both nested test helpers named
+``post``. The other 33 and 157 are ``Protocol`` declarations, ports and their stubs, which is
+what the exclusion is for. The false negative is 3 and 2 routines, 3 and 7 parameters.
 
 **Three states, never two.** Every fact these rules read is ``True``, ``False`` or ``None``
 for "the worker was not asked", and a ``None`` on **any** affected record of a rule's scope

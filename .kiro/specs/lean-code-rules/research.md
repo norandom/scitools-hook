@@ -1320,3 +1320,201 @@ Result: `2 passed in 166.67s (0:02:46)`; one-minute load average 0.88 before the
 - **Time the test costs the gate.** 2 min 47 s serial for eight runs (cold `--all` 18.7 s,
   two first checks of 35.5 s and 33.5 s, four warm checks, one `doctor` 8.3 s); one worker of
   four under `-n auto`.
+
+---
+
+# Task 6.4: the shipped defaults decided against two repositories, 2026-09-11
+
+Understand 8.0 Build 1262, this repository at `928cb0a` (tree clean), facdrone at `d15c5e4`
+(read-only: `git status` there printed `?? task.md` before and after, which predates this
+work). Task 6.3's section above is the evidence; this section adds three measurements 6.3's
+first-ten reading could not give -- the interface-method tally's size, the whole lists behind
+the first tens, and the statement counts behind the pass-through budget -- and then decides
+every default. Every number names its sample and method; where a 6.3 figure is reused it is
+called 6.3's.
+
+**Method.** Three instruments, all in the scratch directory and none in the tree:
+
+1. `extract_lean.py`: a whole-project *after*-side snapshot built from each repository's
+   existing cache database (`after.und`, rooted at the cache's `after` tree) through the
+   production `SnapshotExtractor`, with the repository's own configuration plus the five
+   reference rules switched on so the walk records `LeanFacts` and the declaring-class tally.
+   Nothing is re-analysed and nothing in either repository is written. This repository:
+   340 analysable of 467 tracked files, 7 629 entities, 6 969 routines with facts, 338
+   classes, 13.8 s. facdrone: 967 of 1 377, 12 204 entities, 9 450 routines, 1 809 classes,
+   25.1 s.
+2. `measure_snapshot.py` over those two documents: the tally, the one-caller-one-callee
+   shape by `CountStmt`, the single-subclass classes, the verbosity ratio at candidate
+   ceilings over routines of five or more statements, and the unread bindings.
+3. `measure_findings.py` over the two all-on floors-zero findings documents -- facdrone's is
+   6.3's `fac-all-on-nofloor.json`; this repository's was re-run today with 6.3's
+   configuration (`scitools-hook --config <all-on floors-zero> check --all --format json`)
+   and reproduced 6.3's counts to the finding (48 / 57 / 23 / 24 / 68 / 17 / 47; families
+   165 against 163 on a tree two commits older). It classifies every duplicate block by
+   reading the named source lines (a block whose non-blank lines are at least 80% imports,
+   `__all__` entries or bare names is a "name list"), counts the `_` bindings, the `test_`
+   routines and the overload twins among the parameter findings, and bins the verbosity
+   values.
+
+## The interface-method tally (requirement 1.9, task 4.1's review)
+
+"Candidate" below is a routine with at least one unread parameter that the shipped
+parameter list (`^(self|cls|this)$`, `^_`, `^(args|kwargs)$`) does not excuse and that
+carries no override reference -- what the rule would report with no tally at all. "Free
+function" is a routine whose parent in the long name is not a recorded class.
+
+| | this repository | facdrone |
+| --- | --- | --- |
+| routines with facts | 6 969 | 9 450 |
+| method names in the tally / declared by 2+ classes | 459 / 78 | 1 810 / 194 |
+| candidates (routines / parameters) | 95 / 130 | 193 / 356 |
+| excused by the tally (routines / parameters) | **36 / 62** | **159 / 298** |
+| of those, free functions (routines / parameters) | **3 / 3** | **2 / 7** |
+| left for the rule (routines / parameters) | 59 / 68 | 34 / 58 |
+
+The "left" column equals 6.3's finding counts (68 and 58), which is the check that the
+snapshot measures what the run did. The three free functions here are `cli.app.root(version)`
+(a Typer callback; `root` is declared by two classes), a test's nested `root(boom)` and
+`contract_project.extract(side)` (five classes declare `extract`); facdrone's two are nested
+test helpers named `post` (three classes declare `post`). The 33 and 157 methods the tally
+excuses are what requirement 1.9 was written for: `Progress.start/finish/note` and their
+null twins, `Probes.und_version/inprocess_import/upython_ping` across four implementations,
+`CommandLog.record` in eight classes here; `Factor.compute` (26 classes), `Normalizer
+.normalize` (33), `DecisionPolicy.decide` (32), `MarketDataClient.fetch` (31) and the port
+protocols on facdrone. So the short-name match costs 3 and 2 routines on the safe side and
+buys 33 and 157 on the right one; `INTERFACE_DECLARERS = 2` stays.
+
+## The whole lists behind 6.3's first tens
+
+### `structure.unused_parameter` (68 here, 58 on facdrone, floors at zero)
+
+| shape | this repository | facdrone |
+| --- | --- | --- |
+| parameter of a `test_` routine (a pytest fixture) | 56 findings, 52 of 58 routines | 39 findings, 27 of 32 routines |
+| `@overload` stub (one long name at two lines of one file) | 4 (`cycles._closing`, two stubs) | 16 (two stubs of `_parse_optional_aware_datetime`) |
+| everything else | 8 | 3 |
+
+The 8 here include `worker._op_ping(request)`, the dispatch-table signature; the 3 on facdrone
+are 6.3's two genuine ones (both already `# noqa: ARG001`) and the `Protocol` method
+`LiveSnapshotStore.snapshots_for(limit)`, whose class the class rule also reports as named
+nowhere. The list is over parameter *names* and none of these shapes has one: `assembler`,
+`tmp_path` and `...` are not patterns. **Kept as shipped, off, with the composition recorded
+beside it**; the fix is a routine-shape exclusion in the rule (the `test_` shape
+`DEFAULT_UNUSED_IGNORE` already names, and a long name declared twice in one file), which is
+a rule change and not a default, and is left for the task that owns the rule.
+
+### `structure.unused_variable` (17 here, 55 on facdrone)
+
+Named `_`: **5 of 17** here, **1 of 55** there. Leading underscore other than `_`: 0 and 8,
+and facdrone's `_SAMPLE_EVERY` and `_MAX_LEVERAGE_STEPS` are bound and never mentioned again
+(6.3). **Changed: `^_$` added to `DEFAULT_LEAN_VARIABLE_IGNORE`**, and not `^_`, which would
+have excused those two. The remaining 12 and 54 split, on 6.3's reading of the first tens,
+between bindings named nowhere else (genuine) and bindings named in other files the analysis
+did not resolve, which is the accuracy floor's case and not a list's.
+
+### `structure.duplicate_block` (48 here, 152 on facdrone, both ends reported)
+
+| shape | this repository | facdrone |
+| --- | --- | --- |
+| code | 42 (lengths 12-27, p50 13) | 122 (12-56, p50 14) |
+| name list (`__all__`, import block, rule-name list) | 6 (12-20) | 30 (12-32, p50 13) |
+| surviving a window of 15: code / name list | 16 / 2 | 59 / 13 |
+| surviving 20 | 6 / 2 | 14 / 2 |
+
+Raising to 15 would remove 4 and 17 name lists at the cost of 26 and 63 code findings, and a
+path pattern cannot name an `__all__`. **Kept at 12.** The remedy that fits the measurement
+is a token-shape exclusion in the rule -- a window made only of names, strings, commas and
+brackets -- recorded for the rule's owner.
+
+### `structure.pass_through` (47 here, 59 on facdrone) and its budget
+
+Over the snapshots, routines with one project caller, one project callee and no override
+reference, by `CountStmt`: here 274, of which **56 at 2 and 0 at 1**; facdrone 459, **86 at 2,
+0 at 1**. Understand counts the `def` line, so `return callee(x)` is 2 and no routine scores
+1: the shipped budget of 2 means "a body of one statement", which is requirement 2.2's line,
+and the field's comment said a guard clause fitted inside it, which it does not (that needs
+3). Comment corrected; **value kept**. The number is not the noise: 6.3's first tens hold 1
+and 2 forwarders among ten, and the other eight or nine are one-line comprehensions and
+expressions holding one project call, which score 2 exactly as a forwarder does. That is the
+predicate ("one call edge and at most two statements"), and it is the rule's to tighten.
+
+### `structure.single_implementation` (0 on both)
+
+Classes with exactly one derived class: **5 here, 12 on facdrone**; referrer counts 3, 13,
+16, 93, 144 and 3 to 18 -- none zero (`ConfigError -> ArchitectureNotFoundError` 144,
+`ReadOnlySession -> TradingSession` 7, `TransportFailure -> DecisionNotYet` 18). So both
+zeros are the rule's answer and not a refusal. A rule that has produced no finding on two
+repositories cannot be paired with a false-positive rate, so the accuracy-floor question the
+design left to this task stays open on the design's terms; **no floor added, rule kept off**.
+
+### The rest, confirmed from 6.3's reading
+
+`similar_routine` 0.9 / 6 / family 2: 163 (165 today) and 129 families, first tens 6 and 7
+genuine and no noise -- **kept**. `unused_class` list: 0 of 338 and 18 of 1 809, 8 of the
+first ten named in no other source file -- **kept**. `over_export` list: 0 and 1 genuine --
+**kept**. `verbosity_min_statements` 5 and `max_net_growth` unset: as measured in tasks 1.3
+and 1.4, nothing new to measure -- **kept**. `file.RatioCommentToCode` minimum 0.1 is the base
+specification's default and not this family's; for the record, 24 files here (11
+`__init__.py`, 11 at zero) and 227 on facdrone (35 `__init__.py`, 118 under tests, 31 at
+zero).
+
+## `routine.LinesPerStatement`: 3.0 against 4.0 with both repositories in hand
+
+Over routines of at least five statements, from the snapshots:
+
+| ceiling | this repository (3 467 judged) | facdrone (5 085 judged) |
+| --- | --- | --- |
+| above 3.0 | 57 (1.6%) | 442 (8.7%) |
+| above 3.5 | 28 | 312 |
+| above 4.0 | **13 (0.4%)** | **204 (4.0%)** |
+| above 5.0 | 4 | 109 |
+
+3.0 fits this repository and not facdrone, as the task brief said. The band between 3.0 and
+4.0 -- 44 of the 57 findings here, 238 of the 442 there -- was read in source at two places
+here and three on facdrone: `change_summary.build_summary` (3.13, a `return
+ChangeSummary(...)` with eight keyword arguments), `GitRepo.discover` (3.43, a six-line
+signature and a two-line f-string); facdrone's `decision_core._committed_baselines` (3.12, a
+constructor with keyword arguments inside a loop), `render_build._profile_detail` (3.44, a
+nested constructor holding a six-tuple) and `normalized_csv._base_values` (3.80, a seven-key
+dict literal). Every one is a single statement the formatter wrapped one item per line; none
+is padding, prose or a routine an author would shorten. A ceiling whose findings are the
+formatter's is one an operator deletes. **Changed to 4.0**: 0.4% and 4.0% outside, which
+`recommend` prices as `keep` on both, and what remains is the tail the number is for
+(`template._structure_body` 7.2, `calls._cycle_finding` 6.4, `render_template` 4.2).
+`routine.CountLineComment = 20`: 23 of 6 969 and 11 of 9 450 outside (6.3), worst 51 and 43
+-- **kept**.
+
+## The floors
+
+Paired for the first time, per requirement 1.10: this repository resolves **45.9%** of its
+Python call sites (12 861 of 28 029, from the snapshot; 6.3 quoted 43% on an older tree) at
+**19.1%** accuracy; facdrone **32.0%** (16 986 of 53 153) at **25.9%**. With both floors at
+zero the gated rules answered, in their first tens: parameter 0 and 2 genuine (the whole
+lists above say the bulk is fixtures and stubs, which no floor addresses); variable 5 and 3
+certain; class none and 8; pass-through 1 and 2. No rule is reliably right at either figure,
+the variable rule's "named in other files" third on facdrone is exactly the failure the
+accuracy floor bounds, and no repository above 0.75 on either scale has been measured, so
+nothing says at what figure that third vanishes. Lowering to license these two runs would
+license the pass-through rule at one right answer in ten. **Both floors kept at 0.75**, the
+docstrings now carry these figures instead of the word "placeholder", and the floors move
+when a repository above them is measured.
+
+## What changed, what was confirmed, what is left
+
+Changed, each with the measurement beside it in the code: `routine.LinesPerStatement` 3.0 ->
+**4.0** (`config/defaults.py`); `DEFAULT_LEAN_VARIABLE_IGNORE` + **`^_$`**
+(`config/models.py`). Confirmed and recorded where the default is declared: every other
+`[lean]` number, list and floor, `INTERFACE_DECLARERS`, `routine.CountLineComment`; the
+`pass_through_max_statements` comment corrected to what `CountStmt` measures. The template's
+`[lean]` help gained four lines telling an operator which two rules to enable last and why.
+Tests pin 4.0 (`tests/config/test_shrink_metrics.py`, `test_defaults.py`) and `^_$` in both
+directions (`test_lean_settings.py`, `tests/analysis/lean/test_dead.py`); each pin was
+mutation-tested (list entry removed, pattern widened to `^_`, ceiling back to 3.0 -- 2, 4 and
+2 failures) with `__pycache__` cleared before each trial and after the copy-restore.
+
+Left for the rule layer, outside a defaults task: a routine-shape exclusion for the parameter
+rule (`test_` routines and a long name declared twice in one file would have removed 60 of
+68 and 55 of 58 findings); a name-list exclusion for the block rule (6 of 48 and 30 of 152);
+a body-shape predicate for the pass-through rule (comprehensions and expressions holding one
+call score as forwarders). Each is a change to what a rule measures, and each has its count
+above.

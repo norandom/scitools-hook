@@ -867,17 +867,28 @@ def test_a_binding_in_a_file_the_change_did_not_touch_is_not_reported() -> None:
 
 
 def test_the_shipped_variable_ignore_list_excuses_the_runtime_reads() -> None:
-    """Requirement 1.5: ``__all__`` and a module logger are read by machinery, not by code."""
+    """Requirement 1.5: ``__all__``, a module logger and the discard ``_`` are read by machinery
+    or by nobody on purpose; a private constant beside them is still the rule's finding.
+
+    ``_`` joined the list in task 6.4 from a measurement (5 of this repository's 17 findings
+    with the floors at zero); ``_LIMIT`` is here so the pattern cannot widen into ``^_``,
+    which would excuse the genuine private constants facdrone's run found.
+    """
     after = snapshot(
         (file_record(),),
-        definitions=(binding("__all__", False), binding("log", False)),
+        definitions=(
+            binding("__all__", False),
+            binding("log", False),
+            binding("_", False),
+            binding("_LIMIT", False),
+        ),
     )
 
     found = find_unused_variables(
         after, {PATH}, ignore=DEFAULT_LEAN_VARIABLE_IGNORE, trust=TRUSTED
     ).findings
 
-    assert found == []
+    assert [finding.details["definition"] for finding in found] == ["_LIMIT"]
 
 
 def test_an_unmeasured_binding_makes_the_variable_rule_unavailable() -> None:

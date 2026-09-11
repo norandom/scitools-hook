@@ -235,6 +235,7 @@ def test_the_shipped_ignore_lists_cover_the_shapes_a_reference_cannot_see() -> N
         (DEFAULT_LEAN_CLASS_IGNORE, "pkg.ParseException"),
         (DEFAULT_LEAN_VARIABLE_IGNORE, "__all__"),
         (DEFAULT_LEAN_VARIABLE_IGNORE, "logger"),
+        (DEFAULT_LEAN_VARIABLE_IGNORE, "_"),
         (DEFAULT_LEAN_IMPLEMENTATION_IGNORE, "pkg.ConfigError"),
         (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.Order.__post_init__"),
         (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.Order.__init__"),
@@ -247,6 +248,20 @@ def test_a_shipped_name_pattern_matches_the_shape_it_is_there_for(
 ) -> None:
     """The lists are regexes applied the way ``structure.unused_ignore`` is (req 1.5)."""
     assert any(re.search(pattern, name) for pattern in patterns), name
+
+
+@pytest.mark.parametrize("name", ["_MAX_LEVERAGE_STEPS", "_SAMPLE_EVERY", "_x"])
+def test_the_discard_binding_is_excused_and_a_private_constant_is_not(name: str) -> None:
+    """Task 6.4's one change to the dead-code lists, and the direction it must not creep in.
+
+    Measured 2026-09-11 with the floors at zero (research.md): of this repository's 17
+    unused-binding findings, 5 were the module-level discard ``_``; of facdrone's 55, 1 was.
+    The pattern is ``^_$`` and not the parameter list's ``^_``, because a *leading* underscore
+    on a module binding is a private constant, and facdrone's ``_SAMPLE_EVERY`` and
+    ``_MAX_LEVERAGE_STEPS`` were bound and never mentioned again -- the rule's genuine finding,
+    which a broader pattern would have silenced.
+    """
+    assert not any(re.search(pattern, name) for pattern in DEFAULT_LEAN_VARIABLE_IGNORE), name
 
 
 def test_the_shipped_over_export_patterns_cover_the_initialiser_of_every_language() -> None:

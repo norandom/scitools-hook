@@ -90,9 +90,18 @@ def test_a_synthetic_without_a_floor_declares_none() -> None:
 
 @pytest.mark.parametrize(
     ("rule", "limit"),
-    [("routine.LinesPerStatement", Limit(max=3.0)), ("routine.CountLineComment", Limit(max=20))],
+    [("routine.LinesPerStatement", Limit(max=4.0)), ("routine.CountLineComment", Limit(max=20))],
 )
 def test_the_shrink_defaults_ship_at_their_measured_values(rule: str, limit: Limit) -> None:
+    """Requirement 9.1: the values task 6.4 settled on two repositories (research.md).
+
+    ``LinesPerStatement`` moved from 3.0 to 4.0 on 2026-09-11: at 3.0 the band between 3 and
+    4 held 44 of this repository's 57 findings and 238 of facdrone's 442, and reading it on
+    both sides found the formatter's wrapping of keyword-argument constructors, dict literals
+    and long signatures rather than anything an author padded. At 4.0 the count is 13 of 3 467
+    judged routines here (0.4%) and 204 of 5 085 there (4.0%), which fits both.
+    ``CountLineComment`` stayed: 23 of 6 969 routines outside 20 here, 11 on facdrone.
+    """
     assert by_rule(default_settings())[rule].limit == limit
 
 

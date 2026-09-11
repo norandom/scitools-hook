@@ -47,9 +47,11 @@ DEFAULT_THRESHOLDS: Final[dict[Scope, ThresholdTable]] = {
         "CountPath": 100,
         # 5 916 routines here: p50 1, p90 6, p95 8, p99 15, max 51; 20 of them (0.3%) over 20.
         "CountLineComment": 20,
-        # 2 963 routines of >= 5 statements: p50 1.2, p90 2, p95 2.33, p99 3.43, max 7.2;
-        # 53 over 3 (1.8%), and `recommend` answers `keep 3`. See the docstring below.
-        "LinesPerStatement": 3.0,
+        # Two repositories, 2026-09-11 (research.md, task 6.4): 13 of 3 467 judged routines
+        # here (0.4%) and 204 of 5 085 on facdrone (4.0%) sit above 4. The earlier 3.0 fitted
+        # this repository alone (57, 1.6%) and not facdrone (442, 8.7%), and the band between
+        # 3 and 4 on both is the formatter's wrapping, not verbosity. See the docstring below.
+        "LinesPerStatement": 4.0,
     },
     "class": {
         "CountDeclMethod": 20,
@@ -172,17 +174,31 @@ docstrings and nothing else (``cli.common._write_stdout`` 51, ``locator.pinned_p
 ``locator.chosen_interpreter`` 28), which is what the number is meant to find: a routine
 whose explanation has outgrown it is the one to split, not the one to comment less. So the
 limit ships, and it ships at the value ``recommend`` returns ``keep`` for on this tree.
+**Re-measured on two repositories, 2026-09-11** (task 6.3's whole-project runs, read in task
+6.4): 23 of 6 969 routines here and 11 of 9 450 on facdrone sit outside 20, the worst 51 and
+43, so the ceiling stayed.
 
-``routine.LinesPerStatement`` 3.0 is the verbosity ratio, and it is only meaningful above
+``routine.LinesPerStatement`` 4.0 is the verbosity ratio, and it is only meaningful above
 its floor of five statements -- declared on the metric (``SYNTHETIC_METRICS``), configurable
 through ``[lean] verbosity_min_statements`` and applied by ``config.metric_names.below_floor``
 wherever the number is read: the absolute check, the ratchet, the before value the ratchet
 attaches, the population ``recommend`` prices and the worst value ``baseline`` records.
 **Every number here describes that population and no other**: over the 2 963 routines of
-this repository that clear the floor, p50 1.2, p90 2, p95 2.33, p99 3.43, max 7.2, and 53 sit
-above 3.0 -- 1.8% of them, which is why ``recommend`` answers ``keep 3``. The tail is
-literal-heavy code -- a long f-string, a list literal -- rather than prose, which is why the
-number warns and does not block.
+this repository that cleared the floor on 2026-09-10, p50 1.2, p90 2, p95 2.33, p99 3.43,
+max 7.2, and 53 sat above 3.0 -- 1.8% of them, which is why ``recommend`` answered ``keep 3``
+and why 3.0 shipped first. The tail is literal-heavy code -- a long f-string, a list literal
+-- rather than prose, which is why the number warns and does not block.
+
+**Raised to 4.0 on 2026-09-11, from the second repository** (research.md, task 6.4). The
+same ceiling on facdrone put 442 of 5 085 judged routines outside -- 8.7%, which
+``recommend`` prices as ``raise 3 -> 4`` -- against 57 of 3 467 here (1.6%). What separates
+the two is not that one codebase is verbose: the band between 3.0 and 4.0 holds 44 of the 57
+findings here and 238 of the 442 there, and reading two of them here and three on facdrone
+found the same shape every time -- a constructor with keyword arguments, a dict literal, a six-line
+signature -- wrapped one item per line by the formatter. A ceiling that reports the
+formatter is a ceiling an operator deletes. At 4.0 the count is 13 here (0.4%) and 204 there
+(4.0%), which fits both under ``recommend``'s 95% test, and what remains is the tail the
+number is for: a 7.2 template body, a 6.4 finding constructor.
 
 **The unfloored count was a different rule, and it is recorded here because it was nearly
 believed.** Measured on the same tree with the guard removed, all 5 940 routines are judged,
