@@ -7,6 +7,10 @@ stub and with nothing else.
 Measured on Build 1262 while writing task 2.1: all six available, and 21 generated
 architectures offered. Asserted as "every feature available" rather than as that list, because
 the list is the build's and will grow.
+
+The COUNT grows too, and for a different reason: a feature is added by this tool, not by the
+build. Task 5.5 added two and this test still demanded six, so it failed on a correct change.
+The row count is now read off :class:`Feature` itself, which is the only thing that decides it.
 """
 
 from __future__ import annotations
@@ -87,10 +91,15 @@ def test_the_probe_leaves_nothing_behind_in_the_repository(
 def test_the_rows_an_operator_reads_say_available_for_every_feature(
     git_repo: MakeGitRepo, tmp_path: Path, command_log: FakeCommandLog
 ) -> None:
-    """Requirement 1.1 as the operator meets it: six rows in the Understand block."""
+    """Requirement 1.1 as the operator meets it: one row per feature this tool probes.
+
+    Counted from ``Feature`` rather than written out. A literal here says nothing about the
+    build -- it says how many features the tool had on the day it was typed, and it fails the
+    next time one is added, which is what happened when task 5.5 added the two lean rows.
+    """
     text = render_report(diagnosis(git_repo().path, tmp_path / "cache", command_log))
 
     rows = [line.strip() for line in text.splitlines() if line.strip().startswith("feature ")]
-    assert len(rows) == 6, rows
+    assert len(rows) == len(Feature), rows
     answers = [row.split(":", 1)[1].strip() for row in rows]
     assert all(answer.startswith("available") for answer in answers), rows
