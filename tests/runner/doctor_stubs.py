@@ -162,18 +162,86 @@ so the first operation on a database answers the ``NoApiLicense`` envelope. The 
 as ``upython worker.py <op>``, hence ``$2``.
 """
 
-UNDERSTAND_8_UPYTHON = """#!/bin/sh
+CATALOGUE_UPYTHON = """#!/bin/sh
 case "$2" in
   catalogue)
-    found='{{"targets": ["Functions"], "languages": ["Python"]}}'
-    echo '{{"metrics": {{}}, "lookup": {{"CountGlobalsModified": '"$found"'}}}}' ;;
+    body=$(cat)
+    case "$body" in
+      *probe.und*)
+        echo '{{"metrics": {{}}, "lexer_probe": %(lexer)s}}' ;;
+      *lexer_probe*)
+        elsewhere='{{"lexemes": 0, "detail": "no database there"}}'
+        echo '{{"metrics": {{}}, "lexer_probe": '"$elsewhere"'}}' ;;
+      *DuplicateLinesOfCode*)
+        echo '{{"metrics": {{}}, "lookup": {{"DuplicateLinesOfCode": %(duplicate)s}}}}' ;;
+      *)
+        echo '{{"metrics": {{}}, "lookup": {{"CountGlobalsModified": %(plugin)s}}}}' ;;
+    esac ;;
   *) echo '{{"version": "{version}", "python": "3.12.0"}}' ;;
 esac
 """
-"""A bundled interpreter whose catalogue knows a plugin metric, as Build 1262's does.
+"""A bundled interpreter answering the three questions ``probe_features`` asks a catalogue.
 
-Answers the ping document for every other operation, so the analysis probe's ``archs`` call
-still succeeds and only the feature probe sees a difference.
+All three ride the one ``catalogue`` operation, so the operation name in ``$2`` cannot tell
+them apart and the request body has to: the lexer probe carries a database path under
+``lexer_probe`` and the two metric lookups name the id they are about. The lexer branch reads
+the *path* rather than the key, because the path is a decision -- the probe has to name the
+database ``doctor`` just analysed, and a probe pointed at the scratch directory, or at a
+database that was never built, would otherwise read as a build that lexes. Reading standard
+input is what a real worker does with the request anyway, so this is the shape a stub has to
+have rather than a trick -- and it is what lets one probe be moved while the other two stay,
+which is the only way a test can say which of the three answered.
+
+Every other operation answers the ping document, so the analysis probe's ``archs`` call
+still succeeds and only the feature probes see a difference.
+"""
+
+_LEXED = '{{"lexemes": 3, "detail": ""}}'
+"""What the scratch project's one file lexes to on a build whose ``Ent.lexer`` answers."""
+
+_NO_LEXER = '{{"lexemes": 0, "detail": "unable to lex probe.py"}}'
+"""A build whose ``Ent.lexer`` raised, in the words ``UnderstandError`` carried."""
+
+_DUPLICATE_TAGS = '{{"targets": ["Files", "Architectures", "Project"], "languages": ["Any"]}}'
+"""``DuplicateLinesOfCode``'s own tags, as the shipped solution declares them."""
+
+_PLUGIN_TAGS = '{{"targets": ["Functions"], "languages": ["Python"]}}'
+"""``CountGlobalsModified``'s tags, as Build 1262 answers them."""
+
+UNDERSTAND_8_UPYTHON = CATALOGUE_UPYTHON % {
+    "lexer": _LEXED,
+    "duplicate": _DUPLICATE_TAGS,
+    "plugin": _PLUGIN_TAGS,
+}
+"""A build that lexes, knows the plugin metric and has the duplicates solution enabled."""
+
+NO_LEXER_UPYTHON = CATALOGUE_UPYTHON % {
+    "lexer": _NO_LEXER,
+    "duplicate": _DUPLICATE_TAGS,
+    "plugin": _PLUGIN_TAGS,
+}
+"""The same build with the lexer refusing: the token rules cannot run, the metric can."""
+
+NO_DUPLICATES_UPYTHON = CATALOGUE_UPYTHON % {
+    "lexer": _LEXED,
+    "duplicate": "null",
+    "plugin": _PLUGIN_TAGS,
+}
+"""The same build with the duplicates solution absent from the Plugin Manager."""
+
+REFUSING_CATALOGUE_UPYTHON = """#!/bin/sh
+case "$2" in
+  catalogue)
+    echo "the catalogue operation died" >&2
+    exit 1 ;;
+  *) echo '{{"version": "{version}", "python": "3.12.0"}}' ;;
+esac
+"""
+"""An interpreter that runs every other operation and dies on the catalogue.
+
+The status is what decides: a non-zero exit is a broken worker rather than a refusal the
+worker could phrase, so ``ApiRunner`` raises and every catalogue probe has to answer from the
+exception rather than from a document it never got.
 """
 
 UPYTHON_SCRIPTS = {
@@ -183,8 +251,16 @@ UPYTHON_SCRIPTS = {
     "deep": DEEP_UPYTHON,
     "api_unlicensed": API_UNLICENSED_UPYTHON,
     "understand8": UNDERSTAND_8_UPYTHON,
+    "no_lexer": NO_LEXER_UPYTHON,
+    "no_duplicates": NO_DUPLICATES_UPYTHON,
+    "refusing_catalogue": REFUSING_CATALOGUE_UPYTHON,
 }
-"""The three answers a bundled interpreter can give, selected by ``install(mode=...)``."""
+"""The answers a bundled interpreter can give, selected by ``install(mode=...)``.
+
+The last three differ in one probe each, which is what lets a test say that the probe it
+moved is the probe that changed its answer: a stub that failed every catalogue question at
+once would pass a test asserting any of the three.
+"""
 
 API_VERSION = "6.5.1204"
 """What the stub ``upython`` reports; the version the API returns, not the ``und`` build."""

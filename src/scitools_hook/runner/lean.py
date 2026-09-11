@@ -1,7 +1,7 @@
 """The lean-code family's one step in a check: the rules that are on, and the change's delta.
 
-Six rules, two floors, one number and one place they are called from. The step exists so that
-:class:`~scitools_hook.runner.check.CheckPipeline` gains one call rather than six, and so that
+Eight rules, two floors, one number and one place they are called from. The step exists so that
+:class:`~scitools_hook.runner.check.CheckPipeline` gains one call rather than eight, and so that
 "which rules did this configuration ask for" is a question with a single answer rather than a
 statement per rule spread through the pipeline.
 
@@ -20,11 +20,13 @@ same three-state discipline ``structure.unused_routines`` already has: used, unu
 measured**. A rule that could not measure says so once per run -- ``CheckPipeline._report``,
 the diagnostics channel, the same route the unused rule's message takes -- rather than once per
 entity, and never by inventing a finding. Requirements 1.6 and 2.5 both turn on that sentence.
-Five of the family's rules fill that list: the three dead-code rules and the pass-through rule
+Seven of the family's rules fill that list: the three dead-code rules and the pass-through rule
 refuse below either of requirement 1.8's floors and when the facts they read were never
-measured, and the single-implementation rule refuses on the facts alone. ``over_export`` is the
-one that cannot: it reads file metrics, the file edges and the definitions walk, all of which
-the snapshot already carries, so it has no third state.
+measured, the single-implementation rule refuses on the facts alone, and the two token rules
+refuse a snapshot that carries no token index -- ``None`` there is "the lexer pass was never
+asked for", never "this project has nothing duplicated in it" (requirement 5.8).
+``over_export`` is the one that cannot: it reads file metrics, the file edges and the
+definitions walk, all of which the snapshot already carries, so it has no third state.
 
 **The floors are the run's, not the operator's alone, so this step is where they are bound.**
 ``[lean] resolution_floor`` and ``[lean] accuracy_floor`` are the numbers, the after side's
@@ -54,6 +56,7 @@ from scitools_hook.analysis.lean.dead import (
     find_unused_parameters,
     find_unused_variables,
 )
+from scitools_hook.analysis.lean.duplicates import find_duplicate_blocks
 from scitools_hook.analysis.lean.layering import (
     PassThroughLimits,
     find_over_exports,
@@ -61,6 +64,7 @@ from scitools_hook.analysis.lean.layering import (
     find_single_implementations,
 )
 from scitools_hook.analysis.lean.net import net_delta, net_growth_finding
+from scitools_hook.analysis.lean.similar import SimilarLimits, find_similar_routines
 from scitools_hook.config.models import LeanRules
 from scitools_hook.models.change import AffectedSet, NetDelta
 from scitools_hook.models.findings import Finding
@@ -112,6 +116,7 @@ def evaluate(
     outcomes = [
         *_dead_rules(rules, after, affected, trust),
         *_layering_rules(rules, after, affected, trust),
+        *_token_rules(rules, after, affected),
     ]
     findings = [finding for outcome in outcomes for finding in outcome.findings]
     notes = [note for outcome in outcomes for note in outcome.unavailable]
@@ -174,6 +179,48 @@ def _layering_rules(
     if rules.single_implementation is not None:
         ignore = rules.single_implementation_ignore
         found.append(find_single_implementations(after, keys, rules.single_implementation, ignore))
+    return found
+
+
+def _token_rules(
+    rules: LeanRules, after: ProjectSnapshot, affected: AffectedSet
+) -> list[LeanOutcome]:
+    """The two rules answered from the project's token index (req 5.1, 5.2).
+
+    One ``if`` per rule and each a statement of its own, for the reason the two routines above
+    give: branch coverage records no arc for an ``and`` short circuit, so a guard fused into a
+    boolean can be deleted with the module reporting 100% and every test green. **Two guards
+    here**, and ``test_the_token_rule_that_is_off_is_never_called`` is parametrised over
+    exactly those two -- one case per guard, counted from the code, and asserted on the
+    *calls* rather than on the findings, because a rule that is off and a rule that found
+    nothing produce the same empty list.
+
+    **Neither takes** :class:`~scitools_hook.analysis.lean.dead.Trust`, **and that is the
+    design's decision rather than an omission.** Requirement 1.8's floors judge how far a run
+    may be trusted to say a name is *unused*, which is a claim about references; both rules
+    here are decided from ``Ent.lexer(False)``, a lexical pass that resolves nothing, so a
+    partly resolved call graph bounds nothing either of them says. Requirement 5 names neither
+    floor, and the third state these two do have -- a snapshot carrying no index at all -- is
+    requirement 5.8's and is answered by the rules themselves.
+
+    The duplicate rule takes the change's **files** and the family rule its **entity keys**,
+    because the two subjects are not the same kind of thing: a duplicated block is a range of
+    lines that belongs to no entity, and a family is a set of routines.
+    """
+    found: list[LeanOutcome] = []
+    keys, files = affected.keys, affected.files
+    if rules.duplicates is not None:
+        min_lines, ignore = rules.duplicates_min_lines, rules.duplicates_ignore
+        found.append(find_duplicate_blocks(after, files, rules.duplicates, min_lines, ignore))
+    if rules.similar_routines is not None:
+        limits = SimilarLimits(
+            threshold=rules.similar_threshold,
+            min_statements=rules.similar_min_statements,
+            min_family=rules.similar_min_family,
+            ignore=rules.similar_ignore,
+            name_ignore=rules.similar_name_ignore,
+        )
+        found.append(find_similar_routines(after, keys, rules.similar_routines, limits))
     return found
 
 

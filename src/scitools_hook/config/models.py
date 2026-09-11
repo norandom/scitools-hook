@@ -874,6 +874,22 @@ never again, and the failure is silent -- a rule missing from the extractor's li
 facts as "not asked" and reports itself unavailable on every run.
 """
 
+TOKEN_RULES: Final[tuple[str, ...]] = ("duplicates", "similar_routines")
+"""The two ``[lean]`` switches answered from the worker's whole-project token pass (req 9.4).
+
+The other half of :data:`REFERENCE_RULES`, with the same three readers and for the same
+reason: :attr:`LeanRules.wants_tokens` decides whether the extractor pays for a lexer pass
+over every file, ``understand.features.ASKED_BY`` decides which configuration keys the build
+must offer :attr:`~scitools_hook.models.understand.Feature.LEAN_TOKENS` for, and the suite
+parametrises over it.
+
+Written out twice, the pair fails **asymmetrically and silently**, which is why it is written
+once. A rule this list forgets while ``wants_tokens`` remembers it is one an operator can
+enable on a build that was never asked whether its ``Ent.lexer`` answers, and the run then
+reports nothing while looking as though it looked; a rule ``wants_tokens`` forgets while this
+list remembers it is refused on a build that could have run it. Neither end can see the other.
+"""
+
 
 class LeanRules(StrictModel):
     """``[lean]``: the lean-code family's switches, numbers and ignore lists (req 1.5-7.5).
@@ -1043,8 +1059,14 @@ class LeanRules(StrictModel):
 
     @property
     def wants_tokens(self) -> bool:
-        """Whether either rule answered from the token index is on (req 9.4)."""
-        return self.duplicates is not None or self.similar_routines is not None
+        """Whether either rule answered from the token index is on (req 9.4).
+
+        The names come from :data:`TOKEN_RULES` rather than being written out here, for the
+        reason :attr:`wants_references` reads its own list: that constant is also what
+        ``understand.features`` maps to the build capability these two need, so the question
+        is asked in one place and answered in one place.
+        """
+        return any(getattr(self, rule) is not None for rule in TOKEN_RULES)
 
 
 class Settings(StrictModel):

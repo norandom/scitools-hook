@@ -34,8 +34,9 @@ from typing import Any, Final
 
 import pytest
 from api_fakes import FakeEnt, FakeRef
-from worker_projects import a_context, a_file, a_routine
+from worker_projects import FILE_KIND, a_context, a_file, a_routine
 
+from scitools_hook.config.metric_names import SCOPE_KINDS
 from scitools_hook.models.snapshot import TokenIndex
 from scitools_hook.understand import worker_lean
 
@@ -533,3 +534,17 @@ def _renamed(
     """:data:`DEF_RUN` with its name, its parameter, its literal and its operator replaced."""
     swapped = {"run": name, "value": parameter, "1": literal, "+": operator}
     return [(token_class, swapped.get(text, text), line) for token_class, text, line in tokens]
+
+
+def test_the_lexer_probe_reads_the_file_kind_a_snapshot_reads_files_with() -> None:
+    """The claim ``LEXER_PROBE_KIND``'s docstring makes, asserted rather than stated.
+
+    This file may import nothing of ``scitools_hook`` -- it is executed by Understand's own
+    interpreter, where the package is not on ``sys.path`` -- so the kind string is written out
+    here instead of read from ``config.metric_names``. Written out twice, the two agree on the
+    day they were written and never again, and the failure is silent in the worst way: a kind
+    string that names no entity makes the probe answer "not on this build" on every build
+    there is, and every configuration enabling a token rule is then refused.
+    """
+    assert worker_lean.LEXER_PROBE_KIND == SCOPE_KINDS["file"]
+    assert worker_lean.LEXER_PROBE_KIND == FILE_KIND

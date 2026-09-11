@@ -177,7 +177,14 @@ def _op_catalogue(api: Any, request: Mapping[str, object]) -> dict[str, object]:
     The caller composes the kind strings, one per language and scope (``python function
     ~unknown ~unresolved``), so the worker needs no notion of scopes; an unknown kind yields
     an empty list, which is how requirement 5.5 learns that a metric is unavailable for a
-    language. No database is involved: ``understand.Metric`` is a module-level accessor.
+    language. No database is involved in any of that: ``understand.Metric`` is a module-level
+    accessor.
+
+    ``lexer_probe`` is the exception and the only one, which is why it is a key of the request
+    rather than a second operation: ``doctor`` asks this operation what the build knows, and
+    one of the things it has to ask -- whether a file entity yields a lexeme stream at all
+    (lean-code requirement 9.2) -- can only be asked of a database. Every request without that
+    key opens nothing, exactly as before.
     """
     kinds = _require_str_list(request, "kinds")
     result: dict[str, object] = {kind: sorted(_metric_ids(api.Metric.list(kind))) for kind in kinds}
@@ -188,6 +195,11 @@ def _op_catalogue(api: Any, request: Mapping[str, object]) -> dict[str, object]:
     if "lookup" in request:
         wanted = _require_str_list(request, "lookup")
         answer["lookup"] = {name: _metric_tags(api, name) for name in wanted}
+    if "lexer_probe" in request:
+        # In the sibling with the other lean measurements, for `LEAN_PATH`'s reason.
+        answer["lexer_probe"] = _lean_module().lexer_probe(
+            api, _require_str(request, "lexer_probe")
+        )
     return answer
 
 

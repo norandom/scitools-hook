@@ -101,9 +101,22 @@ the shapes below. Three things keep it off that curve, and only the first is an 
    breadth-first search from the affected routines rather than by unioning every pair in the
    project. The component reached is the same component a whole-project union would find --
    BFS crosses every edge incident to a discovered member -- and a project whose change
-   touches no family scores one round of candidates and stops. This is the shape the
-   duplicate-block rule's two passes have: the index follows the project, the work follows
-   the change.
+   touches no family scores one round of candidates and stops.
+
+   **The intended shape is "the index follows the project, the work follows the change", and
+   the shipped wiring does not have it.** The duplicate-block rule does: it reads
+   ``tokens.files``, which narrowing never touches. This rule takes each routine's
+   ``CountStmt`` and ``EntityRef`` off ``entities`` (:func:`_routine`), and the check pipeline
+   hands the step an entity table narrowed to the change's files plus ONE dependency step, so
+   the BFS stops at that boundary rather than at the family's. Measured on this repository
+   over a random sample of 60 single-file commits, at the SHIPPED threshold of 0.9 and not
+   the 0.8 the families amendment discusses: a whole-project vertex set reports 41 families,
+   the narrowed one reports 26, and **15 are lost outright, 37 per cent**. A second method
+   over one real change agreed at 8 of 22. The losses concentrate in cross-file families,
+   which are the ones worth merging. This module's own family of two shows one member.
+   **Task 5.8 owns moving the statement count so the sentence becomes true**; until it lands
+   the sentence is the intent, and ``tests/runner/test_check_lean.py`` pins the bound that
+   actually holds.
 
 Measured on this machine over a synthetic project of **1000 routines of 46 tokens each**, all
 sharing an eight-token prologue and epilogue so that every routine is a shingle candidate for
@@ -347,9 +360,17 @@ def find_similar_routines(
 
     ``after`` is the after side alone, so a routine the change deleted has no index entry and
     cannot be reported. ``affected`` is the change's own entity set, which is the only query
-    set: similarity is decided over the whole project and reported against the change (5.3).
-    A family is reported **once per run** at its first affected member in file order, never
-    once per member, so a commit touching three of twelve twins gets one finding.
+    set. A family is reported **once per run** at its first affected member in file order,
+    never once per member, so a commit touching three of twelve twins gets one finding.
+
+    **Requirement 5.3 -- similarity decided over the whole project -- is NOT met by the only
+    wiring there is.** The token index is whole-project, but the check pipeline hands the step
+    ``narrow(wide_after, affected | neighbourhood)``, whose ENTITY table is the change's files
+    plus ONE dependency step, and :func:`_routine` refuses a routine that table has no record
+    of. Measured over a random sample of 60 single-file commits at the shipped threshold:
+    41 families whole-project, 26 through the narrowed table, **15 lost outright -- 37 per
+    cent**, the losses concentrated in the cross-file families that are worth merging.
+    **Task 5.8 owns the fix**; the intent is recorded, not yet shipped.
 
     A ``tokens`` of ``None`` is "the token pass was never asked for", never "this project has
     no twins", so it yields the run's one unavailable message and no findings (5.8).

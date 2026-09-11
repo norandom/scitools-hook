@@ -12,7 +12,11 @@ that appears later appears without.
 one hash per code line and one normalised shape per routine, which is everything the
 duplicate-block and similar-routine rules see of the source. It is the only measurement here
 that is whole-project rather than per entity, along with `method_declarations`, and the only
-one that can report a file it could not read at all.
+one that can report a file it could not read at all. `lexer_probe` is the one question
+`doctor` asks on those two rules' behalf, and the only routine in this file that is not a
+measurement of a project at all: it opens a scratch database of its own and asks whether this
+*build* yields a lexeme stream, which is what a configuration enabling either rule needs
+answered before a check runs.
 
 **Why a second file rather than more of `worker.py`.** `worker.py` measures 1 060 of its
 1 200 permitted code lines and 119 of its 130 functions, and six lean extractions do not fit
@@ -717,3 +721,66 @@ def _shape_text(token_class: str, text: str) -> str:
     if token_class in LITERAL_TOKENS:
         return LITERAL_SHAPE
     return text
+
+
+LEXER_PROBE_KIND: Final = "file ~unknown ~unresolved"
+"""Which entities :func:`lexer_probe` may read; the kind string a snapshot reads files with.
+
+Written out rather than read from ``config.metric_names.SCOPE_KINDS``, because this file may
+import nothing of this package (see the module docstring).
+``test_the_lexer_probe_reads_the_file_kind_a_snapshot_reads_files_with`` is what holds the two
+spellings equal, since a probe asking for a kind string that names nothing would answer "not
+on this build" on every build there is.
+"""
+
+_NOTHING_TO_LEX: Final = "the database recorded no file to lex"
+"""Why a probe can answer no lexemes on a build whose lexer is perfectly good."""
+
+
+def lexer_probe(api: Any, db_path: str) -> dict[str, object]:
+    """Whether this build's file entities answer ``Ent.lexer(False)`` (lean-code req 9.2).
+
+    The duplicate-block and similar-routine rules read a lexical pass and nothing else, so
+    what decides whether they can run on a build is whether one file of one database yields
+    lexemes. ``doctor`` asks it of its own scratch database -- one file, created, added and
+    analysed in a temporary directory -- so nothing here reads the operator's own code.
+
+    It rides ``worker``'s ``catalogue`` operation, because that is where ``doctor`` already
+    asks the build what it knows, and it is the one question in that operation that needs a
+    database. The database is opened here and closed in a ``finally``, as ``worker._op_archs``
+    does and for the reason that operation states: the API crashes the process when entities
+    outlive their database.
+
+    ``api`` arrives as an argument rather than through a :class:`LeanContext`, because the
+    two things a context carries are a project-relative path function and an analysis root,
+    and this probe has neither a project nor a root -- it has one scratch database and one
+    question about the build that opened it.
+    """
+    db = api.open(db_path)
+    try:
+        return _first_lexed(api, db)
+    finally:
+        db.close()
+
+
+def _first_lexed(api: Any, db: Any) -> dict[str, object]:
+    """The lexeme count of the first file of ``db``, or zero and the reason there is none.
+
+    Two ways to answer zero and they are different facts, so both carry their own sentence: a
+    lexer that raised -- ``Ent.lexer`` documents ``UnderstandError`` when the source is gone
+    or has changed since the parse, which is what :func:`_code_lines` reads as requirement
+    5.8's unreadable file -- and a database with no file entity in it at all. The second is
+    not a statement about the build, and a probe reporting it as one would refuse the token
+    rules on an installation that runs them perfectly well.
+
+    The count rather than a flag, because an empty stream is not an answer: a build whose
+    lexer returned nothing would read as available on a boolean, and the two rules would then
+    report nothing on every run while looking as though they had looked.
+    """
+    for ent in db.ents(LEXER_PROBE_KIND):
+        try:
+            lexemes = list(ent.lexer(False).lexemes())
+        except api.UnderstandError as refused:
+            return {"lexemes": 0, "detail": str(refused)}
+        return {"lexemes": len(lexemes), "detail": ""}
+    return {"lexemes": 0, "detail": _NOTHING_TO_LEX}

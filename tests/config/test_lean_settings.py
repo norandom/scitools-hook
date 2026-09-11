@@ -33,6 +33,7 @@ from scitools_hook.config.models import (
     DEFAULT_RESOLUTION_FLOOR,
     DEFAULT_UNUSED_IGNORE,
     REFERENCE_RULES,
+    TOKEN_RULES,
     LeanRules,
     Settings,
     matching_pattern,
@@ -354,6 +355,18 @@ def test_the_suite_and_the_settings_name_the_same_reference_rules() -> None:
     Two artefacts that must agree need something binding them, and this is it.
     """
     assert LEAN_REFERENCE_RULES == REFERENCE_RULES
+
+
+def test_the_suite_and_the_settings_name_the_same_token_rules() -> None:
+    """The same binding for the other list, which now has the same three readers.
+
+    ``config.models.TOKEN_RULES`` is what ``wants_tokens`` and
+    ``understand.features.ASKED_BY`` both read, and ``fixtures.constants.LEAN_TOKEN_RULES``
+    is what the suite parametrises over. Written out rather than imported for the reason the
+    reference list is: a rule dropped from the production constant would otherwise silently
+    drop every case that would have caught it.
+    """
+    assert LEAN_TOKEN_RULES == TOKEN_RULES
 
 
 @pytest.mark.parametrize("rule", LEAN_REFERENCE_RULES)

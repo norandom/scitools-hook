@@ -26,12 +26,13 @@ task 2.5's review asked for when a single test module reached for twelve collabo
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, NamedTuple
 
 import pytest
 from conftest import MakeGitRepo
-from fixtures.constants import LEAN_REFERENCE_RULES
+from fixtures.constants import LEAN_REFERENCE_RULES, LEAN_TOKEN_RULES
 from test_check_pipeline import (
     SAFE_POPULATIONS,
     Harness,
@@ -44,6 +45,8 @@ from test_check_pipeline import (
     source_file,
 )
 
+from scitools_hook.analysis.lean.dead import LeanOutcome
+from scitools_hook.analysis.narrow import narrow
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.config.models import (
     IgnoreRules,
@@ -52,9 +55,11 @@ from scitools_hook.config.models import (
     Settings,
     matching_pattern,
 )
+from scitools_hook.models.change import AffectedSet
 from scitools_hook.models.findings import RunResult
-from scitools_hook.models.snapshot import ProjectSnapshot, Side
+from scitools_hook.models.snapshot import EntityKey, ProjectSnapshot, Side
 from scitools_hook.models.understand import AnalyzeResult
+from scitools_hook.runner import lean as lean_step
 from scitools_hook.runner.lean import LeanResult
 
 OVER_EXPORT = "structure.over_export"
@@ -753,3 +758,399 @@ def test_moving_the_lean_floor_raises_no_analysis_accuracy_finding(
     result = harness.run()
 
     assert [f for f in result.findings if f.rule == ACCURACY_RULE] == []
+
+
+# --- the two rules answered from the token index (task 5.5) -------------------------
+#
+# `a_facts_repository` above answers the five reference rules from per-entity facts, and
+# every one of them refuses below requirement 1.8's floors. The two rules of this section
+# read neither a reference nor an accuracy figure: both are decided from `Ent.lexer(False)`,
+# a lexical pass that resolves nothing, and the whole of what they read arrives in one
+# snapshot field. So they need a third fixture, and its job is to put exactly one duplicated
+# block and exactly one family in front of the change while keeping the two APART -- a
+# fixture in which one subject answered both rules would pass with the step calling one rule
+# twice.
+
+TOKEN_FILE: Final = "src/lean/twin.py"
+"""The changed file: it carries the duplicated block and one member of the family."""
+
+TOKEN_OTHER: Final = "src/lean/other.py"
+"""The file the change did not touch, carrying the other copy and the other twin."""
+
+DUPLICATE_RULE: Final = "structure.duplicate_block"
+SIMILAR_RULE: Final = "structure.similar_routine"
+
+TOKEN_RULES: Final[tuple[str, ...]] = (DUPLICATE_RULE, SIMILAR_RULE)
+"""The two rules this task wires in, by the id the finding carries, in the order
+``[lean]`` writes their switches -- which is the order the notes below are asserted in."""
+
+SHIPPED_LEAN: Final = LeanRules()
+
+COPIED: Final[list[list[object]]] = [
+    [line + 1, f"copy{line:02d}"] for line in range(SHIPPED_LEAN.duplicates_min_lines)
+]
+"""Twelve ``(line, hash)`` pairs both files carry: the shortest block the shipped minimum
+reports, so a fixture one line shorter would report nothing."""
+
+TWIN_SHAPE: Final[list[int]] = list(range(40))
+"""One routine's normalised token shape. Two routines carrying it match at 1.00, which is
+above the shipped threshold; :data:`APART_SHAPE` is the same shape with half its positions
+replaced, which is below it."""
+
+APART_SHAPE: Final[list[int]] = [*range(20), *range(900, 920)]
+"""A shape sharing half its positions with :data:`TWIN_SHAPE`: no family, same block."""
+
+
+def token_key(path: str, longname: str) -> str:
+    """The entity-key token the index keys a routine's shape by."""
+    return EntityKey(scope="routine", path=path, longname=longname).token
+
+
+def token_snapshot(
+    side: Side, shape: Sequence[int] = TWIN_SHAPE, linked: bool = True
+) -> ProjectSnapshot:
+    """One snapshot whose change has one duplicated block and, by default, one twin.
+
+    ``shape`` is the OTHER file's routine shape and is the fixture's first moving part: moved
+    below the threshold it takes the family away and leaves the duplicated block exactly as
+    it was, so a test can say which of the two rules answered. A fixture that moved both at
+    once would assert nothing about either.
+
+    ``linked`` is the second, and it is about what a *check* can see rather than what a rule
+    can decide. ``CheckPipeline`` hands this step a snapshot whose entity table is narrowed to
+    the change's files and ONE dependency step (``analysis.narrow``), so the other file's
+    entity record survives only while something links the two directly. The token index does
+    not narrow, and the two rules therefore answer differently on ``linked=False`` -- which is
+    a bound on the family rule, recorded by a test of its own below rather than arranged away
+    here.
+    """
+    return ProjectSnapshot.model_validate(
+        {
+            "side": side,
+            "languages": ["Python"],
+            "file_edges": [edge(TOKEN_OTHER, TOKEN_FILE)] if linked else [],
+            "entities": [
+                source_file(TOKEN_FILE, CountDeclFunction=1, CountDeclClass=0, CountLineCode=40),
+                source_file(TOKEN_OTHER, CountDeclFunction=1, CountDeclClass=0, CountLineCode=40),
+                routine(TOKEN_FILE, "twin.normalize", CountStmt=10, CountLineCode=14),
+                routine(TOKEN_OTHER, "other.normalize", CountStmt=10, CountLineCode=14),
+            ],
+            "tokens": {
+                "vocabulary": [],
+                "files": {TOKEN_FILE: COPIED, TOKEN_OTHER: COPIED},
+                "routines": {
+                    token_key(TOKEN_FILE, "twin.normalize"): {
+                        "path": TOKEN_FILE,
+                        "start": 20,
+                        "end": 34,
+                        "shape": list(TWIN_SHAPE),
+                    },
+                    token_key(TOKEN_OTHER, "other.normalize"): {
+                        "path": TOKEN_OTHER,
+                        "start": 20,
+                        "end": 34,
+                        "shape": list(shape),
+                    },
+                },
+            },
+            "arch_nodes": [{"path": "Directory Structure/src", "members": []}],
+            "populations": {scope: dict(v) for scope, v in SAFE_POPULATIONS.items()},
+        }
+    )
+
+
+class Twins(NamedTuple):
+    """What the token fixture varies: the other routine's shape, and whether it is linked.
+
+    One object rather than two parameters because this project's own gate says so: spelled
+    out beside ``git_repo``, ``tmp_path``, ``settings`` and ``name`` they would put
+    :func:`a_token_repository` at six parameters against a maximum of five, which is the
+    finding ``a_facts_repository`` above records for the same shape of helper. They are also
+    one decision: what the change's own file has in common with the other one.
+    """
+
+    shape: Sequence[int] = TWIN_SHAPE
+    linked: bool = True
+
+
+TWO_TWINS: Final = Twins()
+"""A family of two across two linked files: what the wiring is asserted on by default."""
+
+
+def a_token_repository(
+    git_repo: MakeGitRepo,
+    tmp_path: Path,
+    settings: Settings,
+    twins: Twins = TWO_TWINS,
+    name: str = "tokens",
+) -> Harness:
+    """One restaged file whose snapshot carries the token index both rules read."""
+    builder = git_repo(name)
+    for path in (TOKEN_FILE, TOKEN_OTHER):
+        builder.write(path, "# x\n")
+    builder.stage(TOKEN_FILE, TOKEN_OTHER)
+    builder.commit("initial")
+    builder.write(TOKEN_FILE, "# changed\n")
+    builder.stage(TOKEN_FILE)
+    sides = (token_snapshot(side, twins.shape, twins.linked) for side in ("after", "before"))
+    after, before = sides
+    return make_harness(
+        builder,
+        tmp_path / name,
+        settings,
+        answers={"after": [after, after], "before": [before, before]},
+    )
+
+
+def both_token_rules(**overrides: object) -> Settings:
+    """The two token rules on as warnings, with anything else the test wants moved."""
+    return lean_settings(**{**dict.fromkeys(LEAN_TOKEN_RULES, "warning"), **overrides})
+
+
+def token_rules_of(result: RunResult) -> list[str]:
+    """Every token rule that produced a finding in this run, sorted."""
+    return sorted(f.rule for f in result.findings if f.rule in TOKEN_RULES)
+
+
+def test_a_run_with_a_token_index_reports_both_token_rules(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The wiring itself: two rules, two findings, one per subject the fixture built."""
+    result = a_token_repository(git_repo, tmp_path, both_token_rules()).run()
+
+    assert token_rules_of(result) == sorted(TOKEN_RULES)
+
+
+def test_each_token_finding_names_the_subject_its_rule_is_about(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """A count of two would pass with one rule reporting twice."""
+    result = a_token_repository(git_repo, tmp_path, both_token_rules()).run()
+    found = {f.rule: f.details for f in result.findings if f.rule in TOKEN_RULES}
+
+    assert found[DUPLICATE_RULE]["also_at"] == [f"{TOKEN_OTHER}:1"]
+    assert found[SIMILAR_RULE]["family"] == [f"other.normalize ({TOKEN_OTHER}:20)"]
+
+
+def test_the_family_goes_with_the_shape_while_the_duplicated_block_stays(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The fixture's one moving part, and what makes the test above able to fail.
+
+    Both rules read the same index, so a step that wired one of them to the other's inputs
+    would still report twice on the fixture above. Moved below the threshold, the other
+    file's shape takes the family away and leaves the block untouched.
+    """
+    harness = a_token_repository(
+        git_repo, tmp_path, both_token_rules(), Twins(shape=APART_SHAPE), "apart"
+    )
+
+    assert token_rules_of(harness.run()) == [DUPLICATE_RULE]
+
+
+@pytest.mark.parametrize("rule", LEAN_TOKEN_RULES)
+def test_one_token_rule_off_is_the_only_one_missing(
+    git_repo: MakeGitRepo, tmp_path: Path, rule: str
+) -> None:
+    """One case per guard in the step, counted from the code and not from a sentence."""
+    settings = both_token_rules(**{rule: None})
+
+    harness = a_token_repository(git_repo, tmp_path, settings, TWO_TWINS, f"off-{rule}")
+
+    assert len(token_rules_of(harness.run())) == len(TOKEN_RULES) - 1
+
+
+def test_both_token_rules_off_leaves_the_run_silent_about_them(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """Requirement 9.4: an off rule costs no finding and no note, index or no index."""
+    harness = a_token_repository(git_repo, tmp_path, lean_settings(), TWO_TWINS, "quiet")
+
+    result = harness.run()
+
+    assert token_rules_of(result) == []
+    assert [note for note in harness.notes if "token" in note] == []
+
+
+# --- what no count of findings can show: which rules were CALLED --------------------
+
+
+def spy(calls: list[str], name: str):
+    """A stand-in for one rule that records its call and finds nothing.
+
+    An off rule producing no finding is not evidence that it did not run: the fixture could
+    simply have nothing for it. Requirement 9.4 is about the *call*, and this is what sees
+    one.
+    """
+
+    def called(*_args: object, **_kwargs: object) -> LeanOutcome:
+        calls.append(name)
+        return LeanOutcome(findings=[])
+
+    return called
+
+
+def spied(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Both token rules replaced by spies; the list records which ones were called."""
+    calls: list[str] = []
+    monkeypatch.setattr(lean_step, "find_duplicate_blocks", spy(calls, "duplicates"))
+    monkeypatch.setattr(lean_step, "find_similar_routines", spy(calls, "similar_routines"))
+    return calls
+
+
+@pytest.mark.parametrize("rule", LEAN_TOKEN_RULES)
+def test_the_token_rule_that_is_off_is_never_called(
+    monkeypatch: pytest.MonkeyPatch, rule: str
+) -> None:
+    """Requirement 9.4 as a cost rather than as a silence: one rule on, one call made."""
+    calls = spied(monkeypatch)
+
+    lean_step.evaluate(
+        lean_settings(**{rule: "warning"}).lean, ProjectSnapshot(side="after"), None, AffectedSet()
+    )
+
+    assert calls == [rule]
+
+
+def test_neither_token_rule_is_called_while_both_are_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped configuration asks the token rules for nothing at all."""
+    calls = spied(monkeypatch)
+
+    lean_step.evaluate(LeanRules(), ProjectSnapshot(side="after"), None, AffectedSet())
+
+    assert calls == []
+
+
+def test_the_two_token_rules_are_called_in_the_order_the_lean_section_writes_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard order, which a set of findings cannot show and a list of calls can.
+
+    The spies find nothing, so this run's findings and notes are both empty and the list of
+    calls is the only thing left carrying the order. The test below says the same thing from
+    the other end, in the notes an operator actually reads -- two different facts, because
+    one is the order the step calls in and the other the order the messages come out in.
+    """
+    calls = spied(monkeypatch)
+
+    result = lean_step.evaluate(
+        both_token_rules().lean, ProjectSnapshot(side="after"), None, AffectedSet()
+    )
+
+    assert calls == list(LEAN_TOKEN_RULES)
+    assert result.notes == []
+
+
+def test_a_run_with_no_token_index_says_so_once_per_token_rule() -> None:
+    """Requirement 5.8: one message per rule, in the order the step calls them.
+
+    Both rules say the same sentence about a snapshot that carries no index, so the pair of
+    notes carries nothing but which of them was asked first.
+    """
+    outcome = lean_step.evaluate(
+        both_token_rules().lean, ProjectSnapshot(side="after"), None, AffectedSet()
+    )
+
+    assert [note.split(" is on")[0] for note in outcome.notes] == list(TOKEN_RULES)
+
+
+# --- what this wiring can see, measured rather than assumed ---------------------------
+
+
+def test_a_twin_outside_the_narrowed_snapshot_is_not_named_while_its_lines_still_are() -> None:
+    """The bound this wiring has, recorded so nobody has to rediscover it (req 5.3).
+
+    ``CheckPipeline`` hands this step ``narrow(wide_after, affected | neighbourhood)``, whose
+    entity table is the change's files and ONE dependency step: ``affected._neighbourhood``
+    walks a single step, and ``narrow`` filters entities by ``key.path in wanted`` outright,
+    its ``_one_ring`` widening only the retained *edges*. The two rules read different halves
+    of that document and so reach different distances. ``duplicate_block`` reads
+    ``tokens.files``, which ``narrow`` never touches, so 5.3 holds for it outright.
+    ``similar_routine`` reads the whole-project ``tokens.routines`` for its shapes but takes
+    each routine's ``CountStmt`` and ``EntityRef`` off ``entities``, and a routine that table
+    has no record of is read as "not measured" and left out of the vertex set
+    (``analysis.lean.similar._routine``). So a twin in a file the change neither touched nor
+    depends on is invisible to the family rule while its *lines* are still reported.
+
+    **The cost, measured rather than described.** Over a random sample of 60 single-file
+    commits at the shipped threshold of 0.9: 41 families whole-project on this repository, 26
+    still reported through the narrowed table, **15 lost outright -- 37 per cent**. So
+    requirement 5.3 is not met for ``similar_routine`` today and **task 5.8 owns the fix**;
+    this test is the record of what is owed, and it fails the day the contract moves.
+    """
+    unlinked = token_snapshot("after", TWIN_SHAPE, linked=False)
+    narrowed = narrow(unlinked, [TOKEN_FILE])
+    affected = AffectedSet(
+        files={TOKEN_FILE},
+        keys={key for key in narrowed.entities if key.path == TOKEN_FILE},
+    )
+
+    outcome = lean_step.evaluate(both_token_rules().lean, narrowed, None, affected)
+
+    assert sorted(f.rule for f in outcome.findings) == [DUPLICATE_RULE]
+    assert [f.details["also_at"] for f in outcome.findings] == [[f"{TOKEN_OTHER}:1"]]
+    assert outcome.notes == []
+
+
+# --- each configured number and list reaching the rule it belongs to -----------------
+#
+# The step maps seven `[lean]` keys onto two calls, and five of the seven travel together
+# inside one `SimilarLimits`. Two keys swapped there type-check, run, and quietly change what
+# the rule is about; `tests/config/test_template.py` binds each key to the SWITCH that guards
+# its read, which is a different question from which PARAMETER it is handed to. So each key
+# is moved to a value that changes the answer, and the rule it belongs to is the one that
+# goes quiet while the other rule stays exactly as it was.
+
+TOKEN_KEY_SILENCERS: Final[tuple[tuple[str, object, str], ...]] = (
+    ("duplicates_min_lines", SHIPPED_LEAN.duplicates_min_lines + 1, DUPLICATE_RULE),
+    ("duplicates_ignore", [TOKEN_OTHER], DUPLICATE_RULE),
+    ("similar_min_statements", 11, SIMILAR_RULE),
+    ("similar_min_family", 3, SIMILAR_RULE),
+    ("similar_ignore", [TOKEN_OTHER], SIMILAR_RULE),
+    ("similar_name_ignore", [r"normalize$"], SIMILAR_RULE),
+)
+"""One key, the value that silences its rule on this fixture, and the rule it silences.
+
+The values are chosen against the fixture rather than picked: the block is exactly
+``duplicates_min_lines`` lines long, so one more reports nothing; the routines carry ten
+statements, so a floor of eleven excludes them; the family has two members, so a minimum of
+three refuses it; and each list names the one file or the one name that makes the pair a
+pair. A value that changed nothing would leave the case asserting that the run still works.
+"""
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "silenced"),
+    TOKEN_KEY_SILENCERS,
+    ids=[key for key, _, _ in TOKEN_KEY_SILENCERS],
+)
+def test_each_token_key_reaches_the_rule_it_belongs_to(
+    git_repo: MakeGitRepo, tmp_path: Path, key: str, value: object, silenced: str
+) -> None:
+    """The other rule staying is half the assertion: a key wired to neither would pass alone."""
+    settings = both_token_rules(**{key: value})
+
+    harness = a_token_repository(git_repo, tmp_path, settings, TWO_TWINS, f"key-{key}")
+
+    assert token_rules_of(harness.run()) == sorted(set(TOKEN_RULES) - {silenced})
+
+
+def test_the_configured_threshold_is_the_one_the_family_rule_is_held_to(
+    git_repo: MakeGitRepo, tmp_path: Path
+) -> None:
+    """The seventh key, moved the other way, because this one cannot silence anything.
+
+    ``similar_threshold`` is bounded at 1.0 and the fixture's twins match at exactly 1.00, so
+    no legal value takes the default fixture's family away. Moved onto the shape that is
+    half a match instead, the operator's number is what decides whether those two are a
+    family at all -- and the duplicated block, which no similarity decides, stays either way.
+    """
+    settings = both_token_rules(similar_threshold=0.4)
+
+    harness = a_token_repository(
+        git_repo, tmp_path, settings, Twins(shape=APART_SHAPE), "threshold"
+    )
+
+    assert token_rules_of(harness.run()) == sorted(TOKEN_RULES)

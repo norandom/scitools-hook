@@ -596,11 +596,11 @@ and a mapping derived from the key names could not have caught the three keys wh
 does not carry their rule's -- ``similar_min_statements``, ``verbosity_min_statements`` and
 ``net_growth_severity``. The test below refuses to pass while a set key is missing from here.
 
-The names are not free text either. Eight of them are checked against the switch that guards
-the key's only read in ``runner.lean``, ``verbosity_min_statements``'s against the metric
-catalogue and the unguarded read in ``runner.check``, and the five token keys against the
-stem they share with their rule -- because a plausible wrong name here is exactly where the
-defect this comment describes hid through two rounds of review.
+The names are not free text either. All but one of them are checked against the
+switch that guards the key's only read in ``runner.lean``, and
+``verbosity_min_statements``'s against the metric catalogue and the unguarded read in
+``runner.check`` -- because a plausible wrong name here is exactly where the defect this
+comment describes hid through two rounds of review.
 """
 
 LEAN_KEY_KINDS: Final[dict[str, str]] = {
@@ -742,34 +742,17 @@ def test_every_owner_a_wired_rule_names_is_the_switch_its_key_s_read_is_guarded_
     return``. That guard *is* the ownership the help text claims, so it is read out of the
     module and compared, name by name.
 
-    Six keys have no such read yet. ``verbosity_min_statements`` never will -- the test above
-    owns it -- and the five token keys wait on tasks 5.1-5.5, which wire ``duplicates`` and
-    ``similar_routines`` into this step; until then their owner is checked against the stem
-    the key shares with its rule, and this list has to shrink when those tasks land.
+    **One key has no such read, and never will.** ``verbosity_min_statements`` is read by a
+    ``[thresholds.routine]`` metric rather than by a ``[lean]`` rule, and the test above owns
+    it. Every other owned key is now guarded by its own switch: the seven this list carried
+    until task 5.5 came off it when that task wired ``duplicates`` and ``similar_routines``
+    into the step, which is the shrinking the note here promised.
     """
     guarded = _guarded_reads(_source(lean))
     unwired = set(LEAN_KEY_OWNERS) - set(guarded)
 
     assert {key: LEAN_KEY_OWNERS[key] for key in guarded} == guarded
-    assert unwired == {"verbosity_min_statements", *_TOKEN_RULE_KEYS}
-    for key in sorted(_TOKEN_RULE_KEYS):
-        owner = LEAN_KEY_OWNERS[key]
-        assert owner in LEAN_RULE_SWITCHES, f"{key}'s rule {owner} is no rule of this block"
-        assert owner.split("_")[0] == key.split("_")[0], f"{key} is not {owner}'s key"
-
-
-_TOKEN_RULE_KEYS: Final[frozenset[str]] = frozenset(
-    {
-        "duplicates_min_lines",
-        "duplicates_ignore",
-        "similar_min_statements",
-        "similar_threshold",
-        "similar_min_family",
-        "similar_ignore",
-        "similar_name_ignore",
-    }
-)
-"""The keys of the two rules answered from token streams, which tasks 5.1-5.5 still owe."""
+    assert unwired == {"verbosity_min_statements"}
 
 
 def test_the_accuracy_floor_note_keeps_the_other_key_it_exists_to_be_told_apart_from() -> None:

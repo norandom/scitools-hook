@@ -30,7 +30,7 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-from scitools_hook.config.models import REFERENCE_RULES, Settings
+from scitools_hook.config.models import REFERENCE_RULES, TOKEN_RULES, Settings
 from scitools_hook.errors import ConfigError, GateError
 from scitools_hook.models.cache import CachePaths
 from scitools_hook.models.understand import Availability, Feature, FeatureReport
@@ -49,6 +49,39 @@ FEATURES_FILE: Final = "features.json"
 
 PROBE_METRIC: Final = "CountGlobalsModified"
 """One plugin metric, asked for by lookup: the build either knows it or it does not."""
+
+DUPLICATE_METRIC: Final = "DuplicateLinesOfCode"
+"""Understand's own duplicate-lines metric, asked for by lookup (lean-code req 5.6).
+
+Probed rather than assumed, and the probe is the only way to know: the solution that computes
+it is a plugin, so ``Metric.list`` never names it whatever the build. **Measured on Build
+1262 on 2026-09-11**, with ``~/scitools/plugins/Solutions/duplicates/`` present in the install
+tree and no user plugin directory on the machine at all: ``doctor`` reports the row
+``available``, which is ``Metric.lookup`` answering for a solution nothing has enabled. So an
+id this call does not know is a build where the threshold cannot be offered, and that is a
+different build from this one.
+"""
+
+NO_PLUGIN_METRIC: Final = f"Metric.lookup does not know {PROBE_METRIC}"
+
+NO_DUPLICATE_METRIC: Final = (
+    f"Metric.lookup does not know {DUPLICATE_METRIC}; the duplicates solution ships with "
+    "Understand and stays invisible until it is enabled in the Plugin Manager"
+)
+"""Why "not on this build" here may be a checkbox rather than a missing feature.
+
+"Not on this build" on its own would send an operator to the vendor for something the Plugin
+Manager may fix, which is the kind of confident wrong answer ``doctor`` exists to stop. What
+this sentence does **not** claim is that the checkbox is always the cause: no build has been
+measured that answers nothing here, so which way it fails is unknown and the wording says
+"may" rather than picking one.
+"""
+
+NO_CATALOGUE: Final = "no working API mode, so the catalogue was not asked"
+"""Why a catalogue probe can answer ``unverified``: this machine, not the build."""
+
+NO_LEXER_ANSWER: Final = "the catalogue answered with no lexer report"
+"""A worker that answered without the key this probe asked for; a defect, reported as one."""
 
 GIT_TIMEOUT_S: Final = 60.0
 """A git command in a one-file scratch repository takes milliseconds; this is a hang guard."""
@@ -72,7 +105,9 @@ def probe_features(cli: UndCli, api: ApiRunner | None, scratch: Path, build: str
             Feature.ACCURACY: accuracy,
             Feature.GENERATED_ARCHS: _probe_generated(cli, db),
             Feature.COMMIT_BEFORE: _probe_commit(cli, scratch, db),
-            Feature.PLUGIN_METRICS: _probe_plugin_metrics(api),
+            Feature.PLUGIN_METRICS: _looked_up(api, PROBE_METRIC, NO_PLUGIN_METRIC),
+            Feature.DUPLICATE_METRIC: _looked_up(api, DUPLICATE_METRIC, NO_DUPLICATE_METRIC),
+            Feature.LEAN_TOKENS: _probe_lexer(api, db),
             Feature.UNUSED_RULE: Availability(
                 state="available",
                 detail="reference-based; every build reports what calls what",
@@ -141,22 +176,59 @@ def _probe_commit(cli: UndCli, scratch: Path, db: Path) -> Availability:
     return Availability(state="available")
 
 
-def _probe_plugin_metrics(api: ApiRunner | None) -> Availability:
-    """Whether ``Metric.lookup`` finds a metric ``Metric.list`` never names (requirement 5.1)."""
+def _looked_up(api: ApiRunner | None, metric: str, absent: str) -> Availability:
+    """Whether ``Metric.lookup`` knows one id, which is the whole of two probes (5.1, 5.6).
+
+    ``Metric.list(kind)`` does not name a metric a plugin computes -- measured on Build 1262,
+    the Python routine kind string answers 18 metrics and ``CountGlobalsModified`` is not
+    among them -- so the lookup is the only question that can be asked about one. Two features
+    ask it about two ids and differ in nothing else, and ``absent`` is that difference: the
+    sentence an operator reads when the build does not know the id, which for the duplicates
+    solution names the Plugin Manager and for the plugin family names nothing to go and look
+    at.
+
+    Required rather than defaulted, because a plausible default would let either call site be
+    deleted with the suite green and the wrong sentence printed.
+    """
     if api is None:
-        return Availability(
-            state="unverified", detail="no working API mode, so the catalogue was not asked"
-        )
+        return Availability(state="unverified", detail=NO_CATALOGUE)
     try:
-        answer = api.run("catalogue", {"kinds": [], "lookup": [PROBE_METRIC]})
+        answer = api.run("catalogue", {"kinds": [], "lookup": [metric]})
     except GateError as refused:
         return _refused(refused)
     found = answer.get("lookup")
-    known = isinstance(found, dict) and found.get(PROBE_METRIC) is not None
+    known = isinstance(found, dict) and found.get(metric) is not None
     return Availability(
         state="available" if known else "not on this build",
-        detail="" if known else f"Metric.lookup does not know {PROBE_METRIC}",
+        detail="" if known else absent,
     )
+
+
+def _probe_lexer(api: ApiRunner | None, db: Path) -> Availability:
+    """Whether this build's file entities answer ``Ent.lexer(False)`` (lean-code req 9.2).
+
+    The duplicate-block and similar-routine rules are decided from a lexical pass and from
+    nothing else -- no reference, no metric, no accuracy figure -- so this one question is
+    the whole of what a configuration enabling either of them needs the build to offer.
+
+    It is asked of ``doctor``'s own scratch database, the one-file project the analysis probe
+    has just built and analysed, and never of the operator's own databases. The count of
+    lexemes decides rather than a bare success: a build whose lexer answered an empty stream
+    would read as available on a boolean, and the two rules would then report nothing on
+    every run while looking as though they had looked.
+    """
+    if api is None:
+        return Availability(state="unverified", detail=NO_CATALOGUE)
+    try:
+        answer = api.run("catalogue", {"kinds": [], "lexer_probe": str(db)})
+    except GateError as refused:
+        return _refused(refused)
+    read = answer.get("lexer_probe")
+    if not isinstance(read, dict):
+        return Availability(state="not on this build", detail=NO_LEXER_ANSWER)
+    if not read.get("lexemes"):
+        return Availability(state="not on this build", detail=str(read.get("detail", "")))
+    return Availability(state="available")
 
 
 def _refused(failed: GateError) -> Availability:
@@ -225,6 +297,7 @@ ASKED_BY: Final[dict[str, Feature]] = {
     "analysis.accuracy_floor": Feature.ACCURACY,
     "structure.unused_routines": Feature.UNUSED_RULE,
     **{f"lean.{rule}": Feature.LEAN_REFERENCES for rule in REFERENCE_RULES},
+    **{f"lean.{rule}": Feature.LEAN_TOKENS for rule in TOKEN_RULES},
 }
 """Configuration key -> the feature it needs the build to offer (requirement 1.2).
 
@@ -256,6 +329,7 @@ def asked_features(settings: Settings) -> dict[str, Feature]:
         "analysis.accuracy_floor": settings.analysis.accuracy_floor is not None,
         "structure.unused_routines": settings.structure.unused_routines is not None,
         **{f"lean.{rule}": getattr(settings.lean, rule) is not None for rule in REFERENCE_RULES},
+        **{f"lean.{rule}": getattr(settings.lean, rule) is not None for rule in TOKEN_RULES},
     }
     return {key: ASKED_BY[key] for key, on in enabled.items() if on}
 

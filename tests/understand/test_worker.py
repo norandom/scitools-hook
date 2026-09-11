@@ -39,6 +39,7 @@ import pytest
 from api_fakes import (
     FakeArch,
     FakeDb,
+    FakeEnt,
     FakeMetrics,
     FakeMetrics8,
     FakeUnderstand,
@@ -49,6 +50,7 @@ from api_fakes import (
 )
 from worker_projects import (
     CLASS_KIND,
+    FILE_KIND,
     ROUTINE_KIND,
     SUBPROCESS_TIMEOUT_S,
     WORKER_PATH,
@@ -294,6 +296,96 @@ def test_catalogue_rejects_a_request_without_a_list_of_kinds(
     error = envelope(worker.dispatch("catalogue", request_body))
     assert error["type"] == "BadRequest"
     assert "kinds" in error["message"]
+
+
+# --- the lexer probe the token rules need (lean-code requirement 9.2) --------------
+#
+# `Feature.LEAN_TOKENS` is measured rather than assumed: the duplicate-block and
+# similar-routine rules read `Ent.lexer(False)` and nothing else, so what decides them is
+# whether a file entity of this build answers one. The probe rides the `catalogue`
+# operation because that is where `doctor` already asks the build a question it has no
+# database for; this half is the one that does need one, and it opens it, reads one file
+# and closes it. The probe itself lives in `worker_lean`, with every other lean-code
+# measurement and for the reason `worker.LEAN_PATH` records, so what is driven here is the
+# whole route: the request key, the path load, the database and the answer.
+
+PROBE_TOKENS = (("Keyword", "def", 1), ("Identifier", "probe", 1), ("Literal", "1", 2))
+"""Three tokens over two lines: what `doctor`'s own one-routine scratch file lexes to."""
+
+
+def lexing_db(tokens: object = PROBE_TOKENS) -> FakeDb:
+    """A database holding one file entity whose lexer answers ``tokens``.
+
+    Keyed by :data:`worker_projects.FILE_KIND`, the suite's own spelling of the kind string,
+    rather than by ``worker_lean.LEXER_PROBE_KIND``. Keyed by the constant it is meant to pin,
+    the fixture would follow every edit of it and pin nothing: the probe could be pointed at
+    any kind string at all and this database would rename itself to match.
+    ``test_worker_lean_tokens`` holds that constant to the one the snapshot reads files with.
+    """
+    ent = FakeEnt(path="probe.py", qualified="probe.py", tokens=tokens)  # type: ignore[arg-type]
+    return FakeDb(entities={FILE_KIND: [ent]})
+
+
+def lexer_probe(monkeypatch: pytest.MonkeyPatch, db: FakeDb) -> dict[str, object]:
+    """Run the probe against ``db`` and answer the ``lexer_probe`` half of the document."""
+    api = FakeUnderstand(db=db, metrics=FakeMetrics())
+    install(monkeypatch, api)
+    answer = worker.dispatch("catalogue", {"kinds": [], "lexer_probe": "/tmp/probe.und"})
+    assert "error" not in answer, answer
+    assert db.closed, "the probe left the database open"
+    return answer["lexer_probe"]  # type: ignore[return-value]
+
+
+def test_a_build_whose_file_entities_lex_answers_the_tokens_it_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The count and not a bare flag: a build that answered an empty stream said nothing."""
+    assert lexer_probe(monkeypatch, lexing_db()) == {"lexemes": 3, "detail": ""}
+
+
+def test_a_file_whose_lexer_refuses_is_reported_in_the_builds_own_words(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ent.lexer`` documents ``UnderstandError``; an operator gets the sentence it raised."""
+    read = lexer_probe(monkeypatch, lexing_db(tokens=None))
+
+    assert read["lexemes"] == 0
+    assert "unable to lex probe.py" in str(read["detail"])
+
+
+def test_a_database_with_no_file_in_it_says_that_rather_than_no_lexer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing to lex is not "this build cannot lex", and the two must not read alike."""
+    read = lexer_probe(monkeypatch, FakeDb())
+
+    assert read["lexemes"] == 0
+    assert "no file" in str(read["detail"])
+
+
+def test_a_catalogue_request_without_the_probe_opens_no_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe is a key of the request, so every other catalogue call costs what it did."""
+    api = FakeUnderstand(db=lexing_db(), metrics=FakeMetrics({ROUTINE_KIND: ["CountLineCode"]}))
+    install(monkeypatch, api)
+
+    answer = worker.dispatch("catalogue", {"kinds": [ROUTINE_KIND]})
+
+    assert api.opened == []
+    assert "lexer_probe" not in answer
+
+
+def test_a_lexer_probe_that_is_not_a_database_path_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``null`` is a malformed request, not the same as omitting the key."""
+    install(monkeypatch, FakeUnderstand(db=lexing_db(), metrics=FakeMetrics()))
+
+    error = envelope(worker.dispatch("catalogue", {"kinds": [], "lexer_probe": None}))
+
+    assert error["type"] == "BadRequest"
+    assert "lexer_probe" in error["message"]
 
 
 PLUGIN_TAGS = {

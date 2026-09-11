@@ -21,7 +21,7 @@ from doctor_stubs import UndAnswers, install, isolated_env, options, seam
 from scitools_hook.cli.doctor import NO_PROBE, NOT_CHECKED, render_report
 from scitools_hook.models.understand import Feature, FeatureReport
 from scitools_hook.runner.doctor import run_doctor
-from scitools_hook.understand.features import FEATURES_FILE
+from scitools_hook.understand.features import FEATURES_FILE, NO_CATALOGUE, NO_LEXER_ANSWER
 
 ARCH_LISTING = (
     "Directory Structure   active\nGit Stability         available\nGit Owner             available"
@@ -57,7 +57,7 @@ def offered(tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog, 
 def test_a_build_that_answers_every_command_offers_every_feature(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """The 8.0 shape: five features measured by running the thing that needs them, and two
+    """The 8.0 shape: seven features measured by running the thing that needs them, and two
     recorded as available on every build because references are what Understand *is*."""
     features = offered(
         tmp_path, git_repo, command_log, und=understand_8(), mode="understand8", api="stub"
@@ -71,6 +71,8 @@ def test_a_build_that_answers_every_command_offers_every_feature(
         Feature.PLUGIN_METRICS: "available",
         Feature.UNUSED_RULE: "available",
         Feature.LEAN_REFERENCES: "available",
+        Feature.LEAN_TOKENS: "available",
+        Feature.DUPLICATE_METRIC: "available",
     }
 
 
@@ -198,7 +200,7 @@ def test_a_probe_that_never_ran_stores_nothing_and_says_so(
 def test_the_report_prints_one_row_per_feature(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """Requirement 1.1: six rows, named so an operator can match them to the documentation."""
+    """Requirement 1.1: one row per feature, named so an operator can match them to the docs."""
     home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
     env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
 
@@ -212,41 +214,44 @@ def test_the_report_prints_one_row_per_feature(
         "feature plugin metrics",
         "feature unused rule",
         "feature lean references",
+        "feature lean tokens",
+        "feature duplicate metric",
     ):
         assert label in text, label
-    assert text.count("available") >= 7
+    assert text.count("available") >= 9
 
 
-def test_a_feature_with_no_probe_yet_says_so_rather_than_blaming_the_test_seam(
+def test_a_feature_the_report_does_not_answer_says_it_was_not_measured(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
     """The rows follow the `Feature` enum and the answers follow a stored report.
 
-    The two disagree whenever a capability arrives before the task that probes it -- the
-    lean-code family's three -- and the row used to answer "the fixture seam starts no
-    processes" for them, on a build that had just been probed for six other features. That is
-    a confident wrong answer in the one command whose whole job is to say what is true.
+    The two can legitimately disagree -- a report written by an older version of the Gate has
+    no entry for a feature added since -- and the row used to answer "the fixture seam starts
+    no processes" for that, on a build that had just been probed for every other feature.
+    That is a confident wrong answer in the one command whose whole job is to say what is
+    true.
 
-    **Deliberately temporary, and one task has now ended half of it.** Task 4.3 recorded
-    `LEAN_REFERENCES` as available on every build, so its row is asserted as `available` in
-    the test above and is gone from the list below. The two token features are still
-    unprobed; task 5.5 writes the lexer and duplicate-metric probes, and whoever lands it
-    deletes this test, because nothing will then be left for it to be about. What must
-    survive that deletion is the rule it pins, which is why the rule is written here: a
-    feature the report does not answer says it was not measured, and never blames the
-    fixture seam.
+    Task 5.5 wrote the last two probes, so no shipped feature is unanswered any more and the
+    disagreement has to be *made* rather than found: one entry is taken out of a full report
+    and the row is read back. What survives is the rule, which is the half that was always
+    the point -- a feature the report does not answer says it was not measured, and never
+    blames the fixture seam.
     """
     home = install(tmp_path / "scitools", und=understand_8(), mode="understand8", api="stub")
     env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
+    report = run_doctor(options(git_repo().path, env, command_log))
+    assert report.understand.features is not None, f"no probe ran; problems: {report.problems}"
+    del report.understand.features.features[Feature.LEAN_TOKENS]
 
-    text = render_report(run_doctor(options(git_repo().path, env, command_log)))
+    text = render_report(report)
 
-    for label in ("feature lean tokens", "feature duplicate metric"):
-        assert f"{label}: {NO_PROBE}" in text, label
-        # Narrowed to the feature rows on purpose: `NOT_CHECKED` is still the right answer for
-        # the interpreter row when no pin was read, and asserting its absence from the whole
-        # report would fail this test for a row that has nothing to do with features.
-        assert f"{label}: {NOT_CHECKED}" not in text, label
+    assert f"feature lean tokens: {NO_PROBE}" in text
+    # Narrowed to the feature row on purpose: `NOT_CHECKED` is still the right answer for the
+    # interpreter row when no pin was read, and asserting its absence from the whole report
+    # would fail this test for a row that has nothing to do with features.
+    assert f"feature lean tokens: {NOT_CHECKED}" not in text
+    assert "feature duplicate metric: available" in text
 
 
 def test_a_row_for_a_missing_feature_carries_the_builds_reason(
@@ -283,14 +288,14 @@ def test_the_test_seam_says_unverified_rather_than_guessing(
 
     text = render_report(run_doctor(options(git_repo().path, env, command_log)))
 
-    assert text.count("unverified") >= 6
+    assert text.count("unverified") >= 8
     assert "runs no Understand at all" in text
 
 
 def test_an_installation_that_never_probed_prints_no_feature_rows(
     tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
 ) -> None:
-    """Six `unknown` rows would say the same nothing six times over."""
+    """Nine `unknown` rows would say the same nothing nine times over."""
     no_analysis = UndAnswers(analysis_rc=2, analysis_text="No Server Response")
     home = install(tmp_path / "scitools", und=no_analysis)
     env = isolated_env(tmp_path, SCITOOLS_HOME=str(home))
@@ -298,3 +303,100 @@ def test_an_installation_that_never_probed_prints_no_feature_rows(
     text = render_report(run_doctor(options(git_repo().path, env, command_log)))
 
     assert "feature " not in text
+
+
+# --- the two probes the token rules stand on (task 5.5) -------------------------------
+#
+# `LEAN_TOKENS` is what the duplicate-block and similar-routine rules need and
+# `DUPLICATE_METRIC` is the optional metric of requirement 5.6; neither is inferred from a
+# build number. Each case below moves ONE of the two and asserts that the other did not move,
+# because a stub that failed every catalogue question at once would pass either assertion.
+
+
+def test_a_build_whose_lexer_refuses_does_not_offer_the_token_rules(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """`Ent.lexer` is the whole of what the two token rules read, so its refusal is theirs."""
+    features = offered(
+        tmp_path, git_repo, command_log, und=understand_8(), mode="no_lexer", api="stub"
+    )
+
+    tokens = features.features[Feature.LEAN_TOKENS]
+    assert tokens.state == "not on this build"
+    assert "unable to lex probe.py" in tokens.detail
+    assert features.features[Feature.DUPLICATE_METRIC].state == "available"
+
+
+def test_a_build_without_the_duplicates_solution_names_the_plugin_manager(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """Requirement 5.6: the solution ships in the install tree and is invisible until enabled.
+
+    So "not on this build" on its own would send an operator to the vendor for something a
+    checkbox fixes, which is why the detail has to name where the checkbox is.
+    """
+    features = offered(
+        tmp_path, git_repo, command_log, und=understand_8(), mode="no_duplicates", api="stub"
+    )
+
+    metric = features.features[Feature.DUPLICATE_METRIC]
+    assert metric.state == "not on this build"
+    assert "Plugin Manager" in metric.detail
+    assert features.features[Feature.LEAN_TOKENS].state == "available"
+
+
+def test_a_build_that_answers_no_catalogue_at_all_offers_neither(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """The 6.5 shape: nothing answers the catalogue, and both probes say so rather than yes.
+
+    The interpreter answers the ping document to every operation, so the answer comes back
+    carrying neither the lookup nor the lexer report. An absent lexer report is the Gate's own
+    defect rather than a missing capability, and the detail says that rather than reading the
+    missing key as a lexer that returned nothing.
+    """
+    features = offered(tmp_path, git_repo, command_log, api="stub")
+
+    tokens = features.features[Feature.LEAN_TOKENS]
+    assert tokens.state == "not on this build"
+    assert tokens.detail == NO_LEXER_ANSWER
+    metric = features.features[Feature.DUPLICATE_METRIC]
+    assert metric.state == "not on this build"
+    assert "Plugin Manager" in metric.detail
+
+
+def test_a_probe_that_could_not_be_asked_is_unverified_rather_than_missing(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """No working API mode is this machine's problem, not a statement about the build.
+
+    A configuration asking for something unverified fails closed, so the two states must not
+    be confused: `not on this build` says the build lacks the feature and is final. This
+    installation decides no API mode at all, so the probes have nothing to ask and say so.
+    """
+    features = offered(tmp_path, git_repo, command_log, und=understand_8(), mode="refusing")
+
+    for feature in (Feature.LEAN_TOKENS, Feature.DUPLICATE_METRIC, Feature.PLUGIN_METRICS):
+        found = features.features[feature]
+        assert found.state == "unverified", feature
+        assert found.detail == NO_CATALOGUE, feature
+
+
+def test_a_catalogue_that_died_is_reported_in_the_words_it_died_with(
+    tmp_path: Path, git_repo: MakeGitRepo, command_log: FakeCommandLog
+) -> None:
+    """A worker that exits non-zero raises rather than answering, and every probe that asked
+    it has to answer from the exception instead of from a document it never received.
+
+    Distinct from the case above: there *is* a working API mode here, the operation simply
+    died, so ``unverified`` would be the wrong word -- nothing about this machine stopped the
+    question being asked. An operator gets what the interpreter printed on the way down.
+    """
+    features = offered(
+        tmp_path, git_repo, command_log, und=understand_8(), mode="refusing_catalogue", api="stub"
+    )
+
+    for feature in (Feature.LEAN_TOKENS, Feature.DUPLICATE_METRIC, Feature.PLUGIN_METRICS):
+        found = features.features[feature]
+        assert found.state == "not on this build", feature
+        assert "the catalogue operation died" in found.detail, feature
