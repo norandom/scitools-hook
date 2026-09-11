@@ -29,7 +29,6 @@ from typing import Final
 import pytest
 from similar_shapes import (
     BASE,
-    DEFAULTS,
     MIN_STATEMENTS,
     THRESHOLD,
     Routine,
@@ -270,7 +269,7 @@ ASYMMETRIC: Final[tuple[tuple[int, ...], tuple[int, ...]]] = (
 0.857 one way round and 0.786 the other, found by search over random shapes and pinned here
 because the property is what the test below is about: ``SequenceMatcher`` builds its index on
 the *second* sequence, so its ratio is not symmetric, and a threshold of 0.8 falls between
-these two numbers. They share a four-token run, so the candidate index offers the pair.
+these two numbers.
 """
 
 
@@ -371,10 +370,11 @@ def test_a_pair_whose_lengths_cannot_reach_the_threshold_is_never_matched(
     """The length band is exact, so it changes no answer -- only whether it is paid for.
 
     Twenty tokens against forty can match at most twenty, which is 0.67 whatever the tokens
-    are, and the shorter shape is a prefix of the longer one so the shingle index offers the
-    pair. The finding is absent either way, and the absence of an output proves nothing about
-    whether the work ran: a call spy on the matcher is what says the band refused the pair
-    before it was scored, and the in-band row is the case where the same spy fires.
+    are, and the shorter shape is a prefix of the longer one, so nothing but the band stands
+    between the pair and a score. The finding is absent either way, and the absence of an
+    output proves nothing about whether the work ran: a call spy on the matcher is what says
+    the band refused the pair before it was scored, and the in-band row is the case where the
+    same spy fires.
     """
     long_form = Routine("src/app/a.py", "a.run", BASE)
     short_form = Routine("src/app/b.py", "b.run", BASE[:length])
@@ -394,12 +394,11 @@ def test_a_pair_whose_lengths_cannot_reach_the_threshold_is_never_matched(
 
 
 APART_TOKENS: Final[tuple[int, ...]] = (*BASE[:4], *range(900, 936))
-"""Forty tokens sharing a four-token run with :data:`BASE` and nothing else.
+"""Forty tokens sharing four with :data:`BASE` and nothing else.
 
-The candidate index offers the pair -- they share the shingle ``(0, 1, 2, 3)`` -- and the
-length band admits it, two shapes of forty tokens being the only kind that can reach a
-threshold of 1.0. What refuses it is the token bound: four tokens in common out of forty and
-forty is ``2 * 4 / 80``, so the pair cannot reach 0.10, let alone 0.90.
+The length band admits the pair, two shapes of forty tokens being the only kind that can
+reach a threshold of 1.0. What refuses it is the token bound: four tokens in common out of
+forty and forty is ``2 * 4 / 80``, so the pair cannot reach 0.10, let alone 0.90.
 """
 
 
@@ -415,17 +414,19 @@ def test_a_pair_whose_tokens_cannot_reach_the_threshold_is_never_matched(
 
     ``SequenceMatcher`` matches a common *subsequence*, which can use a token no more often
     than the shorter shape holds it, so the multiset overlap is an exact ceiling on the
-    matched count and therefore on the ratio. Both rows are in the length band and both are
-    offered by the shingle index; the finding is absent either way on the first row, and the
-    absence of an output proves nothing about whether the work ran. A call spy on the matcher
-    is what says the bound refused the pair before it was scored.
+    matched count and therefore on the ratio. Both rows are in the length band; the finding is
+    absent either way on the first row, and the absence of an output proves nothing about
+    whether the work ran. A call spy on the matcher is what says the bound refused the pair
+    before it was scored.
 
-    **The measurement this guard exists for**, on this repository's own whole-project index
-    of 2344 considered routines at the shipped threshold of 0.9: of the 2 745 996 pairs,
-    837 303 pass the length band and **5191 pass this one, 0.62 per cent of them**. A pass
-    over every affected routine measures **48.7 s with this bound and 900.8 s without it, for
-    the same 158 findings** -- the difference between a whole-project run task 6.3 can use and
-    one that did not finish in ten minutes.
+    **The measurement this guard exists for.** Re-counted for task 5.9 on this repository's
+    own whole-project index -- 6867 indexed routines, **2405 considered** at the shipped
+    ``similar_min_statements``, read back from the after snapshot of a real ``check --all`` at
+    commit ``6c2a546`` -- at the shipped threshold of 0.9: of the 2 890 810 pairs, 878 828
+    pass the length band and **5298 pass this one, 0.6 per cent of them**. A whole-project
+    pass over that snapshot takes **24.44 s** with this bound, best of three; task 5.8
+    measured the counterfactual on its own tree at 900.8 s with the bound removed and the band
+    left standing, for the findings that tree reported either way.
     """
     long_form = Routine("src/app/a.py", "a.run", BASE)
     other = Routine("src/app/b.py", "b.run", other_shape)
@@ -496,41 +497,35 @@ def test_a_long_routine_built_from_a_small_token_alphabet_is_still_compared() ->
     assert [finding.details["similarity"] for finding in findings] == [pytest.approx(0.96)]
 
 
-def test_a_candidate_sharing_many_shingles_is_offered_once() -> None:
-    """The dedupe is a cost guard, so no finding can say whether it ran.
+NO_COMMON_RUN: Final[tuple[tuple[int, ...], tuple[int, ...]]] = (
+    (0, 0, 0, 0, 0, 0),
+    (0, 0, 0, 1, 0, 0, 0),
+)
+"""A pair above the shipped threshold that shares no run of four tokens.
 
-    Two identical forty-token routines share thirty-seven windows, and every one of them puts
-    the same routine in the candidate list. The answer is one family either way -- the score
-    memo answers the repeats -- so the only artefact that can fail if the dedupe goes is this
-    one, reading the candidate stream itself.
+Six tokens against seven, matching on six: ``2 * 6 / 13`` is **12/13, about 0.923**, which is
+above the shipped 0.9. The 4-gram candidate index this rule used to carry offered the pair to
+nobody -- the first shape's only window is ``(0, 0, 0, 0)`` and the second holds none of it --
+so the family below was silently lost, and that was the rule's one approximation. This is the
+witness task 5.9's exhaustive search named as the highest ratio such a pair can reach.
+"""
+
+
+def test_a_pair_sharing_no_four_token_run_is_still_compared() -> None:
+    """The rule is lossless: the two exact bounds are the only filters (req 5.2, 9.5).
+
+    Both shapes pass the length band (``2 * 6 / 13`` is 0.923) and the token bound (six shared
+    tokens of the shorter shape's six), so nothing that bounds ``matched`` can refuse them.
+    Only a candidate prefilter could, and there is none: this case is the one that fails the
+    moment one is put back, whatever shingles it is built from.
     """
-    first = Routine("src/app/a.py", "a.run", BASE)
-    other = Routine("src/app/b.py", "b.run", BASE)
-    after = snap([first, other])
-    assert after.tokens is not None
-    considered = similar._considered(after, after.tokens, DEFAULTS)
-
-    graph = similar._Graph(considered, DEFAULTS.threshold)
-    offered = list(graph._candidates(considered[key_of(first).token]))
-
-    assert [item.longname for item in offered] == ["b.run"]
-
-
-def test_a_shape_shorter_than_one_shingle_can_still_find_its_twin() -> None:
-    """A routine with no four-token run is still a routine, and its twin is still its twin.
-
-    Three tokens yield no window of four at all, so a shingle index built from windows alone
-    would offer this routine no candidate and it would never be compared with anything. The
-    whole shape stands as its own shingle instead, and the pair reports.
-    """
-    tiny = (7, 8, 9)
-    first = Routine("src/app/a.py", "a.run", tiny)
-    other = Routine("src/app/b.py", "b.run", tiny)
+    first = Routine("src/app/a.py", "a.run", NO_COMMON_RUN[0])
+    other = Routine("src/app/b.py", "b.run", NO_COMMON_RUN[1])
 
     findings, _ = run(snap([first, other]), affected=[first])
 
-    assert len(findings) == 1
-    assert findings[0].details["similarity"] == pytest.approx(1.0)
+    assert [finding.details["family_size"] for finding in findings] == [2]
+    assert findings[0].details["similarity"] == pytest.approx(12 / 13)
 
 
 # --- the construct the hint catalogue reads -----------------------------------------------
@@ -995,7 +990,16 @@ def test_a_family_the_change_never_touched_is_never_scored(
 
     The answer is one finding either way -- a whole-project pass would produce this finding
     and no other -- so the absence of a second finding proves nothing about whether the work
-    ran. A call spy on the scorer is what says so: the untouched pair is never compared.
+    ran. A call spy on the scorer is what says so, and the exact set it records is asserted
+    because two things about this pass are decided in it:
+
+    * **The untouched pair is never compared.** Every pair offered is incident to a member of
+      the family the change reached, so the cost is the family's size times the project's
+      routines, not the project's routines squared. That is what task 5.9 left standing when
+      it deleted the candidate index, and it is the whole of requirement 9.5's cap now.
+    * **A routine is offered to itself**, and :func:`similar._score` refuses it as nested.
+      The scan carries no self guard because such a guard could decide nothing, so the
+      self-pairs are in this set rather than absent from it.
     """
     touched = [Routine(f"src/app/a{number}.py", f"a{number}.run", BASE) for number in range(2)]
     untouched = [
@@ -1013,17 +1017,25 @@ def test_a_family_the_change_never_touched_is_never_scored(
     findings, _ = run(snap([*touched, *untouched]), affected=[touched[0]])
 
     assert len(findings) == 1
-    assert compared == [("a0.run", "a1.run")]
+    assert set(compared) == {
+        ("a0.run", "a0.run"),
+        ("a0.run", "a1.run"),
+        ("a0.run", "b0.run"),
+        ("a0.run", "b1.run"),
+        ("a1.run", "a1.run"),
+        ("a1.run", "b0.run"),
+        ("a1.run", "b1.run"),
+    }
 
 
 @pytest.mark.parametrize("routines", [1000])
 def test_the_whole_project_scan_is_fast_at_a_thousand_routines(routines: int) -> None:
     """Requirement 9.5: the pass follows the change through the project, not every pair.
 
-    A thousand routines sharing a prologue and an epilogue, so every one of them is a
-    shingle candidate for every other and the length band lets them all through: the work is
-    decided by what the change reaches and by nothing else. All-pairs scoring is half a
-    million ``SequenceMatcher`` runs here and takes minutes.
+    A thousand routines sharing a prologue and an epilogue, every one of them offered to
+    every member the walk discovers: the work is decided by what the change reaches and by
+    nothing else. All-pairs scoring is half a million ``SequenceMatcher`` runs here and takes
+    minutes.
     """
     project = [
         Routine(

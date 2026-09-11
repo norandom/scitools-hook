@@ -46,83 +46,44 @@ own ground:
 
 **What the pass costs, which requirement 9.5 caps.** Scoring every pair of routines is
 quadratic: a thousand routines is 500 500 ``SequenceMatcher`` runs, **measured at 29.9 s** on
-the shapes below. Four things keep it off that curve, and only the first is an approximation.
+the shapes below. Three things keep it off that curve and **not one of them is an
+approximation**: the first two are exact ceilings on how much two shapes can match, so a pair
+either of them refuses could not have reached the threshold whatever its contents, and the
+third decides which routines are walked rather than which pairs are comparable. This rule
+misses no family, with no caveat and no bound to record.
 
-**The numbers below were taken on this repository's own whole-project index** -- 312 files,
-6803 indexed routines, **2344 of them considered** at the shipped ``similar_min_statements``
--- read back from a real extraction, at the shipped threshold of 0.9. They replace an earlier
-account of this pass that was taken on the synthetic fixture alone and was wrong about which
-filter does the work.
+**It could until task 5.9, and what that task deleted is worth recording.** Candidates came
+from a 4-gram shingle index over the whole project's shapes: two routines sharing no run of
+four normalised tokens were never scored. It was the rule's one approximation, forty lines of
+this docstring bounded what it could lose, and on real code it filtered nothing. The
+vocabulary maps every identifier to one token and every literal to another, so the alphabet
+over this repository is 62 symbols and a four-token run is the language's own punctuation --
+task 5.8 measured the median routine offered 2341 of the other 2343, 99.22 per cent of the
+pairs admitted. Deleting it took the bound, the exhaustive search behind it and the index
+with it, and made the rule lossless outright.
 
-1. **Candidates come from a 4-gram shingle index** over the whole project's shapes, built once
-   and linear in the project's tokens. Two routines that share no run of four normalised
-   tokens are never scored. That is an approximation in the safe direction -- it can only make
-   the rule miss a family, never invent one -- and **how much it can miss is bounded rather
-   than asserted**, because the tempting assertion (that a pair with no common four-token run
-   is not a renamed twin) is false at the thresholds this rule ships near.
+**The numbers below are this repository's own whole-project index at the shipped threshold of
+0.9**: 6867 indexed routines, **2405 of them considered** at the shipped
+``similar_min_statements``, 2 890 810 pairs. The method, so that they can be re-taken: the
+after snapshot of a real ``scitools-hook check --all`` at commit ``6c2a546`` was written out
+as JSON with its 7511 affected keys beside it, and :func:`find_similar_routines` was replayed
+over that one input. Every figure here that names no other source is that tree, those
+routines and those keys.
 
-   **On real Python it filters nothing, and that is measured rather than feared.** The
-   vocabulary maps every identifier to one token and every literal to another, so the index's
-   alphabet on this project is 61 symbols and a four-token run is the language's own
-   punctuation. The median routine is offered **2341 of the other 2343** as candidates; a
-   whole-project pass *offers* every one of the 2 724 564 pairs, of which the two bounds below
-   refuse all but about five thousand.
+**What the deletion did, measured back to back on that input**, best of three each: **48.95 s
+with the index (49.02, 48.95, 49.85) against 24.44 s without it (25.01, 24.44, 25.19)** -- and
+**164 findings both ways, identical** in path, line, family size, similarity to twelve decimal
+places, sorted member list and construct. Half the pass bought none of its output.
 
-   **The index is not cheap, and it is kept only until a task owns removing it.** Measured
-   back to back on this repository's whole-project index: 48.2 s with it, 25.8 s with
-   ``_candidates`` scanning the considered map instead and no postings built, the same 161
-   findings both ways. So it costs roughly **46 per cent of the pass to remove 0.78 per cent
-   of the pairs**, and it is the rule's only approximation. Removing it makes the rule
-   lossless outright and faster; **task 5.9 owns that**. Until then, **nothing in the cost of
-   this pass may be argued from it** -- which an earlier draft of this docstring did in one
-   direction and a later one did in the other.
-
-   A matching block of four consecutive tokens *is* a shared shingle, so every matching block
-   of a pair the index never offers is three tokens or shorter. With ``M`` matched tokens in
-   ``B`` blocks that gives ``B >= ceil(M / 3)``; consecutive blocks are separated by at least
-   one unmatched token on one side, so ``la + lb >= 2M + B - 1`` and
-
-   .. code-block:: text
-
-       ratio = 2M / (la + lb)  <=  2M / (2M + ceil(M / 3) - 1)
-
-   The bound is **tight**: ``k`` blocks of three written back to back in one shape and one
-   fresh token apart in the other reach it exactly, measured here at 0.923 for ``k`` = 2,
-   0.900 for 3, 0.889 for 4 and 0.870 for 10, falling towards **6/7, about 0.857**, as the
-   shapes lengthen -- and ``2M / (2M + ceil(M / 3) - 1)`` is highest at ``M`` = 6, which is
-   that row. Exhausting the pairs of shapes of five to eight tokens over a three-token
-   alphabet that the index drops -- every pair whose two lengths can reach 12/13 at all, so
-   the admitted length pairs are (5,5), (6,6), (6,7), (7,7), (7,8) and (8,8) and the rest are
-   ruled out unscored by the exact length band of point 2 below -- finds nothing above it. So
-   **12/13, about 0.9230769, is the highest ratio any pair the index drops can have**, and
-   the search attains it at the six-token ``(0, 0, 0, 0, 0, 0)`` against the seven-token
-   ``(0, 0, 0, 1, 0, 0, 0)``.
-
-   No pair count is quoted here on purpose. Two independent runs of this search reported
-   counts differing by about threefold, because the total depends entirely on which symmetry
-   reduction the run applies -- whether the first shape is taken in first-occurrence canonical
-   form, whether it is required to start at zero, and whether ordered or unordered pairs are
-   counted. All three runs agreed on the three things that carry the argument: the admitted
-   bands above, the maximum, and the witness. A number nobody can reproduce without also
-   being told the reduction is not evidence, and this paragraph's whole posture is to record
-   a bound rather than to assert past one.
-
-   So the filter is **lossless above 0.923** at any length, and what it can lose below that is
-   a function of how much of the pair matches: the bound above is at most 0.9 once ``M`` is
-   nine or more. At the shipped threshold of 0.9 the only families it can drop are therefore
-   held together by a pair matching on **nine tokens or fewer**, which a routine of
-   ``similar_min_statements`` statements does not have; at 0.8, which requirement 5.9 names as
-   the useful family threshold, the whole band down to 0.857 is reachable by long shapes and
-   real families are dropped silently. That is the limit, recorded rather than asserted past.
-2. **A length band refuses a pair outright**, and it is exact rather than heuristic:
+1. **A length band refuses a pair outright**, and it is exact rather than heuristic:
    ``SequenceMatcher.ratio()`` is ``2 * matched / (len(a) + len(b))`` and ``matched`` cannot
    exceed the shorter sequence, so a pair whose ``2 * min / (la + lb)`` is already below the
    threshold cannot reach it whatever its contents. No pair that could have been a family
-   member is lost here. It costs two integers, and on this project it admits **837 303 of the
-   2 745 996 pairs, 30.5 per cent** -- which at a measured 1.04 ms per ``SequenceMatcher`` run
-   over real shapes is most of a quarter-hour, and is the whole of why a ``check --all`` with
-   this rule on did not finish in ten minutes.
-3. **A token bound refuses the rest**, and it is exact for the same kind of reason.
+   member is lost here. It costs two integers, and on this project it admits **878 828 of the
+   2 890 810 pairs, 30.4 per cent** -- which at the 1.04 ms per ``SequenceMatcher`` run task
+   5.8 measured over real shapes is a quarter of an hour, and is the whole of why a
+   ``check --all`` with this rule on did not finish in ten minutes.
+2. **A token bound refuses the rest**, and it is exact for the same kind of reason.
    ``SequenceMatcher``'s matching blocks form a common *subsequence*, which can use a token no
    more often than the shorter shape holds it, so ``matched`` cannot exceed the two shapes'
    multiset overlap either. It reads the smaller routine's distinct tokens -- eighteen at this
@@ -130,20 +91,21 @@ filter does the work.
    less than scoring it would.
 
    **Measured over the whole of this repository, every routine affected**, which is what
-   ``check --all`` asks for: with the bound, **48.7 s and 5191 ``SequenceMatcher`` runs**;
-   with it removed and the length band left standing, **900.8 s and 831 694 runs**. Both
-   report the same **158** findings, to the family, the member and the weakest edge. That is
-   the losslessness argued above, measured rather than asserted: each bound is a ceiling on
-   ``matched``, so a pair either of them refuses could not have reached the threshold whatever
-   its contents.
+   ``check --all`` asks for: of the 2 890 810 pairs, the band above admits 878 828 and this
+   bound **5298 of those, 0.6 per cent**, which is the 24.44 s pass. Task 5.8 measured the
+   counterfactual on its own tree and its numbers are left as its own: with this bound removed
+   and the band left standing, **900.8 s and 831 694 runs** against 48.7 s, for the same
+   findings either way. That is the losslessness argued above, measured rather than asserted:
+   each bound is a ceiling on ``matched``, so a pair either of them refuses could not have
+   reached the threshold whatever its contents.
 
    Both live in :func:`_comparable`, cheapest first.
-4. **The walk follows the change through the project, not the project.** Only families that
+3. **The walk follows the change through the project, not the project.** Only families that
    an affected routine belongs to are ever reported (5.3), so the components are grown by
    breadth-first search from the affected routines rather than by unioning every pair in the
    project. The component reached is the same component a whole-project union would find --
    BFS crosses every edge incident to a discovered member -- and a project whose change
-   touches no family scores one round of candidates and stops.
+   touches no family offers each seed the considered map once and stops.
 
    **"The index follows the project, the work follows the change" is now true of both token
    rules, and it was not.** The duplicate-block rule always had it: it reads ``tokens.files``,
@@ -167,49 +129,49 @@ filter does the work.
    the two tables disagree.
 
 Measured on this machine over a synthetic project of **1000 routines of 46 tokens each**, all
-sharing an eight-token prologue and epilogue so that every routine is a shingle candidate for
-every other and the length band lets every pair through -- the **worst case** for the two
-filters, and the fixture the 29.9 s figure above was taken on. One affected routine, whose
-family is grown to the size in the first column:
+sharing an eight-token prologue and epilogue, so that every routine is offered to every member
+the walk discovers and the length band lets every pair through. One affected routine, whose
+family is grown to the size in the first column, best of three, the runs counted by a spy on
+``SequenceMatcher`` and the heap by ``tracemalloc``:
 
 =========================  =========  =========================  =========
 family the change is in    time       ``SequenceMatcher`` runs   peak heap
 =========================  =========  =========================  =========
-1 (no twin)                0.11 s     999                        7.5 MB
-2 (a plain twin)           0.17 s     1 997                      7.6 MB
-12 (the normalize shape)   0.78 s     11 922                     9.1 MB
+1 (no twin)                0.04 s     0                          3.0 MB
+2 (a plain twin)           0.05 s     2                          3.0 MB
+12 (the normalize shape)   0.16 s     132                        4.4 MB
 =========================  =========  =========================  =========
 
-Best of three. The shape those rows show is the promise: the work is the family's size times
-the *candidates*, and the project's size enters only through the candidate count. **That
-fixture's candidate count is 1000 because the fixture is built so that it is -- and a real
-project's is not a handful either**, which is the claim this paragraph used to make and which
-point 1 above now measures at 2341 of 2343. What holds a real project's cost down is the pair
-of exact bounds in points 2 and 3, not the candidate count; the fixture keeps its place as the
-guard against an accidental quadratic in the *walk*. The index the pass builds is linear in
-the project's tokens and is the whole of the 7.5 MB floor.
+**Re-taken for task 5.9, and the rows moved for two reasons that are worth telling apart.**
+Deleting the index took a linear-in-the-project's-tokens structure off the heap, which is the
+7.5 MB floor the old rows carried and this one does not. The runs column fell because the old
+table predates the token bound of point 2 and nobody re-took it: 46 tokens sharing sixteen
+cannot reach 0.9, so the bound refuses every non-twin pair here before it is scored, and what
+is left is the family's own edges. The shape the rows show is the promise either way: the work
+is the family's size times the project's considered routines, and a family of one pays one
+sweep of arithmetic. The fixture keeps its place as the guard against an accidental quadratic
+in the *walk*.
 
 ``test_the_whole_project_scan_is_fast_at_a_thousand_routines`` holds the second row under one
 second, which is loose on purpose -- it is a guard against an accidental quadratic, not a
 benchmark, and a tight bound on a shared machine is a flaky test.
 
-**What the whole project costs, measured end to end on this repository.** One change's worth
-of work -- a one-file change over the whole-project vertex set of 2344 routines -- is about
-0.3 s. A whole-project pass, where all 6669 affected keys seed walks and every one of the
-2 724 564 pairs is scored or refused, **takes 48.7 s**; the same pass with the token bound of
-point 3 removed takes 900.8 s for the same 158 findings.
+**What the whole project costs, measured end to end on this repository.** A whole-project
+pass, where all 7511 affected keys seed walks over the 2405 considered routines and every one
+of the 2 890 810 pairs is scored or refused, **takes 24.44 s**, best of three on the replayed
+snapshot described above.
 
 Through the CLI, with ``similar_routines = "warning"`` and everything else as shipped:
-``scitools-hook check --all`` **finishes in 1 min 14 s** including the analysis and both
-snapshot reads, and reports **161 families, 41 of them cross-file**, the largest thirteen
-routines at 0.905. Before task 5.8 the same command did not finish in ten minutes. A
-``check --files src/scitools_hook/analysis/lean/duplicates.py`` finishes in 31 s and names
+``scitools-hook check --all`` **finishes in 40 s** including the analysis and both snapshot
+reads, and reports **164 families, 42 of them cross-file**, the largest thirteen routines at
+0.905. Before task 5.8 the same command did not finish in ten minutes. A
+``check --files src/scitools_hook/analysis/lean/duplicates.py`` finishes in 32 s and names
 this module's ``_unreadable_note`` as that file's twin -- a routine in a file the change
 neither touched nor depends on, which is requirement 5.3 in one line.
 
 **The lowest similarity is a fact about the whole component, not about the pairs that
-happened to be walked first.** Every pair of members that shares a shingle and passes both
-bounds of :func:`_comparable` is scored exactly once, whichever member reaches it, so
+happened to be walked first.** Every pair of members that passes both bounds of
+:func:`_comparable` is scored exactly once, whichever member reaches it, so
 :attr:`_Family.weakest` is the minimum over *all* the family's edges and does not move with
 the order the affected set arrived in.
 
@@ -335,14 +297,6 @@ which is wrong advice rather than an error.
 hint answered with the example instead of the remedy.
 """
 
-SHINGLE: Final = 4
-"""The n-gram length of the candidate index: four normalised tokens.
-
-Short enough that two routines 90% alike share many of them, long enough that a shingle is
-not simply the language's punctuation. A shape shorter than this yields one shingle -- itself
--- so a routine is never left with no way of finding its own twin.
-"""
-
 _SHIPPED: Final = LeanRules()
 """The settings model's own numbers, so a caller with none in hand -- a test, a probe -- uses
 the shipped values rather than a second copy of them."""
@@ -446,7 +400,7 @@ def find_similar_routines(
     **Requirement 5.3 -- similarity decided over the whole project -- is met, and was not.**
     The vertex set is the whole-project token index rather than the entity table the check
     pipeline narrows to the change's files plus one dependency step; task 5.8 is what moved it
-    there, and the module docstring's point 4 carries the measurement on both sides.
+    there, and the module docstring's point 3 carries the measurement on both sides.
 
     A ``tokens`` of ``None`` is "the token pass was never asked for", never "this project has
     no twins", so it yields the run's one unavailable message and no findings (5.8).
@@ -543,7 +497,7 @@ def _routine(
     task 5.8 moved and what makes requirement 5.3 true of this rule: the entity table is
     narrowed to the change's files plus one dependency step, the index is whole-project, and
     while the floor was read off a record every routine outside that ring was left out of the
-    vertex set. The module docstring's point 4 carries the measurement.
+    vertex set. The module docstring's point 3 carries the measurement.
 
     The record is still *looked up*, and its absence is no longer a refusal: it carries the
     :class:`~scitools_hook.models.snapshot.EntityRef` a finding quotes, which only the
@@ -651,14 +605,13 @@ def _position(routine: _Routine) -> tuple[str, int, str]:
 class _Graph:
     """The project's routines as a similarity graph, grown from the change outwards.
 
-    It holds the shingle postings and every pair already scored, so the expensive half --
-    ``SequenceMatcher`` over two shapes -- runs at most once per pair however many members
-    reach it, and never at all for a pair no affected routine's family touches.
+    It holds every pair already scored, so the expensive half -- ``SequenceMatcher`` over two
+    shapes -- runs at most once per pair however many members reach it, and never at all for a
+    pair no affected routine's family touches.
     """
 
     def __init__(self, considered: Mapping[str, _Routine], threshold: float) -> None:
         self._routines = considered
-        self._postings = _postings(considered)
         self._threshold = threshold
         self._scored: dict[tuple[str, str], float] = {}
 
@@ -684,9 +637,9 @@ class _Graph:
 
         Breadth-first rather than a union over every project pair, because the only families
         that may be reported are the ones an affected routine is in (5.3). Every member is
-        popped in turn and scored against its own candidates, so every intra-family pair the
-        shingle index offers is scored exactly once -- which is what makes
-        :attr:`_Family.weakest` a fact about the component rather than about the walk order.
+        popped in turn and offered every considered routine, so every intra-family pair is
+        scored exactly once -- which is what makes :attr:`_Family.weakest` a fact about the
+        component rather than about the walk order.
 
         The edges are kept by pair rather than as a bare list of ratios because the family
         the walk finds is not always the family reported: :func:`_held` drops members, and
@@ -706,26 +659,18 @@ class _Graph:
         return members, edges
 
     def _matches(self, current: _Routine) -> Iterator[tuple[_Routine, float]]:
-        """Every routine similar enough to ``current`` to share its family, with its ratio."""
-        for other in self._candidates(current):
+        """Every routine similar enough to ``current`` to share its family, with its ratio.
+
+        Every considered routine is offered, ``current`` itself included, and the two exact
+        bounds of :func:`_comparable` decide the rest. No ``other is current`` guard is
+        written here: :func:`_score` refuses a routine against itself as nested, at ``0.0``,
+        so such a line could decide nothing -- and this module refuses a line that reads like
+        a decision and is not one.
+        """
+        for other in self._routines.values():
             ratio = self._ratio(current, other)
             if ratio >= self._threshold:
                 yield other, ratio
-
-    def _candidates(self, current: _Routine) -> Iterator[_Routine]:
-        """Every routine sharing a four-token run with ``current``, each offered once.
-
-        The whole of the approximation this module's docstring declares. A routine that
-        shares no shingle is never scored, which can make the rule quieter and cannot make it
-        louder.
-        """
-        offered: set[str] = set()
-        for shingle in _shingles(current.shape):
-            for token in self._postings.get(shingle, ()):
-                if token == current.token or token in offered:
-                    continue
-                offered.add(token)
-                yield self._routines[token]
 
     def _ratio(self, one: _Routine, other: _Routine) -> float:
         """The pair's similarity, scored at most once per pair however often it is asked.
@@ -857,37 +802,6 @@ def _linked(token: str, edges: Mapping[tuple[str, str], float]) -> Iterator[str]
             yield one
 
 
-def _postings(considered: Mapping[str, _Routine]) -> dict[tuple[int, ...], list[str]]:
-    """Shingle -> the routines holding it, built once and linear in the project's tokens.
-
-    It does not sort, and the posting order is deliberately not part of its contract. Trace
-    where it could reach: a posting order decides the order :meth:`_Graph._candidates` offers
-    candidates in, which decides the order :attr:`_Family.edges` is filled in -- and ``min``
-    does not care -- and the order members are discovered in, which
-    :meth:`_Graph.family` sorts before anyone sees it. It reaches no output. A sort here would
-    be a line no mutation of it could change, which is a line that reads like a guarantee and
-    is not one; the two orders a reader *does* see are settled in :func:`_seeds` and
-    :meth:`_Graph.family`, unconditionally.
-    """
-    found: dict[tuple[int, ...], list[str]] = {}
-    for token in considered:
-        for shingle in set(_shingles(considered[token].shape)):
-            found.setdefault(shingle, []).append(token)
-    return found
-
-
-def _shingles(shape: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
-    """Every window of :data:`SHINGLE` consecutive tokens, or the shape itself if it is short.
-
-    A shape at or below the window length yields **one** shingle, itself, rather than none: a
-    routine with no shingle would be invisible to the candidate index and could never find
-    its own identical twin, which is a silence with no argument behind it.
-    """
-    if len(shape) <= SHINGLE:
-        return (shape,)
-    return tuple(shape[at : at + SHINGLE] for at in range(len(shape) - SHINGLE + 1))
-
-
 def _score(one: _Routine, other: _Routine, threshold: float) -> float:
     """How alike two routines are, or ``0.0`` for a pair this rule will not join.
 
@@ -957,11 +871,11 @@ def _comparable(one: _Routine, other: _Routine, threshold: float) -> bool:
     """Whether two routines can reach the threshold at all, by two exact ceilings on a match.
 
     ``ratio()`` is ``2 * matched / (la + lb)``, so every upper bound on ``matched`` is an
-    upper bound on the ratio. Both of the two below are **exact** rather than heuristic, which
-    is the whole point of them: nothing that could have been a family member is refused here
-    -- unlike the shingle index, which is an approximation -- and each costs a fraction of the
-    quadratic match it saves. They are asked cheapest first and each is a statement of its
-    own, so that deleting either, or swapping them, is visible to
+    upper bound on the ratio. Both of the two below are **exact** rather than heuristic and,
+    since task 5.9 deleted the candidate index, they are the **only** filters between a pair
+    and its score: nothing that could have been a family member is refused here, which is what
+    makes this rule lossless outright. They are asked cheapest first and each is a statement of
+    its own, so that deleting either, or swapping them, is visible to
     ``test_the_cheap_length_band_is_asked_before_the_token_bound`` rather than only to a clock.
 
     * **The length band**: ``matched`` cannot exceed the shorter shape. Two integers.
@@ -971,10 +885,9 @@ def _comparable(one: _Routine, other: _Routine, threshold: float) -> bool:
       at this repository's median, against a shape of 87.
 
     **The second one is why this rule finishes, and the first is not enough on its own**: on
-    this repository the band admits 30.5 per cent of all pairs and the bound 0.62 per cent of
-    those, which is 48.7 s against 900.8 s for the same findings. The module docstring's
-    points 2 and 3 carry that measurement and the one that says why the shingle index cannot
-    stand in for it.
+    this repository the band admits 30.4 per cent of all pairs and the bound 0.6 per cent of
+    those, which is a 24.44 s pass against the quarter-hour the band alone would leave. The
+    module docstring's points 1 and 2 carry that measurement and its method.
     """
     span = len(one.shape) + len(other.shape)
     if 2 * min(len(one.shape), len(other.shape)) < threshold * span:

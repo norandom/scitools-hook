@@ -556,8 +556,8 @@ class _Vocabulary:
     """The token texts a shape indexes into, in the order they were first seen.
 
     A shape is a list of small integers rather than of strings because the index carries one
-    entry per token of every routine in the project, and the rule that reads it compares
-    shingles of them. One vocabulary for the whole document, so two routines in two files
+    entry per token of every routine in the project, and the rule that reads it compares whole
+    shapes of them. One vocabulary for the whole document, so two routines in two files
     encode the same token to the same number -- which is the only way their shapes can be
     compared at all.
 

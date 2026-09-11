@@ -571,7 +571,7 @@ class TokenIndex(DataModel):
     The two halves answer the two rules: :attr:`files` carries one hash per **code** line,
     with whitespace and comments removed so that a re-indented copy still hashes equal
     (requirement 5.4), keeping the original line numbers so a finding names the lines a
-    reader can open; :attr:`routines` carries the shapes the similarity rule shingles.
+    reader can open; :attr:`routines` carries the shapes the similarity rule compares.
     """
 
     vocabulary: list[str]
