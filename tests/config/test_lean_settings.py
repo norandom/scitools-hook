@@ -25,6 +25,7 @@ from scitools_hook.config.metric_names import SYNTHETIC_METRICS
 from scitools_hook.config.models import (
     DEFAULT_ACCURACY_FLOOR,
     DEFAULT_LEAN_CLASS_IGNORE,
+    DEFAULT_LEAN_FAMILY_IGNORE,
     DEFAULT_LEAN_IMPLEMENTATION_IGNORE,
     DEFAULT_LEAN_OVER_EXPORT_IGNORE,
     DEFAULT_LEAN_PARAMETER_IGNORE,
@@ -43,6 +44,7 @@ NAME_IGNORE_LISTS = (
     "unused_variables_ignore",
     "pass_through_ignore",
     "single_implementation_ignore",
+    "similar_name_ignore",
 )
 PATH_IGNORE_LISTS = ("over_export_ignore", "duplicates_ignore", "similar_ignore")
 
@@ -69,7 +71,9 @@ duplicates_ignore = ["tests/**"]
 similar_routines = "warning"
 similar_min_statements = 8
 similar_threshold = 0.95
+similar_min_family = 3
 similar_ignore = ["tests/**"]
+similar_name_ignore = ["^_"]
 verbosity_min_statements = 2
 max_net_growth = 40
 net_growth_severity = "error"
@@ -187,7 +191,7 @@ def test_setting_either_accuracy_floor_leaves_the_other_where_it_was() -> None:
 
 
 def test_a_configuration_naming_every_new_key_validates() -> None:
-    """All twenty-five keys together, in the spellings the documentation will show."""
+    """All twenty-seven keys together, in the spellings the documentation will show."""
     settings = Settings.model_validate(tomllib.loads(EVERY_KEY))
 
     assert settings.lean.unused_variables == "error"
@@ -197,6 +201,8 @@ def test_a_configuration_naming_every_new_key_validates() -> None:
     assert settings.lean.duplicates_min_lines == 10
     assert settings.lean.similar_threshold == 0.95
     assert settings.lean.similar_ignore == ["tests/**"]
+    assert settings.lean.similar_min_family == 3
+    assert settings.lean.similar_name_ignore == ["^_"]
     assert settings.lean.verbosity_min_statements == 2
     assert settings.lean.max_net_growth == 40
     assert settings.lean.net_growth_severity == "error"
@@ -216,6 +222,7 @@ def test_the_shipped_ignore_lists_cover_the_shapes_a_reference_cannot_see() -> N
     assert lean.pass_through_ignore == list(DEFAULT_UNUSED_IGNORE)
     assert lean.single_implementation_ignore == list(DEFAULT_LEAN_IMPLEMENTATION_IGNORE)
     assert lean.over_export_ignore == list(DEFAULT_LEAN_OVER_EXPORT_IGNORE)
+    assert lean.similar_name_ignore == list(DEFAULT_LEAN_FAMILY_IGNORE)
 
 
 @pytest.mark.parametrize(
@@ -228,6 +235,10 @@ def test_the_shipped_ignore_lists_cover_the_shapes_a_reference_cannot_see() -> N
         (DEFAULT_LEAN_VARIABLE_IGNORE, "__all__"),
         (DEFAULT_LEAN_VARIABLE_IGNORE, "logger"),
         (DEFAULT_LEAN_IMPLEMENTATION_IGNORE, "pkg.ConfigError"),
+        (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.Order.__post_init__"),
+        (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.Order.__init__"),
+        (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.OrderTest.setUp"),
+        (DEFAULT_LEAN_FAMILY_IGNORE, "pkg.OrderTest.teardown_method"),
     ],
 )
 def test_a_shipped_name_pattern_matches_the_shape_it_is_there_for(
@@ -279,6 +290,7 @@ def test_a_path_ignore_list_takes_globs_not_regexes(field: str) -> None:
         {"pass_through_max_statements": 0},
         {"duplicates_min_lines": 2},
         {"similar_min_statements": 1},
+        {"similar_min_family": 1},
         {"similar_threshold": 0.0},
         {"similar_threshold": 1.5},
         {"max_net_growth": -1},
@@ -292,6 +304,7 @@ def test_a_path_ignore_list_takes_globs_not_regexes(field: str) -> None:
         "budget",
         "min_lines",
         "min_statements",
+        "min_family",
         "threshold_zero",
         "threshold_high",
         "growth",

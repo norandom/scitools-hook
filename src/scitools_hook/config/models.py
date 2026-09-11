@@ -775,6 +775,34 @@ An exception base with a single subclass is a hierarchy an operator will keep: i
 otherwise report every project's first two error classes.
 """
 
+DEFAULT_LEAN_FAMILY_IGNORE: Final[tuple[str, ...]] = (
+    r"(^|[.:])__\w+__$",
+    r"(^|[.:])(setUp|tearDown|setup|teardown)(_\w+)?$",
+)
+"""Routine names whose family is an idiom rather than a duplication (req 5.10).
+
+Name patterns, not paths: these routines are idiomatic wherever they are written, so the file
+they sit in decides nothing. They are the ``similar_routines`` rule's own list because a
+family is reported against a *name* the language or a framework fixes -- one per class, on
+purpose -- and merging such a family is the one remedy the finding may not suggest.
+
+**Measured on a 417-file codebase**: of the 224 routines the rule puts in families at a
+threshold of 0.8, **thirty are** ``__post_init__`` **validators** across unrelated data
+shapes. They are near-identical because a dataclass validator has one shape, and there is no
+routine to merge them into: each belongs to its own class. The dunder pattern covers those
+with the per-class constructor (``__init__``) and every other hook the interpreter calls by
+name; the second covers the xUnit and pytest fixtures, which are one per test class for the
+same reason.
+
+**The honest limit**, recorded here rather than papered over: a constructor is a dunder only
+where the language spells it as one. ``Shape::Shape`` in C++ and ``Shape.Shape`` in Java or
+C# are per-class constructors this list does not cover, and the pattern that would --
+``(^|[.:])(\\w+)[.:]+\\2$`` -- also excuses every Python module-level function whose name
+matches its module's (``report.sarif.sarif``), which is a real finding silenced. An operator
+whose project is written in one of those languages adds it to ``similar_name_ignore``; the
+shipped list stays where the measurement is.
+"""
+
 DEFAULT_LEAN_OVER_EXPORT_IGNORE: Final[tuple[str, ...]] = (
     "**/__init__.py",
     "**/index.*",
@@ -940,7 +968,12 @@ class LeanRules(StrictModel):
     similar_routines: Severity | None = None
     similar_min_statements: int = Field(default=6, ge=2)
     similar_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    # Requirement 5.9's family minimum. Two, so a plain twin is still a family and nothing the
+    # pair-shaped rule would have found is lost by reporting families instead; `ge=2` because
+    # a family of one is a routine similar to nothing, which is every routine in the project.
+    similar_min_family: int = Field(default=2, ge=2)
     similar_ignore: list[str] = Field(default_factory=list)
+    similar_name_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_LEAN_FAMILY_IGNORE))
     # The statement floor `LinesPerStatement` is judged above (requirement 6.3 asks for a
     # *configurable* minimum, and a constant would leave it unsatisfied). It lives here rather
     # than in `[thresholds.routine]` because it is not a limit on anything: it says which
@@ -963,6 +996,7 @@ class LeanRules(StrictModel):
         "unused_variables_ignore",
         "pass_through_ignore",
         "single_implementation_ignore",
+        "similar_name_ignore",
     )
     @classmethod
     def _name_patterns_compile(cls, patterns: list[str]) -> list[str]:

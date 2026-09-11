@@ -484,6 +484,7 @@ EVERY_LEAN_KEY_SET: Final[dict[str, object]] = {
     "similar_routines": "warning",
     "similar_min_statements": 8,
     "similar_threshold": 0.95,
+    "similar_min_family": 3,
     "similar_ignore": ["tests/**"],
     "verbosity_min_statements": 3,
     "max_net_growth": 40,
@@ -491,7 +492,7 @@ EVERY_LEAN_KEY_SET: Final[dict[str, object]] = {
 }
 """Every key the renderer branches on, set away from its default, plus the numbers.
 
-Not literally every field -- the five name-pattern ignore lists keep their shipped values --
+Not literally every field -- the six name-pattern ignore lists keep their shipped values --
 and that is enough: ``_lean_rule`` branches only on the eight switches and ``_lean_size``
 only on ``max_net_growth``, so an ignore list has one rendering and it is already asserted
 against the defaults above.
@@ -582,7 +583,9 @@ LEAN_KEY_OWNERS: Final[dict[str, str]] = {
     "duplicates_ignore": "duplicates",
     "similar_min_statements": "similar_routines",
     "similar_threshold": "similar_routines",
+    "similar_min_family": "similar_routines",
     "similar_ignore": "similar_routines",
+    "similar_name_ignore": "similar_routines",
     "verbosity_min_statements": "LinesPerStatement",
     "net_growth_severity": "max_net_growth",
 }
@@ -612,7 +615,9 @@ LEAN_KEY_KINDS: Final[dict[str, str]] = {
     "duplicates_ignore": "exception list",
     "similar_min_statements": "limit",
     "similar_threshold": "limit",
+    "similar_min_family": "limit",
     "similar_ignore": "exception list",
+    "similar_name_ignore": "exception list",
     "verbosity_min_statements": "limit",
     "net_growth_severity": "severity",
 }
@@ -759,7 +764,9 @@ _TOKEN_RULE_KEYS: Final[frozenset[str]] = frozenset(
         "duplicates_ignore",
         "similar_min_statements",
         "similar_threshold",
+        "similar_min_family",
         "similar_ignore",
+        "similar_name_ignore",
     }
 )
 """The keys of the two rules answered from token streams, which tasks 5.1-5.5 still owe."""

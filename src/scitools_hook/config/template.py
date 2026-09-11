@@ -475,7 +475,9 @@ def _lean_copies(cfg: LeanRules) -> list[str]:
         _lean_rule(cfg, "similar_routines"),
         _line("similar_min_statements", cfg.similar_min_statements),
         _noted(_line("similar_threshold", cfg.similar_threshold), "1.0 is an identical token run"),
+        _noted(_line("similar_min_family", cfg.similar_min_family), "2 keeps a plain twin"),
         _line("similar_ignore", cfg.similar_ignore),
+        _line("similar_name_ignore", cfg.similar_name_ignore),
     ]
 
 
