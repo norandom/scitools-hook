@@ -50,7 +50,8 @@ The rules on rungs 1 and 2 are structural rules: they carry the `structure.` cat
 `[ignore]`, the severity map and the ratchet reach them as they reach `unused_routines` or
 the cycle rules. The two on rung 6 are ordinary threshold metrics under
 `[thresholds.routine]`, on by default as warnings. Every rule is documented one by one, with
-what it deliberately does not report, in the [rules reference](../reference/rules.md); the
+what it deliberately does not report, in the
+[rules reference](../reference/rules.md#the-lean-code-rules); the
 keys are in the [configuration guide](configuration.md#the-lean-code-family-lean).
 
 ## The three tags the Gate emits, and the two it does not

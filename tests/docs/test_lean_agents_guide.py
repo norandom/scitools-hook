@@ -14,6 +14,7 @@ from lean_docs import AGENTS, GUIDE, example_block, read
 
 from scitools_hook.config.defaults import default_settings
 from scitools_hook.report.agent_rules import render_rules
+from scitools_hook.skills import NAMES as SHIPPED_SKILLS
 
 
 def _lean_section(settings=None) -> str:
@@ -48,6 +49,16 @@ def test_the_agents_guide_shows_the_two_shrink_limits_the_snippet_lists() -> Non
         limit = spec.limit.max
         limit_text = f"{limit:g}" if isinstance(limit, float) else str(limit)
         assert f"- `{metric}`: at most {limit_text} ({spec.severity})" in block, metric
+
+
+def test_the_agents_guide_counts_the_skills_the_package_ships() -> None:
+    """Four ship; the page said three and showed a three-line transcript (task 8.1)."""
+    page = read(AGENTS)
+    assert len(SHIPPED_SKILLS) == 4, SHIPPED_SKILLS
+    assert "three skills" not in page
+    assert "four skills" in page
+    installed = re.findall(r"^installed: (scitools-\w+) at ", page, re.MULTILINE)
+    assert tuple(installed) == SHIPPED_SKILLS, installed
 
 
 def test_the_agents_guide_shows_what_an_enabled_rule_line_looks_like() -> None:

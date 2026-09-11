@@ -40,6 +40,31 @@ Two conventions run through the whole list.
 | Findings from an Understand CodeCheck configuration | off until you name one | [Rules](rules.md#structural-rules) |
 | An adaptive baseline that only ever narrows | **off** | [Configuration](../guide/configuration.md#the-adaptive-baseline) |
 
+## What it leaves behind
+
+The lean-code family: whether code should exist at all rather than whether it is too complex.
+Every rule ships **off** and is enabled by naming a severity on its `[lean]` switch; the two
+floors and the two shrink metrics ship on. One entry per rule, with what it does not report
+and the measurement behind its default, is on [Rules](rules.md#the-lean-code-rules); how to
+read a finding is on [Lean code](../guide/lean-code.md).
+
+| | Ships | Where |
+| --- | --- | --- |
+| A parameter nothing reads, a class nothing references, a module-level binding nothing reads: `structure.unused_parameter`, `structure.unused_class`, `structure.unused_variable` | **off** | [Rules](rules.md#two-floors-in-front-of-four-rules) |
+| Two floors in front of those and `pass_through`: `resolution_floor` and `accuracy_floor`, below which the rules judge nothing and say so; both measured repositories are below them | **on**, at 0.75 each | [Configuration](../guide/configuration.md#the-lean-code-family-lean) |
+| A routine with one caller that only forwards to one callee: `structure.pass_through` | **off** | [Rules](rules.md#structurepass_through) |
+| A base class with exactly one implementation and no other user: `structure.single_implementation` | **off** | [Rules](rules.md#structuresingle_implementation) |
+| A file defining one name for one importer: `structure.over_export` | **off** | [Rules](rules.md#structureover_export) |
+| Twelve or more code lines the project holds somewhere else, whitespace and comments absent: `structure.duplicate_block` | **off** | [Rules](rules.md#structureduplicate_block) |
+| A family of routines that are one routine written many times, one finding per family: `structure.similar_routine` | **off** | [Rules](rules.md#structuresimilar_routine) |
+| Lines per statement and comment lines per routine, the two shrink signals: `routine.LinesPerStatement`, `routine.CountLineComment` | **on**, as warnings | [Rules](rules.md#the-shrink-metrics-length-without-complexity) |
+| The net line, `net: +12 lloc (+30 lines) over 7 routines`, on every check with a before side | **on** | [CLI](cli.md#the-net-line) |
+| A ceiling on that figure: `structure.net_growth` at `max_net_growth` | **off** | [Rules](rules.md#structurenet_growth) |
+| Understand's duplicate-lines plugin metric as a threshold, `DuplicateLinesOfCode` and `DuplicateLinesOfCodePercent` | **off** | [CLI](cli.md#doctor) |
+| A `delete:`, `yagni:` or `shrink:` tag opening every lean hint, and a worked before-and-after example beneath it under `scitools-hook --verbose check` and always in JSON | **on** | [Lean code](../guide/lean-code.md#the-three-tags-the-gate-emits-and-the-two-it-does-not) |
+| Three `doctor` rows for what the family reads: `lean references`, `lean tokens`, `duplicate metric` | **on** | [CLI](cli.md#doctor) |
+| A lean section in the `agent-rules` block: the ladder, the rules in force with their tags, and which rungs are the agent's alone | **on** | [Agents](../guide/agents.md) |
+
 ## What it produces
 
 | | Ships | Where |

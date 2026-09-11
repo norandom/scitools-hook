@@ -6,10 +6,11 @@ An agent that learns a limit from a rejected commit has already wasted the work.
 numbers before it writes the code, and a command it can run on its own output.
 
 Two things do that: `agent-rules`, which writes the effective limits into the file your agent
-already reads, and three skills — `scitools-gate` to drive the CLI on a change,
-`scitools-improve` to work a grown-over repository back down, and `scitools-adapt` to change
-the rules themselves with evidence. `install-skills` puts all three into the repository, so
-none of it depends on having this project checked out.
+already reads, and four skills: `scitools-onboard` to enable the gate on a repository from
+measurement, `scitools-gate` to drive the CLI on a change, `scitools-improve` to work a
+grown-over repository back down, and `scitools-adapt` to change the rules themselves with
+evidence. `install-skills` puts all four into the repository, so none of it depends on
+having this project checked out.
 
 ## `agent-rules --write`
 
@@ -298,7 +299,7 @@ decides a commit.
 
 ## The skills
 
-Two skills ship **inside the package**, so enabling a repository does not mean copying files
+Four skills ship **inside the package**, so enabling a repository does not mean copying files
 out of a checkout you do not have:
 
 ```bash
@@ -306,13 +307,14 @@ scitools-hook install-skills
 ```
 
 ```console
+installed: scitools-onboard at /your/repo/.agents/skills/scitools-onboard/SKILL.md
 installed: scitools-gate at /your/repo/.agents/skills/scitools-gate/SKILL.md
 installed: scitools-improve at /your/repo/.agents/skills/scitools-improve/SKILL.md
 installed: scitools-adapt at /your/repo/.agents/skills/scitools-adapt/SKILL.md
 
-Your agent can now run /scitools-gate to check a change, /scitools-improve to lower this
-project's complexity one commit at a time, and /scitools-adapt to change the rules with the
-measurement behind each decision.
+Start with /scitools-onboard if this repository is new to the Gate. After that:
+/scitools-gate checks a change, /scitools-improve lowers this project's complexity one
+commit at a time, and /scitools-adapt changes the rules with the measurement behind each.
 ```
 
 `.agents/skills` is the vendor-neutral location. For a host that reads somewhere else, name

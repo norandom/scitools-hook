@@ -122,6 +122,37 @@ highest values: the largest value per metric, whether or not it breaks a limit
   routine.CyclomaticStrict  4  pricing.settle.line_total  pricing/settle.py  line 24
 ```
 
+### The net line
+
+A check with a before side ends with one line for the whole change, whether or not any
+lean-code rule is on:
+
+```text
+net: +12 lloc (+30 lines) over 7 routines
+```
+
+`+12 lloc` is Understand's `CountStmt` added minus removed, summed over the routines of the
+change's files on both sides; `(+30 lines)` is `CountLineCode` beside it; `over 7 routines`
+is how many routines the sum ran over. The sign is always written, on a zero too, because the
+figure is a movement rather than a measurement. A deleted routine counts negatively at its
+whole size and an added one positively.
+
+Because the sum is over **routines**, a deleted file that held no routines, a constants
+module, a data file or an `__init__.py` of imports, prints
+
+```text
+net: +0 lloc (+0 lines) over 0 routines
+```
+
+That is a genuine zero over nothing and not a broken number: those lines were never counted
+as logic on either side. `--all` has no before side and prints no net line at all. When a
+lean rule is on, the change is no longer than what it replaced and no lean rule found
+anything, a second line follows, `lean already: nothing to cut, net -4 lloc`; it is printed
+only when all three hold. The same figure is `net_delta` in `--format json` and
+`runs[0].properties.net_delta` in SARIF. With `[lean] max_net_growth` set, a change above it
+is one more finding, `structure.net_growth`. How to argue with the number is on
+[Lean code](../guide/lean-code.md#how-to-read-the-net-line).
+
 
 ### `--sarif PATH` and Understand's own documents
 
@@ -275,8 +306,9 @@ opposite job from a resolution. That is safe because the in-process import is ru
 process. Full output on the [Install](../guide/install.md#check-it-works) page.
 
 
-It reports six **feature rows** for the Understand 8.0 features, and three rows about the
-analysis cache that a check reads rather than measures:
+It reports six **feature rows** for the Understand 8.0 features, three for what the
+lean-code family reads, and three rows about the analysis cache that a check reads rather
+than measures:
 
 ```text
   feature understand sarif: available
@@ -285,6 +317,9 @@ analysis cache that a check reads rather than measures:
   feature plugin metrics: available
   feature unused rule: available
   feature accuracy:  available
+  feature lean references: available
+  feature lean tokens: available
+  feature duplicate metric: available
   ...
   before route:      commit (3ca0a97)   # or `shadow`, or `none`
   after accuracy:    17%                # or `not measured`
@@ -295,6 +330,22 @@ The feature rows are the ones that matter after an upgrade: **a configuration ke
 feature this build does not offer stops a run before it starts**, and the record `doctor`
 writes is what that check reads. Run it once when the installation changes; a check never
 probes.
+
+The three lean rows are what a `[lean]` switch is checked against before a run starts.
+`lean references` is the per-entity reference walk the three dead-code rules, `pass_through`
+and `single_implementation` read; every build reports references, so it is recorded as
+available rather than probed, and it has a row all the same because an operator must not have
+to infer a yes from an absent line. `lean tokens` is the lexer the two duplication rules read,
+probed with `file.lexer(False)` on doctor's scratch database. `duplicate metric` is whether
+Understand's own duplicate-lines plugin answers `Metric.lookup`, which is how a
+`DuplicateLinesOfCode` or `DuplicateLinesOfCodePercent` threshold is served; no shipped rule
+reads it and no `[lean]` key is checked against it, because the Gate keeps its own block
+rule, the plugin having no per-routine form and no similarity. For the first two rows, one
+that reads `unverified` or `unavailable` refuses the switch that needs it with the key, the
+capability and the build named, `lean.duplicates needs lean tokens, which <build> does not
+offer (unverified)`, and a cache probed before a capability existed says `not measured (this
+build was probed before the feature existed)` until `doctor` is run once more; a `check` on
+a fresh cache with a lean rule on always needs that step.
 
 `before route` distinguishes a database built from the base commit from one exported into a
 shadow tree, which hold different file sets. `after accuracy` is what Understand resolved of

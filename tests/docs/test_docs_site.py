@@ -25,7 +25,11 @@ def test_every_page_is_in_the_nav_and_every_nav_entry_is_a_page() -> None:
     assert listed == pages, {"unlisted": pages - listed, "missing": listed - pages}
 
 
-@pytest.mark.parametrize("page", [GUIDE, CONFIGURATION, AGENTS], ids=lambda p: p.name)
+REFERENCE = [DOCS / "reference" / name for name in ("rules.md", "cli.md", "features.md")]
+"""The three reference pages task 8.1 wrote into, held to the same three checks."""
+
+
+@pytest.mark.parametrize("page", [GUIDE, CONFIGURATION, AGENTS, *REFERENCE], ids=lambda p: p.name)
 def test_every_relative_link_on_the_page_resolves(page: Path) -> None:
     text = read(page)
     for target in re.findall(r"\]\(([^)\s]+)\)", text):

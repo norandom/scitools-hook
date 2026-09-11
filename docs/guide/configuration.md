@@ -315,7 +315,7 @@ configured: code an agent left behind, layers that forward and nothing else, abs
 with one implementation, files that export one name, copies and near-copies, and the length
 of the change itself. What each rule reports and how to read a finding is on
 [Lean code](lean-code.md); the measurement behind each default is in the
-[rules reference](../reference/rules.md). This section is the keys.
+[rules reference](../reference/rules.md#the-lean-code-rules). This section is the keys.
 
 This is the excerpt `scitools-hook init` writes. Each commented line is both the switch and
 the documentation of one rule: uncomment it to enable the rule, with `"warning"` as the value
