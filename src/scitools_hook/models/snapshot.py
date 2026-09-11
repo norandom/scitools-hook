@@ -539,8 +539,11 @@ class RoutineShape(DataModel):
     it; the entity table is cut to the change's files plus one dependency step. The
     similar-routine rule takes its ``similar_min_statements`` floor on this number, so reading
     it off the narrowed table put the whole-project comparison requirement 5.3 asks for out of
-    the rule's reach -- measured on this repository at 15 families of 41 lost outright, 37 per
-    cent, before task 5.8 moved it here.
+    the rule's reach. Task 5.5 measured 15 families of 41 lost outright on this repository,
+    37 per cent, over 60 single-file commits; task 5.8 could not retake that sample -- of 240
+    commits, 90 touch one file and one touches a single ``.py`` -- and measured 13 of 31 over
+    60 sampled source files instead, then 31 of 31 once this field carried the floor. Two
+    samples, two methods, one direction.
     """
 
     path: str
