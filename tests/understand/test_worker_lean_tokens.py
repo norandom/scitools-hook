@@ -294,6 +294,56 @@ def test_a_shape_names_the_file_its_definein_points_at() -> None:
     assert document["routines"]["app.run"]["end"] == 2
 
 
+# --- the statement count the family rule takes its floor on (requirement 5.3) ----------
+
+
+def test_a_shape_carries_the_statement_count_the_family_rule_reads() -> None:
+    """``CountStmt`` travels on the shape, not on the entity record (task 5.8).
+
+    ``analysis.lean.similar`` refuses a routine below ``similar_min_statements``, and it used
+    to read that number off ``ProjectSnapshot.entities`` -- a table the check pipeline narrows
+    to the change's files and one dependency step, which put the whole-project reach
+    requirement 5.3 asks for out of the rule's grasp. Carried here, the floor is answerable
+    for every routine the index holds, wherever the change was.
+    """
+    source = a_file("src/app.py", tokens=DEF_RUN)
+    body = a_body("app.run", source, 1, 2, values={"CountStmt": 7})
+
+    document = index(a_project(source), a_walk(body))
+
+    assert document["routines"]["app.run"]["statements"] == 7
+
+
+def test_a_routine_whose_statement_count_was_never_taken_carries_none() -> None:
+    """An absence and not a zero, which is the difference the family rule reads.
+
+    A routine recorded with ``0`` would be a routine measured to have no statements, which
+    the floor refuses for a reason it did not measure. ``None`` is "not measured", and
+    ``similar._long_enough`` declines to judge it -- the treatment ``lean.layering`` gives the
+    same metric one rule over.
+    """
+    source = a_file("src/app.py", tokens=DEF_RUN)
+
+    document = index(a_project(source), a_walk(a_body("app.run", source, 1, 2)))
+
+    assert document["routines"]["app.run"]["statements"] is None
+
+
+def test_a_statement_count_is_asked_for_once_per_routine() -> None:
+    """Requirement 9.5: the shape pass adds one metric query per routine and no more.
+
+    The walk holds the entity, so the count is a query and not a second pass over the
+    database -- but a query inside the per-file clipping loop would be one per routine per
+    file. The fake records what it was asked for, which is the only way to see the difference.
+    """
+    source = a_file("src/app.py", tokens=DEF_RUN)
+    body = a_body("app.run", source, 1, 2, values={"CountStmt": 7})
+
+    index(a_project(source), a_walk(body))
+
+    assert body.asked == [("CountStmt",)]
+
+
 # --- the routines and files the index leaves out (requirements 5.8, 9.7) ---------------
 
 

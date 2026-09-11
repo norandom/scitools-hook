@@ -820,9 +820,11 @@ def token_snapshot(
     can decide. ``CheckPipeline`` hands this step a snapshot whose entity table is narrowed to
     the change's files and ONE dependency step (``analysis.narrow``), so the other file's
     entity record survives only while something links the two directly. The token index does
-    not narrow, and the two rules therefore answer differently on ``linked=False`` -- which is
-    a bound on the family rule, recorded by a test of its own below rather than arranged away
-    here.
+    not narrow, and **since task 5.8 both rules read the reach they need out of it** -- the
+    family rule takes its statement floor off ``RoutineShape.statements`` rather than off a
+    record -- so ``linked=False`` is a case where the two rules still agree. The test of its
+    own below is what says so, and it is the one place the difference between the two tables
+    is visible at all.
     """
     return ProjectSnapshot.model_validate(
         {
@@ -843,12 +845,14 @@ def token_snapshot(
                         "path": TOKEN_FILE,
                         "start": 20,
                         "end": 34,
+                        "statements": 10,
                         "shape": list(TWIN_SHAPE),
                     },
                     token_key(TOKEN_OTHER, "other.normalize"): {
                         "path": TOKEN_OTHER,
                         "start": 20,
                         "end": 34,
+                        "statements": 10,
                         "shape": list(shape),
                     },
                 },
@@ -1059,26 +1063,31 @@ def test_a_run_with_no_token_index_says_so_once_per_token_rule() -> None:
 # --- what this wiring can see, measured rather than assumed ---------------------------
 
 
-def test_a_twin_outside_the_narrowed_snapshot_is_not_named_while_its_lines_still_are() -> None:
-    """The bound this wiring has, recorded so nobody has to rediscover it (req 5.3).
+def test_a_twin_outside_the_narrowed_snapshot_is_named_by_the_family_rule() -> None:
+    """Requirement 5.3 for the family rule, over a table narrowing removed (task 5.8).
 
     ``CheckPipeline`` hands this step ``narrow(wide_after, affected | neighbourhood)``, whose
     entity table is the change's files and ONE dependency step: ``affected._neighbourhood``
     walks a single step, and ``narrow`` filters entities by ``key.path in wanted`` outright,
-    its ``_one_ring`` widening only the retained *edges*. The two rules read different halves
-    of that document and so reach different distances. ``duplicate_block`` reads
-    ``tokens.files``, which ``narrow`` never touches, so 5.3 holds for it outright.
-    ``similar_routine`` reads the whole-project ``tokens.routines`` for its shapes but takes
-    each routine's ``CountStmt`` and ``EntityRef`` off ``entities``, and a routine that table
-    has no record of is read as "not measured" and left out of the vertex set
-    (``analysis.lean.similar._routine``). So a twin in a file the change neither touched nor
-    depends on is invisible to the family rule while its *lines* are still reported.
+    its ``_one_ring`` widening only the retained *edges*. ``linked=False`` therefore leaves
+    ``src/lean/other.py`` with **no entity record at all** in the document this step reads.
 
-    **The cost, measured rather than described.** Over a random sample of 60 single-file
-    commits at the shipped threshold of 0.9: 41 families whole-project on this repository, 26
-    still reported through the narrowed table, **15 lost outright -- 37 per cent**. So
-    requirement 5.3 is not met for ``similar_routine`` today and **task 5.8 owns the fix**;
-    this test is the record of what is owed, and it fails the day the contract moves.
+    Both rules still reach it, and for the same reason: each reads the whole-project token
+    index, which ``narrow`` never touches. ``duplicate_block`` always did, off
+    ``tokens.files``; ``similar_routine`` does since ``RoutineShape`` began carrying the
+    statement count the floor is taken on, so ``_routine`` needs no entity record to admit a
+    routine to the vertex set. **What task 5.8 measured, with its method, because the two
+    samples are not the same one.** Task 5.5's figure -- 41 families whole-project, 26
+    narrowed, 15 lost -- came from 60 single-file commits, and that sample cannot be taken
+    on this repository: of 240 commits, 90 touch one file and exactly one of those touches a
+    single ``.py``. Task 5.8 therefore sampled 60 indexed source files, each treated as a
+    one-file change, at the shipped threshold of 0.9: **31 families whole-project, 18 through
+    the narrowed table before the fix, 13 lost, and 31 of 31 after it.** No post-fix number
+    was ever taken over the commit sample, so none is quoted here.
+
+    Mutating ``narrow`` to stop filtering entities used to be the one edit this test caught;
+    it now catches the opposite mutation, ``_routine`` going back to the entity table, which
+    nothing else in the suite is placed to see.
     """
     unlinked = token_snapshot("after", TWIN_SHAPE, linked=False)
     narrowed = narrow(unlinked, [TOKEN_FILE])
@@ -1087,10 +1096,14 @@ def test_a_twin_outside_the_narrowed_snapshot_is_not_named_while_its_lines_still
         keys={key for key in narrowed.entities if key.path == TOKEN_FILE},
     )
 
+    assert not [key for key in narrowed.entities if key.path == TOKEN_OTHER]
+
     outcome = lean_step.evaluate(both_token_rules().lean, narrowed, None, affected)
 
-    assert sorted(f.rule for f in outcome.findings) == [DUPLICATE_RULE]
-    assert [f.details["also_at"] for f in outcome.findings] == [[f"{TOKEN_OTHER}:1"]]
+    found = {finding.rule: finding.details for finding in outcome.findings}
+    assert sorted(found) == sorted(TOKEN_RULES)
+    assert found[DUPLICATE_RULE]["also_at"] == [f"{TOKEN_OTHER}:1"]
+    assert found[SIMILAR_RULE]["family"] == [f"other.normalize ({TOKEN_OTHER}:20)"]
     assert outcome.notes == []
 
 

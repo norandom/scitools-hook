@@ -630,8 +630,8 @@ def _line_hash(text: str) -> str:
 
 def _routine_spans(
     routines: Mapping[str, tuple[Any, str]], ctx: LeanContext
-) -> dict[str, list[tuple[str, int, int]]]:
-    """Every routine the index can place, as ``(key, first line, last line)`` per file path.
+) -> dict[str, list[tuple[str, int, int, int | None]]]:
+    """Every routine the index can place, as ``(key, first, last, statements)`` per file path.
 
     Grouped by path so that :func:`token_index` can finish a file while its lines are still
     in hand, and resolved before any lexing because a span is read from ``Ent.ref`` alone.
@@ -651,20 +651,24 @@ def _routine_spans(
     files. A third is left out later, by having no group of its own: the file it is written in
     is one the lexer refused, or one the walk never collected. The similar-routine rule reads
     an absence as "not measured for that routine" and reports nothing about it.
+
+    ``CountStmt`` rides on the span, taken **here** where the walk's entity is in hand and
+    each routine is visited exactly once, rather than inside the per-file clipping loop.
     """
-    grouped: dict[str, list[tuple[str, int, int]]] = {}
+    grouped: dict[str, list[tuple[str, int, int, int | None]]] = {}
     for token in sorted(routines):
         span = _routine_span(routines[token][0], ctx)
         if span is None:
             continue
         path, start, end = span
-        grouped.setdefault(path, []).append((token, start, end))
+        statements = _statements(routines[token][0])
+        grouped.setdefault(path, []).append((token, start, end, statements))
     return grouped
 
 
 def _file_shapes(
     path: str,
-    spans: list[tuple[str, int, int]],
+    spans: list[tuple[str, int, int, int | None]],
     lines: list[tuple[int, list[tuple[str, str]]]],
     vocabulary: _Vocabulary,
 ) -> dict[str, dict[str, object]]:
@@ -677,17 +681,19 @@ def _file_shapes(
     """
     numbers = [line for line, _ in lines]
     shaped: dict[str, dict[str, object]] = {}
-    for token, start, end in spans:
+    for token, start, end, statements in spans:
         clipped = lines[bisect_left(numbers, start) : bisect_right(numbers, end)]
+        shape = [
+            vocabulary.index(_shape_text(token_class, text))
+            for _, tokens in clipped
+            for token_class, text in tokens
+        ]
         shaped[token] = {
             "path": path,
             "start": start,
             "end": end,
-            "shape": [
-                vocabulary.index(_shape_text(token_class, text))
-                for _, tokens in clipped
-                for token_class, text in tokens
-            ],
+            "statements": statements,
+            "shape": shape,
         }
     return shaped
 
@@ -712,6 +718,32 @@ def _routine_span(ent: Any, ctx: LeanContext) -> tuple[str, int, int] | None:
     if path is None or path != ctx.project_path(end.file(), ctx.root):
         return None
     return path, int(start.line()), int(end.line())
+
+
+STATEMENT_METRIC: Final = "CountStmt"
+"""The metric the similar-routine rule takes its ``similar_min_statements`` floor on.
+
+Spelled out rather than read from ``analysis.lean.layering.STATEMENT_METRIC``, because this
+file may import nothing of this package (see the module docstring).
+``test_a_shape_carries_the_statement_count_the_record_carries`` is what holds the two
+spellings equal, and it holds them by behaviour rather than by a second string comparison --
+one run over one entity, answering the same number into the index and into the entity record.
+A name that matched nothing would record every routine as unmeasured, which the family rule
+reads as "do not judge this routine": the rule would then report nothing at all, on every
+project, with every test green.
+"""
+
+
+def _statements(ent: Any) -> int | None:
+    """One routine's ``CountStmt``, or ``None`` where this build did not measure it.
+
+    ``None`` and not ``0``, which is the distinction the family rule's floor is written
+    around: a routine that was never counted is not a routine of no statements. The API
+    answers ``None`` for a metric it does not offer, and that answer is passed through rather
+    than filled in.
+    """
+    value = ent.metric([STATEMENT_METRIC]).get(STATEMENT_METRIC)
+    return None if value is None else int(value)
 
 
 def _shape_text(token_class: str, text: str) -> str:

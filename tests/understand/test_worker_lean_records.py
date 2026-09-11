@@ -48,6 +48,20 @@ REFERENCES: dict[str, object] = {"lean_references": True}
 TOKENS: dict[str, object] = {"lean_tokens": True}
 """The request key the two duplication rules turn on (design.md, *Snapshot request*)."""
 
+COUNTED: dict[str, list[str]] = {
+    "routine": ["CyclomaticStrict", "CountStmt"],
+    "class": [],
+    "file": [],
+}
+"""A request that asks for ``CountStmt`` on the entity records as well as the index.
+
+The shipped request does too -- ``config/defaults.py`` ships a ``CountStmt`` routine threshold
+and the request is derived from the thresholds, so every routine record on this repository
+carries one. What matters here is that the index does not NEED it to -- which is the whole point
+of carrying the count on the shape. This asks for both so that one case can hold the two
+spellings of the metric name to each other.
+"""
+
 DEFINITIONS: dict[str, object] = {"include_definitions": True}
 
 
@@ -517,6 +531,47 @@ def test_the_index_covers_the_whole_project_rather_than_the_files_the_run_asked_
     assert a_routine_token("util/text.py", "text.wrap_lines") in index.routines
     assert index.files["util/text.py"][0][0] == 9
     assert index.unreadable == []
+
+
+def test_a_shape_carries_the_statement_count_the_record_carries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CountStmt`` in two files that may not import each other, bound by behaviour (5.3).
+
+    ``worker_lean`` may import nothing of this package, so the metric name is written out
+    there as well as in ``analysis.lean.layering``; written out twice, the two agree on the
+    day they were written and never again. The failure is silent in the worst way -- a name
+    matching no metric records every routine as unmeasured, which ``similar._long_enough``
+    reads as "do not judge this routine", so the family rule reports nothing at all, on every
+    project, with every test green.
+
+    Bound here rather than by a second constant-equality assertion, for the reason
+    ``START_REFS`` is: this is the one site where **both** halves of the document are produced
+    by one run over one entity, so the assertion is that the index and the record answer the
+    same number rather than that two strings match. ``text.wrap_lines`` is the half that
+    matters to requirement 5.3 -- the request names ``cli/app.py``, so the document holds no
+    record of it at all, and its count reaches the family rule only because the index carries
+    it.
+    """
+    project = a_project_with_tokens()
+    project.build_parser.values["CountStmt"] = 9
+    project.wrap_lines.values["CountStmt"] = 4
+
+    document = a_document(monkeypatch, project, metrics_by_scope=COUNTED, **TOKENS)
+
+    snapshot = ProjectSnapshot.model_validate(document)
+    assert snapshot.tokens is not None
+    recorded = snapshot.entities[
+        EntityKey(
+            scope="routine", path="cli/app.py", longname="app.build_parser", parameters="argv"
+        )
+    ]
+    inside = a_routine_token("cli/app.py", "app.build_parser")
+    outside = a_routine_token("util/text.py", "text.wrap_lines")
+    assert recorded.metrics["CountStmt"] == 9
+    assert snapshot.tokens.routines[inside].statements == 9
+    assert set(records(document)) == {"cli/app.py", "app.Runner", "app.build_parser"}
+    assert snapshot.tokens.routines[outside].statements == 4
 
 
 def test_a_file_whose_lexer_refuses_is_named_rather_than_left_out(

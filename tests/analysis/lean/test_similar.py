@@ -22,7 +22,7 @@ everything a test happens to assert has asserted nothing about which of them sur
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from difflib import SequenceMatcher
 from typing import Final
 
@@ -393,6 +393,89 @@ def test_a_pair_whose_lengths_cannot_reach_the_threshold_is_never_matched(
     assert len(findings) == families
 
 
+APART_TOKENS: Final[tuple[int, ...]] = (*BASE[:4], *range(900, 936))
+"""Forty tokens sharing a four-token run with :data:`BASE` and nothing else.
+
+The candidate index offers the pair -- they share the shingle ``(0, 1, 2, 3)`` -- and the
+length band admits it, two shapes of forty tokens being the only kind that can reach a
+threshold of 1.0. What refuses it is the token bound: four tokens in common out of forty and
+forty is ``2 * 4 / 80``, so the pair cannot reach 0.10, let alone 0.90.
+"""
+
+
+@pytest.mark.parametrize(
+    ("other_shape", "matched", "families"),
+    [(APART_TOKENS, 0, 0), (variant(0, 1), 1, 1)],
+    ids=["out_of_bound", "in_bound"],
+)
+def test_a_pair_whose_tokens_cannot_reach_the_threshold_is_never_matched(
+    monkeypatch: pytest.MonkeyPatch, other_shape: tuple[int, ...], matched: int, families: int
+) -> None:
+    """The token bound is exact, so it changes no answer -- only whether it is paid for.
+
+    ``SequenceMatcher`` matches a common *subsequence*, which can use a token no more often
+    than the shorter shape holds it, so the multiset overlap is an exact ceiling on the
+    matched count and therefore on the ratio. Both rows are in the length band and both are
+    offered by the shingle index; the finding is absent either way on the first row, and the
+    absence of an output proves nothing about whether the work ran. A call spy on the matcher
+    is what says the bound refused the pair before it was scored.
+
+    **The measurement this guard exists for**, on this repository's own whole-project index
+    of 2344 considered routines at the shipped threshold of 0.9: of the 2 745 996 pairs,
+    837 303 pass the length band and **5191 pass this one, 0.62 per cent of them**. A pass
+    over every affected routine measures **48.7 s with this bound and 900.8 s without it, for
+    the same 158 findings** -- the difference between a whole-project run task 6.3 can use and
+    one that did not finish in ten minutes.
+    """
+    long_form = Routine("src/app/a.py", "a.run", BASE)
+    other = Routine("src/app/b.py", "b.run", other_shape)
+    runs: list[int] = []
+
+    def spy(
+        isjunk: None, one: Sequence[int], other: Sequence[int], autojunk: bool = True
+    ) -> SequenceMatcher[int]:
+        runs.append(1)
+        return SequenceMatcher(isjunk, one, other, autojunk=autojunk)
+
+    monkeypatch.setattr(similar, "SequenceMatcher", spy)
+    findings, _ = run(snap([long_form, other]), affected=[long_form])
+
+    assert len(runs) == matched
+    assert len(findings) == families
+
+
+@pytest.mark.parametrize(
+    ("length", "counted"),
+    [(20, 0), (38, 1)],
+    ids=["out_of_band", "in_band"],
+)
+def test_the_cheap_length_band_is_asked_before_the_token_bound(
+    monkeypatch: pytest.MonkeyPatch, length: int, counted: int
+) -> None:
+    """Guard order inside ``_comparable``, counted from the code and not from the prose.
+
+    Both halves of ``_comparable`` are exact, so **neither order changes an answer** and the
+    order is a cost decision alone: the band is two integers, the bound walks the smaller
+    routine's token counts. Deleting the band, or asking the two the other way round, is
+    therefore invisible in the findings -- which is why this stands on a call spy. The
+    out-of-band row is the one the band answers on its own; the in-band row is where the
+    bound is reached and the same spy fires.
+    """
+    long_form = Routine("src/app/a.py", "a.run", BASE)
+    short_form = Routine("src/app/b.py", "b.run", BASE[:length])
+    asked: list[int] = []
+    real = similar._shared
+
+    def spy(one: Mapping[int, int], other: Mapping[int, int]) -> int:
+        asked.append(1)
+        return real(one, other)
+
+    monkeypatch.setattr(similar, "_shared", spy)
+    run(snap([long_form, short_form]), affected=[long_form])
+
+    assert len(asked) == counted
+
+
 def test_a_long_routine_built_from_a_small_token_alphabet_is_still_compared() -> None:
     """``difflib``'s junk heuristic is off, and a normalised shape is why it has to be.
 
@@ -563,8 +646,24 @@ def test_an_unmeasured_statement_count_is_not_a_routine_of_no_statements() -> No
     assert run(snap([Routine("src/app/a.py", "a.run", BASE), other]), affected=[first])[0] != []
 
 
-def test_a_routine_the_snapshot_holds_no_record_for_is_not_judged() -> None:
-    """The index and the entity table are two walks, and one can outrun the other."""
+def test_a_routine_the_snapshot_holds_no_record_for_is_still_a_member() -> None:
+    """Requirement 5.3 at the rule's own level: the vertex set is the index's, not the table's.
+
+    The index and the entity table are two walks with two reaches, and the one that matters is
+    the check pipeline's: it hands this rule an entity table cut to the change's files plus one
+    dependency step, over a whole-project index. While the rule refused a routine that table
+    had no record of, every twin outside that ring was invisible. Task 5.5 measured 15
+    families of 41 lost on this repository, 37 per cent, over 60 single-file commits; task
+    5.8 could not retake that sample (of 240 commits, 90 touch one file and one touches a
+    single ``.py``) and measured 13 of 31 over 60 sampled source files instead. Both agree on
+    the direction and the magnitude, and on where the losses fall: the cross-file families,
+    which are the ones worth merging.
+
+    This is the same case the old bound was recorded on, asserted the other way round. The
+    mutation it stands on is ``_routine`` going back to ``after.entities`` for the floor, and
+    the routine whose record is removed here is the *member* -- the half a narrowed document
+    actually loses.
+    """
     first = Routine("src/app/a.py", "a.run", BASE)
     other = Routine("src/app/b.py", "b.run", BASE)
     after = snap([first, other])
@@ -572,7 +671,33 @@ def test_a_routine_the_snapshot_holds_no_record_for_is_not_judged() -> None:
 
     findings, _ = run(after, affected=[first])
 
-    assert findings == []
+    assert [finding.details["family"] for finding in findings] == [[at(other)]]
+
+
+def test_a_family_anchored_at_a_routine_with_no_record_carries_no_entity_reference() -> None:
+    """What is genuinely lost with the record, said out loud rather than fabricated.
+
+    ``Finding.entity`` is Understand's kind, name and declaration line, which live on the
+    entity record and nowhere else; the index carries the routine's own span, which is not the
+    same line. So an anchor with no record answers ``None`` there rather than a guess, and the
+    finding still names the routine through ``details["longname"]``, its path and its line --
+    which is what ``report.human`` and ``report.sarif`` fall back to.
+
+    On the check pipeline's own wiring this case does not arise: an anchor is an affected
+    routine, or a routine holding one in the same file, and both are in the change's files.
+    It is asserted because the type allows it and a fabricated reference would not be
+    detectable downstream.
+    """
+    first = Routine("src/app/a.py", "a.run", BASE)
+    other = Routine("src/app/b.py", "b.run", BASE)
+    after = snap([first, other])
+    after.entities.pop(key_of(first))
+
+    findings, _ = run(after, affected=[first])
+
+    assert [finding.entity for finding in findings] == [None]
+    assert [finding.details["longname"] for finding in findings] == ["a.run"]
+    assert [(finding.path, finding.line) for finding in findings] == [("src/app/a.py", 10)]
 
 
 # --- the two ignore lists ------------------------------------------------------------------
@@ -699,7 +824,7 @@ def test_a_threshold_of_nothing_is_refused(threshold: float) -> None:
     """At or below zero every pair of routines is a union and the project is one family.
 
     It is also what the two rejections this rule answers with ``0.0`` -- a nested pair and a
-    pair whose lengths cannot reach the threshold -- would silently become.
+    pair neither exact bound of ``_comparable`` admits -- would silently become.
     """
     members = family_of(2)
 

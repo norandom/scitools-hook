@@ -82,7 +82,13 @@ def key_of(item: Routine) -> EntityKey:
 
 
 def record_of(item: Routine) -> EntityRecord:
-    """The entity record the rule reads the statement count and the reference off.
+    """The entity record the rule reads the finding's entity reference off.
+
+    The **statement count** is not read from here: it travels on the index's own
+    :class:`~scitools_hook.models.snapshot.RoutineShape`, so that the floor is answerable for
+    a routine the check pipeline's narrowing left no record of (task 5.8). It is still
+    written here, because a fixture whose two tables disagreed about a routine would be a
+    fixture nobody could read.
 
     ``declared`` is Understand's declaration line and defaults to the index's own first line,
     because they usually agree; one test sets them apart to say which of the two a finding
@@ -135,6 +141,7 @@ def snap(routines: Sequence[Routine], unreadable: Sequence[str] = ()) -> Project
                     start=item.start,
                     end=last_of(item),
                     shape=list(item.shape),
+                    statements=None if item.statements is None else int(item.statements),
                 )
                 for item in routines
             },

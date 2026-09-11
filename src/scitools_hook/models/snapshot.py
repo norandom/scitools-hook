@@ -532,12 +532,30 @@ class RoutineShape(DataModel):
     :attr:`start` and :attr:`end` are the routine's first and last line in :attr:`path`, so
     a finding can point at the twin rather than name it in the abstract. A routine whose end
     the database does not give is absent from the index rather than recorded with a guess.
+
+    :attr:`statements` is the routine's ``CountStmt``, and it is carried **here** rather than
+    read off :attr:`ProjectSnapshot.entities` because the two tables have different reach.
+    The index is whole-project and :func:`~scitools_hook.analysis.narrow.narrow` never touches
+    it; the entity table is cut to the change's files plus one dependency step. The
+    similar-routine rule takes its ``similar_min_statements`` floor on this number, so reading
+    it off the narrowed table put the whole-project comparison requirement 5.3 asks for out of
+    the rule's reach -- measured on this repository at 15 families of 41 lost outright, 37 per
+    cent, before task 5.8 moved it here.
     """
 
     path: str
     start: int
     end: int
     shape: list[int]
+    statements: int | None = None
+    """``CountStmt``, or ``None`` where the run did not measure it.
+
+    ``None`` and not ``0``: a routine whose statements were never counted is not a routine of
+    no statements, and the family rule declines to judge it rather than judging it as empty --
+    the treatment :mod:`~scitools_hook.analysis.lean.layering` gives the same metric. The
+    default is what an index written before task 5.8 reads back as, which is the same
+    absence: such a routine is left out of the vertex set rather than admitted on a guess.
+    """
 
 
 class TokenIndex(DataModel):
