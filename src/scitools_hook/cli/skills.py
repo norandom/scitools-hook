@@ -37,10 +37,11 @@ HELP = "Install the agent skills that drive this tool into a repository."
 
 LONG_HELP = f"""{HELP}
 
-Writes four SKILL.md documents an agent host can load: `scitools-onboard` (enable a
+Writes five SKILL.md documents an agent host can load: `scitools-onboard` (enable a
 repository, deriving its limits from measurement), `scitools-gate` (check a change),
-`scitools-improve` (lower the complexity of a project commit by commit) and `scitools-adapt`
-(change the rules themselves, with the measurement behind each decision).
+`scitools-improve` (lower the complexity of a project commit by commit), `scitools-adapt`
+(change the rules themselves, with the measurement behind each decision), and
+`scitools-tune` (tune duplicate detection, similarity thresholds, and dead-code safety floors).
 
 The default location is `.agents/skills`, which is vendor-neutral. Use `--dir .claude/skills`
 for Claude Code, or any other path your assistant reads.
@@ -68,7 +69,8 @@ UNUSABLE_HINT: Final = "Name a directory the skills can be written into."
 NEXT_STEPS: Final = (
     "Start with /scitools-onboard if this repository is new to the Gate. After that: "
     "/scitools-gate checks a change, /scitools-improve lowers this project's complexity one "
-    "commit at a time, and /scitools-adapt changes the rules with the measurement behind each."
+    "commit at a time, /scitools-adapt changes the rules with the measurement behind each, "
+    "and /scitools-tune calibrates duplicate and dead code detection."
 )
 """What the skills are for, said once, where an operator has just installed them."""
 

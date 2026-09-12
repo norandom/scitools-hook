@@ -153,7 +153,7 @@ answers under its own name.
 
 ## Maturity, per language
 
-This is `0.1.0a10`. The gradient is real:
+This is `0.2.0`. The gradient is real:
 
 | Language | Status |
 | --- | --- |

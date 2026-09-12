@@ -52,11 +52,12 @@ def test_the_agents_guide_shows_the_two_shrink_limits_the_snippet_lists() -> Non
 
 
 def test_the_agents_guide_counts_the_skills_the_package_ships() -> None:
-    """Four ship; the page said three and showed a three-line transcript (task 8.1)."""
+    """Five ship: onboard, gate, improve, adapt, tune-lean."""
     page = read(AGENTS)
-    assert len(SHIPPED_SKILLS) == 4, SHIPPED_SKILLS
+    assert len(SHIPPED_SKILLS) == 5, SHIPPED_SKILLS
     assert "three skills" not in page
-    assert "four skills" in page
+    assert "four skills" not in page
+    assert "five skills" in page
     installed = re.findall(r"^installed: (scitools-\w+) at ", page, re.MULTILINE)
     assert tuple(installed) == SHIPPED_SKILLS, installed
 

@@ -35,7 +35,13 @@ from scitools_hook.exit_codes import ExitCode
 SKILL_SOURCE = Path(__file__).resolve().parents[2] / "src" / "scitools_hook" / "skills"
 """The documents as they sit in the tree: this file's independent oracle."""
 
-SHIPPED = ("scitools-onboard", "scitools-gate", "scitools-improve", "scitools-adapt")
+SHIPPED = (
+    "scitools-onboard",
+    "scitools-gate",
+    "scitools-improve",
+    "scitools-adapt",
+    "scitools-tune",
+)
 
 
 def shipped_text(name: str) -> str:

@@ -6,10 +6,11 @@ An agent that learns a limit from a rejected commit has already wasted the work.
 numbers before it writes the code, and a command it can run on its own output.
 
 Two things do that: `agent-rules`, which writes the effective limits into the file your agent
-already reads, and four skills: `scitools-onboard` to enable the gate on a repository from
+already reads, and five skills: `scitools-onboard` to enable the gate on a repository from
 measurement, `scitools-gate` to drive the CLI on a change, `scitools-improve` to work a
-grown-over repository back down, and `scitools-adapt` to change the rules themselves with
-evidence. `install-skills` puts all four into the repository, so none of it depends on
+grown-over repository back down, `scitools-adapt` to change the rules themselves with
+evidence, and `scitools-tune` to calibrate duplicate and dead code detection.
+`install-skills` puts all five into the repository, so none of it depends on
 having this project checked out.
 
 ## `agent-rules --write`
@@ -311,10 +312,12 @@ installed: scitools-onboard at /your/repo/.agents/skills/scitools-onboard/SKILL.
 installed: scitools-gate at /your/repo/.agents/skills/scitools-gate/SKILL.md
 installed: scitools-improve at /your/repo/.agents/skills/scitools-improve/SKILL.md
 installed: scitools-adapt at /your/repo/.agents/skills/scitools-adapt/SKILL.md
+installed: scitools-tune at /your/repo/.agents/skills/scitools-tune/SKILL.md
 
 Start with /scitools-onboard if this repository is new to the Gate. After that:
 /scitools-gate checks a change, /scitools-improve lowers this project's complexity one
-commit at a time, and /scitools-adapt changes the rules with the measurement behind each.
+commit at a time, /scitools-adapt changes the rules with the measurement behind each,
+and /scitools-tune calibrates duplicate and dead code detection.
 ```
 
 `.agents/skills` is the vendor-neutral location. For a host that reads somewhere else, name
@@ -334,6 +337,7 @@ version back.
 | `scitools-gate` | *May this change land?* | no |
 | `scitools-improve` | *How does this repository get easier to change?* | no |
 | `scitools-adapt` | *Are these rules right for this repository?* | yes, with evidence |
+| `scitools-tune` | *How do I calibrate duplicate and dead code detection?* | yes, with evidence |
 
 That last column is the design. The first two skills refuse to touch the configuration,
 because an agent that can silence its own findings has no gate; `scitools-adapt` is where
@@ -501,6 +505,26 @@ re-running `baseline` replaces the file with today's values, worse ones included
 
 The human-readable version of the same ladder, worked end to end on a 770-file repository, is
 [Rescuing a problematic project](rescue.md).
+
+### `scitools-tune`
+
+The lean-code family (`[lean]`) targets duplicate code blocks, similar routine twins, dead
+parameters, and layering wrappers. Because these rules ship with conservative defaults and sit
+behind two safety floors, an agent or human operator uses this skill to calibrate them for the
+codebase:
+
+1. **Diagnose the substrate**: Run `scitools-hook doctor` to see whether Understand parsed
+   files with clean accuracy and resolved internal call sites.
+2. **Audit whole-project duplication**: Run `scitools-hook check --all --format json` to see
+   duplication across the whole repository, not only the current git diff.
+3. **Calibrate duplication thresholds**: Lower `duplicates_min_lines` (e.g. 12 to 8) or
+   `similar_threshold` (e.g. 0.90 to 0.82) when smaller blocks or structural clones should be
+   caught, and exclude framework idioms via `similar_name_ignore` and `duplicates_ignore`.
+4. **Calibrate dead code and safety floors**: Understand the false-positive risks of dynamic
+   dispatch before lowering `resolution_floor` or `accuracy_floor`, and use parameter ignore
+   patterns for test fixtures.
+
+The detailed reference and calibration guide is [Tuning duplicate and dead code](tuning-lean.md).
 
 ## The loop
 

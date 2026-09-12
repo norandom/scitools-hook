@@ -404,7 +404,7 @@ Options:
   --force    Replace a SKILL.md that differs from the shipped one.
 ```
 
-Writes four documents an agent host can load:
+Writes five documents an agent host can load:
 
 | Skill | Answers |
 | --- | --- |
@@ -412,6 +412,8 @@ Writes four documents an agent host can load:
 | `scitools-gate` | *May this change land?* Preconditions, `check`, `explain`, the exit-code contract. |
 | `scitools-improve` | *How does this repository get easier to change?* The baseline loop, one entity per commit. |
 | `scitools-adapt` | *Are these rules right for this repository?* The six-rung ladder, with a measurement per decision. |
+| `scitools-tune` | *How do I calibrate duplicate and dead code detection?* Sampling, thresholds, and trust floors. |
+
 
 The default location is `.agents/skills`, which is vendor-neutral, and is resolved against
 the **repository root** so the command works from any subdirectory. `--dir` is resolved

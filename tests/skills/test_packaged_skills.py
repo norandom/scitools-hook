@@ -35,6 +35,7 @@ def test_both_skills_are_readable_from_the_installed_package() -> None:
         "scitools-gate",
         "scitools-improve",
         "scitools-adapt",
+        "scitools-tune",
     ]
     for skill in shipped:
         assert skill.text.startswith("---\n"), f"{skill.name} has no front matter"
@@ -182,3 +183,22 @@ def test_the_onboard_skill_proposes_the_duplication_rules_and_refuses_dead_code_
     for rule in ("unused_parameters", "unused_classes", "unused_variables", "pass_through"):
         assert rule in text, rule
     assert "blindly" in text or "never enable" in text
+
+
+def test_the_tune_skill_guides_calibration() -> None:
+    """The tune skill covers duplication calibration, dead code, and quotes shipped defaults."""
+    text = skills.read("scitools-tune").text
+    assert 'similar_routines = "warning"' in text
+    assert 'duplicates = "warning"' in text
+    for key in (
+        "similar_threshold",
+        "similar_min_statements",
+        "similar_min_family",
+        "duplicates_min_lines",
+        "resolution_floor",
+        "accuracy_floor",
+    ):
+        assert f"{key} = {getattr(SHIPPED_LEAN, key)}" in text, key
+    assert structure_rule("similar_routine") in text
+    assert structure_rule("duplicate_block") in text
+    assert "doctor" in text

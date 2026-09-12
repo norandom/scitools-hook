@@ -93,6 +93,7 @@ nav:
       - guide/languages.md
       - guide/configuration.md
       - guide/lean-code.md
+      - guide/tuning-lean.md
       - guide/hooks-and-ci.md
       - guide/review.md
       - guide/agents.md

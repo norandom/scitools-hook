@@ -263,4 +263,6 @@ CountLineComment = false                                # fixtures explain thems
 The shipped skills carry the same policy: `scitools-onboard` proposes the two duplication
 rules from a first-ten reading and never enables a dead-code rule without reading
 `after accuracy` in `doctor` against the floor; `scitools-adapt` has the family's lists and
-numbers as its rung 4c and refuses the floors as a rung at all.
+numbers as its rung 4c and refuses the floors as a rung at all. For practical calibration,
+adjusting thresholds, and diagnosing why rules may be silent on your repository, see
+[Tuning duplicate and dead code](tuning-lean.md).
