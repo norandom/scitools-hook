@@ -20,8 +20,8 @@ wheel to the GitHub release for every `v*` tag, and flags the release as a pre-r
 automatically when the tag contains `a`, `b` or `rc`:
 
 ```bash
-gh release download v0.2.0 --repo norandom/scitools-hook --pattern '*.whl'
-uv tool install ./scitools_hook-0.2.0-py3-none-any.whl
+gh release download v0.3.0 --repo norandom/scitools-hook --pattern '*.whl'
+uv tool install ./scitools_hook-0.3.0-py3-none-any.whl
 ```
 
 There is no trusted publisher, no API token, and nothing to configure outside the
@@ -127,7 +127,7 @@ a CI job running `doctor` must not be told a commit had violations that were nev
 ```console
 $ scitools-hook doctor
 scitools-hook
-  version:           0.2.0
+  version:           0.3.0
   python:            3.14.4
 
 Understand
@@ -246,7 +246,7 @@ licence.
 
 ## Versioning
 
-The current version is `0.1.0a1`. It is an alpha; see
+The current version is `0.3.0`; see
 [the maturity table](../index.md#maturity).
 
 `__version__` is read from the installed distribution metadata rather than written into the
@@ -258,3 +258,11 @@ writes, so a stale copy misattributes findings to a version that never produced 
 
 Running from an uninstalled source tree reports `0+unknown`, deliberately, rather than a
 plausible-looking number.
+
+## Next steps
+
+After verifying your installation with `scitools-hook doctor`, enable a repository:
+
+- [Quickstart](quickstart.md) walks through hook installation, `agent-rules`, and skills in five minutes.
+- [Working with agents](agents.md) explains the five packaged skills and how to configure agent context.
+- [Rescuing a problematic project](rescue.md) guides calibrating limits on an existing codebase with legacy debt.

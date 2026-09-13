@@ -120,7 +120,7 @@ HTML asset can fail to parse as source, are on the
 
 ## Maturity
 
-This is version `0.2.0`. The gradient across the twelve languages is real and
+This is version `0.3.0`. The gradient across the twelve languages is real and
 worth stating before you decide whether to try it:
 
 | Language | Status |
@@ -150,13 +150,19 @@ nothing.
 - **Rules an agent reads.** `scitools-hook agent-rules --write AGENTS.md` writes the
   effective limits into your agent instructions file, so the agent knows the numbers before
   it writes the code rather than after the commit is refused.
+- **Five packaged agent skills.** `scitools-hook install-skills` installs `scitools-onboard`,
+  `scitools-gate`, `scitools-improve`, `scitools-adapt`, and `scitools-tune` directly into
+  `.agents/skills` (or `--dir .claude/skills`). Agents onboard repositories, check changes,
+  improve codebase health commit by commit, adapt rules with measurement, and tune duplicate
+  code detection autonomously. See [Working with agents](guide/agents.md).
 - **Rules that point at code to delete.** The lean-code family, nine rules that answer the
   question an agent's output raises: what here is redundant, and what is longer than it needs
   to be. Two of them read a token index and need no reference resolution, so they are the
   reliable half: repeated blocks of lines, and families of near-identical routines reported
   once per family rather than once per pair. Five more read the reference database and sit
   behind two floors, because below them the analyser and not the code decides what looks
-  dead. Every one ships off, and [the guide](guide/lean-code.md) says which to turn on first.
+  dead. Every one ships off: [the lean-code guide](guide/lean-code.md) says which to turn on first,
+  and [tuning duplicate and dead code](guide/tuning-lean.md) covers calibrating them with evidence.
 - **A net line on every check.** `net: +95 lloc (+176 lines) over 129 routines`. An agent
   that replaced forty lines with sixty learns it from the gate rather than from a reviewer
   three days later.
@@ -166,6 +172,28 @@ nothing.
 
 The full list, with what ships on and what ships off, is
 [Every feature](reference/features.md).
+
+## Agentic workflows: setup and skills
+
+An agent learning a complexity limit from a rejected commit has already produced the wrong code.
+`scitools-hook` structures the agentic loop into three phases:
+
+1. **In-context boundaries before generation.** `agent-rules --write AGENTS.md` injects the
+   exact effective limits, the ratchet rules, and the lean-code ladder into the instructions
+   file your assistant reads (`AGENTS.md`, `CLAUDE.md`, or `.cursorrules`).
+2. **Autonomous verification during editing.** While generating code, the agent runs
+   `scitools-hook check --worktree --format json` against its own workspace. Each finding provides
+   an actionable remediation hint (`delete:`, `yagni:`, `shrink:`), allowing the agent to refine
+   its output until `blocking_count` is `0` before staging.
+3. **Five packaged skills for autonomous repository operations.** `scitools-hook install-skills`
+   writes vendor-neutral `SKILL.md` documents to `.agents/skills` (or `--dir .claude/skills`):
+   - `scitools-onboard`: Enables a repository from scratch, deriving limits from empirical measurements.
+   - `scitools-gate`: Drives the CLI on a change, handling preconditions, checks, and exit codes without touching configuration.
+   - `scitools-improve`: Iteratively works complexity down one commit at a time using an adaptive baseline that narrows only.
+   - `scitools-adapt`: Modifies rules or scopes with evidence when a limit is genuinely wrong for the repository.
+   - `scitools-tune`: Empirically calibrates duplication thresholds, similar routine bounds, and dead-code safety floors.
+
+See [Working with agents](guide/agents.md) for the complete integration guide.
 
 ## Getting it
 
@@ -194,6 +222,7 @@ Understand and never bundles it.
 
 [Install it &rarr;](guide/install.md) &middot;
 [Run it on a repository in five minutes &rarr;](guide/quickstart.md) &middot;
+[Work with coding agents &rarr;](guide/agents.md) &middot;
 [Point it at a real, messy codebase &rarr;](guide/rescue.md)
 
 !!! tip "If your first run reports hundreds of findings, that is expected"

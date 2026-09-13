@@ -314,7 +314,8 @@ Every rule in this table is **off by default**, and the table is the one place t
 configured: code an agent left behind, layers that forward and nothing else, abstractions
 with one implementation, files that export one name, copies and near-copies, and the length
 of the change itself. What each rule reports and how to read a finding is on
-[Lean code](lean-code.md); the measurement behind each default is in the
+[Lean code](lean-code.md); empirical calibration of duplication thresholds and safety floors is on
+[Tuning duplicate and dead code](tuning-lean.md); the measurement behind each default is in the
 [rules reference](../reference/rules.md#the-lean-code-rules). This section is the keys.
 
 This is the excerpt `scitools-hook init` writes. Each commented line is both the switch and

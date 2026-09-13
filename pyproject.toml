@@ -18,7 +18,9 @@ name = "scitools-hook"
 # 0.2.0: dedicated tuning guide and the `scitools-tune` agent skill for calibrating
 # lean-code rules, duplication thresholds, similar routine bounds, dead-code trust
 # floors, and architecture layering.
-version = "0.2.0"
+# 0.3.0: documentation alignment with COBESY framework, mapping agentic use cases
+# to repository setup and the five packaged skills.
+version = "0.3.0"
 description = "Maintainability gate for git hooks and CI, backed by SciTools Understand."
 readme = "README.md"
 requires-python = ">=3.12"

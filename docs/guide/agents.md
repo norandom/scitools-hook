@@ -13,6 +13,28 @@ evidence, and `scitools-tune` to calibrate duplicate and dead code detection.
 `install-skills` puts all five into the repository, so none of it depends on
 having this project checked out.
 
+## The agentic lifecycle: setup, loop, and skills
+
+Enabling a repository for agents takes five idempotent commands that establish the foundation:
+
+```bash
+scitools-hook init --detect                   # 1. Inspect repository and propose configuration
+scitools-hook baseline                        # 2. Record today's baseline values
+scitools-hook install-hook                    # 3. Install the pre-commit shim
+scitools-hook agent-rules --write AGENTS.md   # 4. Write effective limits into agent context
+scitools-hook install-skills                  # 5. Write the five agent skills to .agents/skills
+```
+
+Once installed, coding agents interact with the repository across five distinct operational use cases:
+
+| Use case | Phase | Mechanism | Skill or command |
+| --- | --- | --- | --- |
+| **Pre-code bounds** | Before generating | In-context limits and lean ladder in `AGENTS.md` | `agent-rules` |
+| **Self-check loop** | While coding | `check --worktree --format json` | `scitools-gate` |
+| **Onboarding & baseline** | Repository enablement | Empirical measurement of ceilings | `scitools-onboard` |
+| **Continuous debt reduction** | Iterative refactoring | Narrowing-only ratchet on complexity | `scitools-improve` |
+| **Rule & lean calibration** | Policy adjustment | Empirical calibration of thresholds and floors | `scitools-adapt`, `scitools-tune` |
+
 ## `agent-rules --write`
 
 ```bash
@@ -300,7 +322,7 @@ decides a commit.
 
 ## The skills
 
-Four skills ship **inside the package**, so enabling a repository does not mean copying files
+Five skills ship **inside the package**, so enabling a repository does not mean copying files
 out of a checkout you do not have:
 
 ```bash
@@ -339,9 +361,10 @@ version back.
 | `scitools-adapt` | *Are these rules right for this repository?* | yes, with evidence |
 | `scitools-tune` | *How do I calibrate duplicate and dead code detection?* | yes, with evidence |
 
-That last column is the design. The first two skills refuse to touch the configuration,
-because an agent that can silence its own findings has no gate; `scitools-adapt` is where
-that decision is made deliberately, and it is a separate invocation on purpose.
+That last column is the design. `scitools-gate` and `scitools-improve` refuse to touch the
+configuration, because an agent that can silence its own findings has no gate;
+`scitools-onboard` sets it once from measurement; `scitools-adapt` and `scitools-tune` are
+where decisions to modify or calibrate rules are made deliberately, each with evidence.
 
 ### `scitools-onboard`
 

@@ -46,7 +46,8 @@ The lean-code family: whether code should exist at all rather than whether it is
 Every rule ships **off** and is enabled by naming a severity on its `[lean]` switch; the two
 floors and the two shrink metrics ship on. One entry per rule, with what it does not report
 and the measurement behind its default, is on [Rules](rules.md#the-lean-code-rules); how to
-read a finding is on [Lean code](../guide/lean-code.md).
+read a finding is on [Lean code](../guide/lean-code.md); calibrating duplication thresholds and
+safety floors is on [Tuning duplicate and dead code](../guide/tuning-lean.md).
 
 | | Ships | Where |
 | --- | --- | --- |
@@ -75,6 +76,7 @@ read a finding is on [Lean code](../guide/lean-code.md).
 | Understand's own SARIF beside the gate's, re-rooted on the repository, for one code-scanning upload | **off** | [CLI](cli.md#-sarif-path-and-understands-own-documents) |
 | Dependency and butterfly graphs as SVG, plus an impact set, for reviewing a large change by shape | on request | [Review](../guide/review.md) |
 | The effective limits written into your agent instructions file | on request | [CLI](cli.md#agent-rules) |
+| Five packaged agent skills (`scitools-onboard`, `scitools-gate`, `scitools-improve`, `scitools-adapt`, `scitools-tune`) | on request | [Agents](../guide/agents.md#the-skills) |
 | A recommendation: which limits fit this repository, and what each candidate would cost | on request | [CLI](cli.md#recommend) |
 
 ## How it runs
@@ -84,6 +86,7 @@ read a finding is on [Lean code](../guide/lean-code.md).
 | A native `.git/hooks` pre-commit shim, chaining to whatever hook was there | on install | [Hooks and CI](../guide/hooks-and-ci.md) |
 | A pre-push shim that checks each pushed range | on install | [Hooks and CI](../guide/hooks-and-ci.md) |
 | A `pre-commit` framework hook definition | on install | [Hooks and CI](../guide/hooks-and-ci.md) |
+| `install-skills` writing agent skill documents into `.agents/skills` or `--dir` | on install | [CLI](cli.md#install-skills) |
 | `--staged`, `--worktree`, `--all`, `--files` and `--range A..B` | on | [CLI](cli.md#check) |
 | Nothing written into the working tree: shadows, databases and state live in a cache | **on** | [Operations](operations.md#databases) |
 | Per-directory limits, so tests and generated code can be judged differently | on where configured | [Configuration](../guide/configuration.md#different-limits-for-different-directories) |

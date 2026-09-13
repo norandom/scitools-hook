@@ -13,9 +13,10 @@ Since `0.1.0a10` it also answers the question an agent's output raises, which is
 too complex" but "how much of this is redundant". The lean-code family reports repeated blocks
 of lines, families of near-identical routines, and code the database says nothing reaches, and
 prints a net logical-lines delta on every check so an agent sees whether its change made the
-project longer. Every one of those rules ships off; the
-[lean-code guide](https://norandom.github.io/scitools-hook/guide/lean-code/) says which two
-the measurement supports turning on first, and why the rest sit behind a floor.
+project longer. Every one of those rules ships off; the [lean-code guide](https://norandom.github.io/scitools-hook/guide/lean-code/) says which two
+the measurement supports turning on first, and the
+[tuning guide](https://norandom.github.io/scitools-hook/guide/tuning-lean/) covers calibrating
+thresholds and trust floors with the `scitools-tune` skill.
 
 **Documentation: <https://norandom.github.io/scitools-hook/>**
 
@@ -42,8 +43,8 @@ code for "blocking violations found".
 Or take the wheel from a tagged release, which the release workflow attaches to it:
 
 ```bash
-gh release download v0.2.0 --repo norandom/scitools-hook --pattern '*.whl'
-uv tool install ./scitools_hook-0.2.0-py3-none-any.whl
+gh release download v0.3.0 --repo norandom/scitools-hook --pattern '*.whl'
+uv tool install ./scitools_hook-0.3.0-py3-none-any.whl
 ```
 
 `scitools-hook` needs an existing SciTools Understand installation (`und` and the
@@ -59,13 +60,32 @@ scitools-hook agent-rules --write AGENTS.md   # the limits, where your agent alr
 scitools-hook install-skills                  # the skills, at .agents/skills
 ```
 
-The last one writes four `SKILL.md` documents: `scitools-onboard` (enable a repository,
+The last one writes five `SKILL.md` documents: `scitools-onboard` (enable a repository,
 deriving its limits from what it measures), `scitools-gate` (drive the CLI on a change),
-`scitools-improve` (work a grown-over repository back down, one commit at a time) and
-`scitools-adapt` (change the rules themselves, with the measurement behind each decision).
-The first two deliberately refuse to touch the configuration — an agent that can silence its
-own findings has no gate. They ship inside the package, so nothing here needs this project
-checked out. Use `--dir .claude/skills` for Claude Code. Every command above is idempotent.
+`scitools-improve` (work a grown-over repository back down, one commit at a time),
+`scitools-adapt` (change the rules themselves, with the measurement behind each decision), and
+`scitools-tune` (calibrate duplicate and dead code detection). `scitools-gate` and `scitools-improve`
+deliberately refuse to touch the configuration — an agent that can silence its own findings has
+no gate — while `scitools-onboard`, `scitools-adapt`, and `scitools-tune` calibrate or adapt it
+from measurement. They ship inside the package, so nothing here needs this project checked out.
+Use `--dir .claude/skills` for Claude Code. Every command above is idempotent.
+
+### Agentic workflows
+
+The five setup commands map directly to how an autonomous coding agent works:
+
+1. **In-context boundaries before writing code.** `scitools-hook agent-rules --write AGENTS.md`
+   writes the effective limits and the lean-code ladder into the instructions file the model reads.
+   The agent knows what will be judged before it writes the first token.
+2. **Autonomous verification loop.** While editing, the agent runs
+   `scitools-hook check --worktree --format json` and reads actionable remediation hints
+   (`delete:`, `yagni:`, `shrink:`), working until `blocking_count` is 0 before staging.
+3. **Commit ratchet.** `scitools-hook install-hook` gates staged changes against `HEAD`. Pre-existing
+   debt never blocks; only regression is refused.
+4. **Targeted operational skills.** The five packaged skills give agents reliable protocols for
+   initial repository onboarding (`scitools-onboard`), change checking (`scitools-gate`),
+   iterative debt reduction (`scitools-improve`), evidence-based rule adjustments (`scitools-adapt`),
+   and empirical lean-code calibration (`scitools-tune`).
 
 > **Note:** the PyPI package named `understand` is unrelated to SciTools Understand.
 > Do not `pip install understand`; this tool uses the API shipped inside your
