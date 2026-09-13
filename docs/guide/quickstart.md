@@ -356,6 +356,7 @@ The full three-act version, with complete output, is on
 
 | You want to | Read |
 | --- | --- |
+| See multi-language refactoring examples and skills | [Developer guide](developer-guide.md) |
 | Run it on a real repository that reports hundreds of findings | [Rescuing a problematic project](rescue.md) |
 | Change the limits, or exclude directories | [Configuration](configuration.md) |
 | Run it in CI, or through the `pre-commit` framework | [Hooks and CI](hooks-and-ci.md) |

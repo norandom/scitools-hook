@@ -89,6 +89,7 @@ nav:
   - Using it:
       - guide/install.md
       - guide/quickstart.md
+      - guide/developer-guide.md
       - guide/rescue.md
       - guide/languages.md
       - guide/configuration.md

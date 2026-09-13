@@ -193,7 +193,9 @@ An agent learning a complexity limit from a rejected commit has already produced
    - `scitools-adapt`: Modifies rules or scopes with evidence when a limit is genuinely wrong for the repository.
    - `scitools-tune`: Empirically calibrates duplication thresholds, similar routine bounds, and dead-code safety floors.
 
-See [Working with agents](guide/agents.md) for the complete integration guide.
+See [Working with agents](guide/agents.md) for the complete integration guide, and the
+[Developer guide](guide/developer-guide.md) for multi-language before-and-after refactoring
+examples and everyday developer workflows.
 
 ## Getting it
 
@@ -222,6 +224,7 @@ Understand and never bundles it.
 
 [Install it &rarr;](guide/install.md) &middot;
 [Run it on a repository in five minutes &rarr;](guide/quickstart.md) &middot;
+[Developer guide with multi-language examples &rarr;](guide/developer-guide.md) &middot;
 [Work with coding agents &rarr;](guide/agents.md) &middot;
 [Point it at a real, messy codebase &rarr;](guide/rescue.md)
 

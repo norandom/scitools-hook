@@ -18,7 +18,7 @@ the measurement supports turning on first, and the
 [tuning guide](https://norandom.github.io/scitools-hook/guide/tuning-lean/) covers calibrating
 thresholds and trust floors with the `scitools-tune` skill.
 
-**Documentation: <https://norandom.github.io/scitools-hook/>**
+**Documentation: <https://norandom.github.io/scitools-hook/>** &middot; **[Developer Guide](https://norandom.github.io/scitools-hook/guide/developer-guide/)**
 
 ## Install
 
