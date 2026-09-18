@@ -766,6 +766,21 @@ inversion in place: a framework hierarchy four deep still reports 1.
 
 The number stays honest about what Understand saw. The severity stops it deciding a commit.
 
+## One metric that was measured and not shipped
+
+`CRAP` — `comp^2 * (1 - cov)^3 + comp`, over a ceiling of 30 — is the composite most often
+proposed for this gate, and it is not among the rules above. The gate reads git and an
+Understand database and has no coverage term, and with that term at zero the metric is
+strictly increasing in `comp`: measured over 10 463 routines of one repository and 7 050 of
+this one, it ranks both populations in exactly the order `CyclomaticStrict` ranks them, with
+zero discordant pairs and an identical tie structure, and `CRAP > 30` is `CyclomaticStrict`
+&ge; 6 under another name. Supplying real coverage points the rule the wrong way: at 80%
+coverage it forgives every routine either repository's `CyclomaticStrict` ceiling refuses,
+including one of 21 branches.
+
+The measurement, the tables and what to run instead are in
+[Against CodeQL, Semgrep, and the structure tools](../compare/tools.md#coverage-weighted-complexity-the-crap-metric).
+
 ## What blocks
 
 - Only `error` can block. A `warning` never blocks, in any mode.
